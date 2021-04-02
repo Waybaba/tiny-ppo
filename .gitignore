@@ -1,0 +1,9 @@
+/data/log/tensorboard_log/*
+/data/model/*
+!/data/model/share
+
+/data/bak/*
+__pycache__/
+/.vscode/
+.DS_Store
+
