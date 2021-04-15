@@ -1,8 +1,11 @@
 /data/log/tensorboard_log/*
 /data/model/*
 !/data/model/share
+
 /data/res/*
 /output/*
+!/data/res/*_.npy
+!/output/*_.png
 
 /data/bak/*
 __pycache__/
