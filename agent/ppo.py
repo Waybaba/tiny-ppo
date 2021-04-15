@@ -20,6 +20,8 @@ import time
 import shutil
 from torch import Tensor
 import math
+# import roboschool
+# import pybullet
 
 # print(sys.path)
 
@@ -37,7 +39,10 @@ class args(object):
     model_load_dir = cur_path+"/../data/model/latest/"
 
     # env_name = 'LunarLanderContinuous-v2'
-    env_name = 'MountainCarContinuous-v0'
+    # env_name = 'MountainCarContinuous-v0'
+    # env_name = 'Ant-v2'
+    # env_name = 'Swimmer-v2'
+    env_name = 'InvertedPendulum-v2'
     seed = 1234
 
     log_num_round = 1
@@ -47,6 +52,7 @@ class args(object):
     num_epoch = 10 # 10
     minibatch_size = 256 # 256
     max_step_per_round = 2000
+    end_trans = 1000000 # 1000000 
     batch_size = 2048 # 2048
     clip = 0.2 # 0.2
     gamma = 0.995 # 0.995
@@ -70,18 +76,7 @@ class args(object):
     
 '''class'''
 Transition = namedtuple('Transition', ('state', 'value', 'action', 'logproba', 'mask', 'next_state', 'reward'))
-
 class Memory(object):
-    """ A memery buffer which stores and returns samples.
-
-    push: accept one transition and save it to buffer.
-    sample: return Transition(each element is a list).
-    sample_zip: return s, value, a, oldlogproba, mask, s_, r one by one,
-        each one is a tensor.
-
-    Attributes:
-        memory: list of Transition eg. [Transition]
-    """
     def __init__(self):
         self.memory = []
 
@@ -257,156 +252,175 @@ class ZFilter:
 
 
 '''main'''
-env = gym.make(args.env_name)
-dim_states = env.observation_space.shape[0]
-dim_actions = env.action_space.shape[0]
+def main(args):
+    env = gym.make(args.env_name)
+    dim_states = env.observation_space.shape[0]
+    dim_actions = env.action_space.shape[0]
 
-env.seed(args.seed)
-torch.manual_seed(args.seed)
+    env.seed(args.seed)
+    torch.manual_seed(args.seed)
 
-# actor = Actor(dim_states, dim_actions)
-# baseline = Baseline(dim_states)
-network = ActorCritic(dim_states, dim_actions, layer_norm=args.layer_norm)
-optimizer = torch.optim.Adam(network.parameters(), lr=args.lr)
-writer = SummaryWriter(args.tensorboard_log_path)
-running_state = ZFilter((dim_states,), clip=5.0)
+    # actor = Actor(dim_states, dim_actions)
+    # baseline = Baseline(dim_states)
+    network = ActorCritic(dim_states, dim_actions, layer_norm=args.layer_norm)
+    optimizer = torch.optim.Adam(network.parameters(), lr=args.lr)
+    writer = SummaryWriter(args.tensorboard_log_path)
+    running_state = ZFilter((dim_states,), clip=5.0)
 
-global_trans = 0
-global_epis = 0
-global_update_epoch = 0
-lr_now = args.lr
-clip_now = args.clip
+    global_trans = 0
+    global_epis = 0
+    global_update_epoch = 0
+    lr_now = args.lr
+    clip_now = args.clip
+    r_trans = []
 
-for update_round_cnt in range(args.update_round): # loop[update]
-    # 1. rollout data
-    memory = Memory()
-    num_trans = 0 # count number of steps, when reachs args.batch_size, finish rolling out, start updating
-    while num_trans < args.batch_size: # loop[episode]
-        s = env.reset()
-        r_sum = 0
-        if args.state_norm:
-            s = running_state(s) # state norm
-        for t in range(args.max_step_per_round): # loop[step]
-            a_mean, a_logstd, value = network(Tensor(s).unsqueeze(0))
-            a, logproba = network.select_action(a_mean, a_logstd)
-            a = a.data.numpy()[0]
-            logproba = logproba.data.numpy()[0]
-            s_, r, is_done, _ = env.step(a)
-            mask = 0 if is_done else 1 # TODO if not finished, mask is not 0?
+    for update_round_cnt in range(args.update_round): # loop[update]
+        # 1. rollout data
+        memory = Memory()
+        num_trans = 0 # count number of steps, when reachs args.batch_size, finish rolling out, start updating
+        while num_trans < args.batch_size: # loop[episode]
+            s = env.reset()
+            r_sum = 0
+            # TODO add running state trick
             if args.state_norm:
-                s_ = running_state(s_)
-            memory.push(Transition(
-                s, value, a, logproba, mask, s_, r)
-            )
-            s = s_
-            r_sum += r
-            if is_done: break
+                s = running_state(s)
+            for t in range(args.max_step_per_round): # loop[step]
+                a_mean, a_logstd, value = network(Tensor(s).unsqueeze(0))
+                a, logproba = network.select_action(a_mean, a_logstd)
+                a = a.data.numpy()[0]
+                logproba = logproba.data.numpy()[0]
+                s_, r, is_done, _ = env.step(a)
+                mask = 0 if is_done else 1 # TODO if not finished, mask is not 0?
+                if args.state_norm:
+                    s_ = running_state(s_)
+                memory.push(Transition(
+                    s, value, a, logproba, mask, s_, r)
+                )
+                s = s_
+                r_sum += r
+                if is_done: break
 
-        writer.add_scalar('Episode/Reward', r_sum, global_epis)
-        writer.add_scalar('Episode/Epis Length', t, global_epis)
-        writer.add_scalar('Episode/Reward_Ave_Step', r_sum/t, global_epis)
-        num_trans += (t+1)
-        global_trans += (t+1)
-        global_epis += 1
-    
-    # 2. prepare data
-    # s, a, a_mean, a_logstd, mask, s_, r = memory.sample_zip()
-    # fetch data from memory
-    s, value, a, oldlogproba, mask, s_, r = memory.sample_zip(do_reverse=False)
-    batch_size = len(memory)
-    # GAE calculation
-    returns = Tensor(batch_size)
-    deltas = Tensor(batch_size)
-    advantages = Tensor(batch_size)
-    prev_return = 0
-    prev_value = 0
-    prev_advantage = 0
-    for i in reversed(range(batch_size)):
-        returns[i] = r[i] + args.gamma * prev_return * mask[i]
-        deltas[i] = r[i] + args.gamma * prev_value * mask[i] - value[i]
-        # ref: https://arxiv.org/pdf/1506.02438.pdf (generalization advantage estimate)
-        advantages[i] = deltas[i] + args.gamma * args.lamda * prev_advantage * mask[i]
-        prev_return = returns[i]
-        prev_value = value[i]
-        prev_advantage = advantages[i]
-    # write log about return, reward, advantages, ...
-    writer.add_histogram("update_epoch/return", returns, update_round_cnt)
-    writer.add_histogram("update_epoch/reward", r, update_round_cnt)
-    writer.add_histogram("update_epoch/advantages", advantages, update_round_cnt)
-    writer.add_histogram("update_epoch/value", value, update_round_cnt)
-    writer.add_histogram("update_epoch/deltas", deltas, update_round_cnt)
-    # advantage norm
-    if args.advantage_norm:
-        advantages = (advantages - advantages.mean()) / (advantages.std() + EPS)
+            writer.add_scalar('Episode/Reward', r_sum, global_epis)
+            writer.add_scalar('Episode/Reward-Trans', r_sum, global_trans)
+            writer.add_scalar('Episode/Epis Length', t, global_epis)
+            writer.add_scalar('Episode/Reward_Ave_Step', r_sum/t, global_epis)
+            r_trans.append((r_sum, global_trans))
+            num_trans += (t+1)
+            global_trans += (t+1)
+            global_epis += 1
+            if global_trans > args.end_trans: return {
+                'env': args.env_name,
+                'r_trans': r_trans
+            }
+        # 2. prepare data
+        # s, a, a_mean, a_logstd, mask, s_, r = memory.sample_zip()
+        s, value, a, oldlogproba, mask, s_, r = memory.sample_zip(do_reverse=False) # TODO reverse
+        batch_size = len(memory)
+        # GAE
+        returns = Tensor(batch_size)
+        deltas = Tensor(batch_size)
+        advantages = Tensor(batch_size)
+        prev_return = 0
+        prev_value = 0
+        prev_advantage = 0
+        for i in reversed(range(batch_size)):
+            returns[i] = r[i] + args.gamma * prev_return * mask[i]
+            deltas[i] = r[i] + args.gamma * prev_value * mask[i] - value[i]
+            # ref: https://arxiv.org/pdf/1506.02438.pdf (generalization advantage estimate)
+            advantages[i] = deltas[i] + args.gamma * args.lamda * prev_advantage * mask[i]
+            prev_return = returns[i]
+            prev_value = value[i]
+            prev_advantage = advantages[i]
+        writer.add_histogram("update_epoch/return", returns, update_round_cnt)
+        writer.add_histogram("update_epoch/reward", r, update_round_cnt)
+        writer.add_histogram("update_epoch/advantages", advantages, update_round_cnt)
+        writer.add_histogram("update_epoch/value", value, update_round_cnt)
+        writer.add_histogram("update_epoch/deltas", deltas, update_round_cnt)
+        
+        if args.advantage_norm:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + EPS)
 
-    # 3. update
-    for i_epoch in range(int(args.num_epoch * batch_size / args.minibatch_size)):
-        global_update_epoch += 1
-        # sample from current batch
-        minibatch_ind = np.random.choice(batch_size, args.minibatch_size, replace=False)
-        minibatch_states = s[minibatch_ind]
-        minibatch_actions = a[minibatch_ind]
-        minibatch_oldlogproba = oldlogproba[minibatch_ind]
-        minibatch_newlogproba = network.get_logproba(minibatch_states, minibatch_actions)
-        minibatch_advantages = advantages[minibatch_ind]
-        minibatch_returns = returns[minibatch_ind]
-        minibatch_newvalues = network._forward_critic(minibatch_states).flatten()
+        # 3. update
+        for i_epoch in range(int(args.num_epoch * batch_size / args.minibatch_size)):
+            global_update_epoch += 1
+            # sample from current batch
+            minibatch_ind = np.random.choice(batch_size, args.minibatch_size, replace=False)
+            minibatch_states = s[minibatch_ind]
+            minibatch_actions = a[minibatch_ind]
+            minibatch_oldlogproba = oldlogproba[minibatch_ind]
+            minibatch_newlogproba = network.get_logproba(minibatch_states, minibatch_actions)
+            minibatch_advantages = advantages[minibatch_ind]
+            minibatch_returns = returns[minibatch_ind]
+            minibatch_newvalues = network._forward_critic(minibatch_states).flatten()
 
-        ratio =  torch.exp(minibatch_newlogproba - minibatch_oldlogproba)
-        surr1 = ratio * minibatch_advantages
-        surr2 = ratio.clamp(1 - clip_now, 1 + clip_now) * minibatch_advantages
-        loss_surr = - torch.mean(torch.min(surr1, surr2))
+            ratio =  torch.exp(minibatch_newlogproba - minibatch_oldlogproba)
+            surr1 = ratio * minibatch_advantages
+            surr2 = ratio.clamp(1 - clip_now, 1 + clip_now) * minibatch_advantages
+            loss_surr = - torch.mean(torch.min(surr1, surr2))
 
-        # not sure the value loss should be clipped as well 
-        # clip example: https://github.com/Jiankai-Sun/Proximal-Policy-Optimization-in-Pytorch/blob/master/ppo.py
-        # however, it does not make sense to clip score-like value by a dimensionless clipping parameter
-        # moreover, original paper does not mention clipped value 
-        if args.lossvalue_norm:
-            minibatch_return_6std = 6 * minibatch_returns.std()
-            loss_value = torch.mean((minibatch_newvalues - minibatch_returns).pow(2)) / minibatch_return_6std
-        else:
-            loss_value = torch.mean((minibatch_newvalues - minibatch_returns).pow(2))
+            # not sure the value loss should be clipped as well 
+            # clip example: https://github.com/Jiankai-Sun/Proximal-Policy-Optimization-in-Pytorch/blob/master/ppo.py
+            # however, it does not make sense to clip score-like value by a dimensionless clipping parameter
+            # moreover, original paper does not mention clipped value 
+            if args.lossvalue_norm:
+                minibatch_return_6std = 6 * minibatch_returns.std()
+                loss_value = torch.mean((minibatch_newvalues - minibatch_returns).pow(2)) / minibatch_return_6std
+            else:
+                loss_value = torch.mean((minibatch_newvalues - minibatch_returns).pow(2))
 
-        loss_entropy = torch.mean(torch.exp(minibatch_newlogproba) * minibatch_newlogproba)
+            loss_entropy = torch.mean(torch.exp(minibatch_newlogproba) * minibatch_newlogproba)
 
-        total_loss = loss_surr + args.loss_coeff_value * loss_value + args.loss_coeff_entropy * loss_entropy
-        optimizer.zero_grad()
-        total_loss.backward()
-        optimizer.step()
-        # writer.add_scalar('Loss/', torch.mean(total_loss).detach().numpy(), global_update_epoch)
-        writer.add_scalar('Loss/total_loss', torch.mean(total_loss).detach().numpy(), global_update_epoch)
-        writer.add_scalar('Loss/loss_surr', torch.mean(loss_surr).detach().numpy(), global_update_epoch)
-        writer.add_scalar('Loss/loss_value', torch.mean(loss_value).detach().numpy(), global_update_epoch)
-        writer.add_scalar('Loss/loss_entropy', torch.mean(loss_entropy).detach().numpy(), global_update_epoch)
+            total_loss = loss_surr + args.loss_coeff_value * loss_value + args.loss_coeff_entropy * loss_entropy
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
+            # writer.add_scalar('Loss/', torch.mean(total_loss).detach().numpy(), global_update_epoch)
+            writer.add_scalar('Loss/total_loss', torch.mean(total_loss).detach().numpy(), global_update_epoch)
+            writer.add_scalar('Loss/loss_surr', torch.mean(loss_surr).detach().numpy(), global_update_epoch)
+            writer.add_scalar('Loss/loss_value', torch.mean(loss_value).detach().numpy(), global_update_epoch)
+            writer.add_scalar('Loss/loss_entropy', torch.mean(loss_entropy).detach().numpy(), global_update_epoch)
 
-    # change some parameters
-    if args.schedule_clip == 'linear':
-        ep_ratio = 1 - (update_round_cnt / args.update_round)
-        clip_now = args.clip * ep_ratio
-    if args.schedule_adam == 'linear':
+        # change some parameters
+        if args.schedule_clip == 'linear':
             ep_ratio = 1 - (update_round_cnt / args.update_round)
-            lr_now = args.lr * ep_ratio
-            # set learning rate
-            # ref: https://stackoverflow.com/questions/48324152/
-            for g in optimizer.param_groups:
-                g['lr'] = lr_now
+            clip_now = args.clip * ep_ratio
+        if args.schedule_adam == 'linear':
+                ep_ratio = 1 - (update_round_cnt / args.update_round)
+                lr_now = args.lr * ep_ratio
+                # set learning rate
+                # ref: https://stackoverflow.com/questions/48324152/
+                for g in optimizer.param_groups:
+                    g['lr'] = lr_now
 
-    
-    # log
-    if update_round_cnt % args.log_num_round == 0:
-        print("test log batch_size: {}".format(batch_size))
+        
+        # log
+        if update_round_cnt % args.log_num_round == 0:
+            print("test log batch_size: {}".format(batch_size))
 
-    # save model
-    if update_round_cnt % args.model_save_num_round == 0:
-        path = args.save_model_path
-        if os.path.exists(path):
-            shutil.rmtree(path)
-            print("Model saved path already exists, rewrite with new: "+path)
-        os.mkdir(path)
-        torch.save(network, path+"ppo_net")
-        test = torch.load(path+"ppo_net")
-        print("Model saved at dir {0}".format(path))
+        # save model
+        if update_round_cnt % args.model_save_num_round == 0:
+            path = args.save_model_path
+            if os.path.exists(path):
+                shutil.rmtree(path)
+                print("Model saved path already exists, rewrite with new: "+path)
+            os.mkdir(path)
+            torch.save(network, path+"ppo_net")
+            test = torch.load(path+"ppo_net")
+            print("Model saved at dir {0}".format(path))
 
-    
-    
+        
+def save_res(data, path):
+    np.save(path, data, allow_pickle=True)
 
+def test_on_envs():
+    envs = ['HalfCheetah-v2', 'Hopper-v2', 'InvertedDoublePendulum-v2',
+    'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2',
+    'Walker2d-v2']
+    folder = './data/res/'
+    for env in envs:
+        arg = args()
+        arg.env_name = env
+        res = main(arg)
+        save_res(res, folder + arg.env_name)
+        print('Saved: '+folder + arg.env_name)
+test_on_envs()
