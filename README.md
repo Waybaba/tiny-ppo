@@ -24,3 +24,11 @@ Draw result
 python ./utils/draw_res.py
 ```
 There are some files end with _.png, _.npy, these are my result files.
+
+| HalfCheetah-v2      | Hopper-v2      | InvertedDoublePendulum-v2      |
+|------------|-------------|-------------|
+| <img src="https://github.com/Waybaba/tiny-ppo/blob/master/output/HalfCheetah-v2_.png" width="250"> | <img src="https://github.com/Waybaba/tiny-ppo/blob/master/output/Hopper-v2_.png" width="250"> | <img src="https://github.com/Waybaba/tiny-ppo/blob/master/output/InvertedDoublePendulum-v2_.png" width="250">|
+| InvertedPendulum-v2      | Reacher-v2      | Swimmer-v2     |
+| <img src="https://github.com/Waybaba/tiny-ppo/blob/master/output/InvertedPendulum-v2_.png" width="250"> | <img src="https://github.com/Waybaba/tiny-ppo/blob/master/output/Reacher-v2_.png" width="250"> | <img src="https://github.com/Waybaba/tiny-ppo/blob/master/output/Swimmer-v2_.png" width="250">|
+| Walker2d-v2      | 
+| <img src="https://github.com/Waybaba/tiny-ppo/blob/master/output/Walker2d-v2_.png" width="250"> | 
