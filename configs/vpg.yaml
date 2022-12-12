@@ -1,0 +1,19 @@
+# to yaml format
+mode: train
+learning_rate: 0.001
+gamma: 0.99
+memory_capacity: 100000
+save_model_path: ./data/model/latest
+save_log_path: ./data/log/latest
+epis_num: 2000
+max_step_num: 500
+log_epis: 50
+memory_save_path: ./data/latest_mem.npy
+memory_load_path: ./data/latest_mem.npy
+tensorboard_log_path: ./data/log/tensorboard_log/latest
+model_save_dir: ./data/model/latest/
+model_load_dir: ./data/model/latest/
+test_epis_num: 2
+# env_name: CartPole-v1
+env_name: HalfCheetah-v4
+delay_steps: 0 # 0 for no delay

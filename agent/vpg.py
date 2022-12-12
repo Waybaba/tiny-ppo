@@ -3,9 +3,14 @@
 all state, action are saved as np instead of tensor
 tensor are saved in extra, which is [output] in this file
 all var saved as numpy as default instead of list or tensor
-TODO: different output in select_action and update
+TODO: change to hydra
 
+TODO: different output in select_action and update
 """
+
+import hydra
+import pyrootutils
+from pprint import pprint
 
 
 import os
@@ -20,34 +25,19 @@ import pandas as pd
 from tqdm import tqdm, trange
 import matplotlib.pyplot as plt
 import numpy as np
-import gym
+import gymnasium as gym
 import sys
 sys.path.append(sys.path[0]+"/..")
 from utils.experience import *
-from torch.utils.tensorboard import SummaryWriter
+from utils.delay import DelayedRoboticEnv
 import time
 import shutil
+
+
 
 # print(sys.path)
 
 cur_path = os.path.split(__file__)[0]
-
-class st(object):
-    mode = 'train'
-    learning_rate = 0.001  # optimizer learning rate
-    gamma = 0.99  # reward discount
-    memory_capacity = 100000
-    save_model_path = './data/model/latest'
-    save_log_path = './data/log/latest'
-    epis_num = 2000
-    max_step_num = 500
-    log_epis = 50
-    memory_save_path = cur_path+"/../data/latest_mem.npy"
-    memory_load_path = cur_path+"/../data/latest_mem.npy"
-    tensorboard_log_path = cur_path+"/../data/log/tensorboard_log/latest"
-    model_save_dir = cur_path+"/../data/model/latest/"
-    model_load_dir = cur_path+"/../data/model/latest/"
-    test_epis_num = 2
 
 
 '''Net'''
@@ -76,9 +66,11 @@ class PolicyNet(nn.Module):
 '''Policy Gradient Agent'''
 
 class Agent:
-    def __init__(self, state_num, action_num, memory_capacity=10000, gamma=0.99,
-                 name="PolicyGradient"
-                 ):
+    def __init__(self, env, cfg, name="PolicyGradient"):
+        state_num = env.observation_space.shape[0]
+        action_num = env.action_space.n
+        memory_capacity = cfg.memory_capacity
+        gamma = cfg.gamma
         self.gamma = gamma
         self.state_num = state_num
         self.memory = Experience(memory_capacity)
@@ -86,7 +78,7 @@ class Agent:
         # TODO: select action net
         self.net = PolicyNet(input_num=state_num, output_num=action_num)
         self.optimizer = torch.optim.Adam(
-            self.net.parameters(), lr=st.learning_rate)
+            self.net.parameters(), lr=cfg.learning_rate)
 
     def select_action(self, s):
         '''select_action'''
@@ -142,57 +134,49 @@ class Agent:
                   format(path)
                   )
 
-    # utils
 
-if __name__ == "__main__":
+root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
 
+@hydra.main(version_base=None, config_path=root / "configs", config_name="vpg.yaml")
+def main(cfg):
+    pprint(cfg)
+    print("finished!") # TODO print nicely
     '''init'''
-    env = gym.make('CartPole-v1')
-    # env = gym.make('MountainCarContinuous-v0')
-    # action_num = 10
-    # action_list = [(i*np.array(env.action_space.low) + (action_num-i)*np.array(env.action_space.high))/action_num for i in range(action_num)] # use action_list[action_idx] to turn num into float
-    # action_list = [(i**3)/(18**2) for i in action_list]
-    state_num = env.observation_space.shape[0]
-    action_num = env.action_space.n
-    writer = SummaryWriter(st.tensorboard_log_path)
-    agent = Agent(
-        state_num=state_num,
-        action_num=action_num,
-        memory_capacity=st.memory_capacity,
-        gamma=st.gamma
-    )
-    
-    '''main'''
-    if st.mode == 'train': # train
-        for epis_cnt in range(st.epis_num):
-            s = env.reset()
+    from utils.wandb import init_wandb
+    wandb = init_wandb(cfg)
+    env = gym.make(cfg.env_name)
+    if cfg.delay_steps > 0: # apply delay
+        env = DelayedRoboticEnv(env, delay_steps=cfg.delay_steps)
+    agent = Agent(env, cfg)
+    if cfg.mode == 'train': # train
+        for epis_cnt in range(cfg.epis_num):
+            s, info = env.reset()
             is_done = False
             step_cnt = 0
-            # for step_cnt in range(st.max_step):
+            # for step_cnt in range(cfg.max_step):
             while not is_done:
                 a, output = agent.select_action(s)
-                s_, r, is_done, _ = env.step(a) 
-                # s_, r, is_done, _ = env.step(action_list[a]) # for regression task
-                if step_cnt > st.max_step_num or is_done:  # end of episode
+                s_, r, is_done, _, info = env.step(a) 
+                if step_cnt > cfg.max_step_num or is_done:  # end of episode
                     is_done = True
                 agent.memory.push_trans(Transition(
                     s, a, r, s_, is_done, extra={'output':output}))
                 s = s_
                 step_cnt += 1
-            writer.add_scalar('Reward', agent.memory[-1].total_reward, epis_cnt)
+            wandb.log({'Reward': agent.memory[-1].total_reward})
             agent.update()
-            if epis_cnt % st.log_epis == 0 and epis_cnt != 0:
+            if epis_cnt % cfg.log_epis == 0 and epis_cnt != 0:
                 print("Episode {:>5}/{:<5}: mean_reward = {:.2f} rooling_mean_reward = {:.2f}".\
                 format(
                     epis_cnt,
-                    st.epis_num, 
+                    cfg.epis_num, 
                     agent.memory.total_reward_mean, 
-                    sum(agent.memory.total_reward_list[-st.log_epis:])/st.log_epis
+                    sum(agent.memory.total_reward_list[-cfg.log_epis:])/cfg.log_epis
                 ))
-        agent.save(st.model_save_dir, print_log=True) # save model
-    elif st.mode == 'test': # test
-        agent.load(st.model_load_dir, print_log=True)
-        for epis_cnt in range(st.test_epis_num):
+        agent.save(cfg.model_save_dir, print_log=True) # save model
+    elif cfg.mode == 'test': # test
+        agent.load(cfg.model_load_dir, print_log=True)
+        for epis_cnt in range(cfg.test_epis_num):
             s = env.reset()
             is_done = False
             step_cnt = 0
@@ -202,23 +186,22 @@ if __name__ == "__main__":
                 a, output = agent.select_action(s)
                 s_, r, is_done, _ = env.step(a)
                 # s_, r, is_done, _ = env.step(action_list[a]) # for regression task
-                if step_cnt > st.max_step_num or is_done:
+                if step_cnt > cfg.max_step_num or is_done:
                     is_done = True
                 agent.memory.push_trans(Transition(
                     s, a, r, s_, is_done, extra={'output':output}))
                 s = s_
                 step_cnt += 1
             print("Test episode {:>5}/{:<5}: total_reward = {:.2f}".\
-            format(epis_cnt+1,st.test_epis_num, agent.memory[-1].total_reward))
-    
-
+            format(epis_cnt+1,cfg.test_epis_num, agent.memory[-1].total_reward))
     '''note area'''
-    # print(agent.memory.describe())
-    # print(agent.memory.df)
-    # agent.memory.save(st.memory_save_path, print_log=True)
-    # agent.memory.load(st.memory_load_path, print_log=True)
-    # agent.save(st.model_save_dir, print_log=True)
-    # agent.load(st.model_load_dir, print_log=True)
-    # print(agent.memory.info())
-
-
+    print(agent.memory.describe())
+    print(agent.memory.df)
+    agent.memory.save(cfg.memory_save_path, print_log=True)
+    agent.memory.load(cfg.memory_load_path, print_log=True)
+    agent.save(cfg.model_save_dir, print_log=True)
+    agent.load(cfg.model_load_dir, print_log=True)
+    print(agent.memory.info())
+    
+if __name__ == "__main__":
+    main()
