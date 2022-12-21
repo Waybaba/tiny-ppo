@@ -38,3 +38,8 @@ class DelayedRoboticEnv(gym.Env):
 
     def close(self):
         return self.env.close()
+
+# RLlib version
+class RLlibDelayedRoboticEnv(DelayedRoboticEnv):
+    def __init__(self, env0: gym.Env, env_config):
+        super().__init__(env0, env_config["delay_steps"])

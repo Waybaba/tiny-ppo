@@ -1,19 +1,52 @@
-# to yaml format
-mode: train
-learning_rate: 0.001
-gamma: 0.99
-memory_capacity: 100000
-save_model_path: ./data/model/latest
-save_log_path: ./data/log/latest
-epis_num: 2000
-max_step_num: 500
-log_epis: 50
-memory_save_path: ./data/latest_mem.npy
-memory_load_path: ./data/latest_mem.npy
-tensorboard_log_path: ./data/log/tensorboard_log/latest
-model_save_dir: ./data/model/latest/
-model_load_dir: ./data/model/latest/
-test_epis_num: 2
-# env_name: CartPole-v1
-env_name: HalfCheetah-v4
+defaults:
+  - paths: default.yaml
+  - _self_
+output_dir: "${paths.output_dir}"
+device: "cpu"
+env:
+  name: CartPole-v0
+  train_num: 2
+  test_num: 2
+tags: ["debug"]
+task_name: "RL"
 delay_steps: 0 # 0 for no delay
+net:
+  _target_: tianshou.utils.net.common.Net
+  _partial_: true
+  hidden_sizes: [128, 128, 128]
+  softmax: true
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 0.001
+policy:
+  # _target_: tianshou.policy.PGPolicy
+  _target_: new.vpg_tianshou.PGPolicy
+  _partial_: true
+  dist_fn: 
+    _target_: torch.distributions.Categorical
+    _partial_: true
+  discount_factor: 0.99
+  reward_normalization: true
+train_collector:
+  _target_: tianshou.data.Collector
+  _partial_: true
+  buffer: 
+    _target_: tianshou.data.VectorReplayBuffer
+    total_size: 20000
+    buffer_num: 2
+  exploration_noise: true
+test_collector:
+  _target_: tianshou.data.Collector
+  _partial_: true
+trainer:
+  _target_: tianshou.trainer.OnpolicyTrainer
+  _partial_: true
+  max_epoch: 1000
+  step_per_epoch: 500
+  repeat_per_collect: 10
+  episode_per_test: 10
+  batch_size: 256
+  step_per_collect: 2000
+
+

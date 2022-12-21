@@ -137,13 +137,17 @@ class Agent:
 
 root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
 
-@hydra.main(version_base=None, config_path=root / "configs", config_name="vpg.yaml")
+@hydra.main(version_base=None, config_path=str(root / "configs"), config_name="vpg.yaml")
 def main(cfg):
     pprint(cfg)
     print("finished!") # TODO print nicely
     '''init'''
-    from utils.wandb import init_wandb
-    wandb = init_wandb(cfg)
+    import wandb
+    wandb.init(
+        project=cfg.task_name,
+        tags=cfg.tags,
+        config=cfg.__dict__,
+    )
     env = gym.make(cfg.env_name)
     if cfg.delay_steps > 0: # apply delay
         env = DelayedRoboticEnv(env, delay_steps=cfg.delay_steps)
