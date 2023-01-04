@@ -22,3 +22,7 @@ __pycache__/
 /data/*
 /venv
 /venv_
+/venv__
+/venv___
+
+/.env
