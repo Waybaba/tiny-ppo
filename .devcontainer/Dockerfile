@@ -61,7 +61,7 @@ RUN pip install \
 RUN pip install \
     hydra-joblib-launcher \
     gymnasium \
-    mujoco \ 
+    mujoco \
     gym==0.25.0 \
     tianshou==0.4.8 \
     ftfy \
