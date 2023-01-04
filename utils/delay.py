@@ -1,28 +1,59 @@
 import gymnasium as gym
 import numpy as np
+from queue import Queue
 
-class DelayedRoboticEnv(gym.Env):
+class DelayedRoboticEnv(gym.Wrapper):
     def __init__(self, env0: gym.Env, delay_steps=2):
+        super().__init__(env0)
         self.env = env0
         self.delay_steps = delay_steps
 
-        self.action_space = self.env.action_space
+        # self.action_space = self.env.action_space
 
-        self.observation_space = self.env.observation_space
-        self.oracle_observation_space = self.env.observation_space
+        # self.observation_space = self.env.observation_space
+        # self.oracle_observation_space = self.env.observation_space
 
         self.delayed_obs = np.zeros([delay_steps + 1] + list(self.observation_space.shape), dtype=np.float32)
         # self.delayed_obs[-1] is the current obs
         # self.delayed_obs[-n] is the obs delayed for (n - 1) steps
+        
+        # make a queue for delayed observations
+        self.delay_buf = Queue(maxsize=delay_steps+1)
 
     def reset(self):
-        s, info = self.env.reset()
-        for stp in range(self.delay_steps + 1):
-            self.delayed_obs[stp] = s
-        return s, info
+        res = self.env.reset()
+        if isinstance(res, tuple):
+            res[-1]["current_obs"] = res[0]
+        return res
 
     def step(self, action):
-        sp, r, done, truncated, info = self.env.step(action)
+        """
+        make a queue of delayed observations, the size of the queue is delay_steps
+        for example, if delay_steps = 2, then the queue is [s_{t-2}, s_{t-1}, s_t]
+        for each step, the queue will be updated as [s_{t-1}, s_t, s_{t+1}]
+        """
+        res = self.env.step(action)
+        obs_cur, reward, done, info = res
+        # operate the queue
+        self.delay_buf.put(obs_cur)
+        while not self.delay_buf.full(): self.delay_buf.put(obs_cur) # make it full
+        obs_delayed = self.delay_buf.get()
+        # add to batch
+        info["obs_cur"] = obs_cur
+        info["obs_delayed"] = obs_delayed
+        return (obs_delayed, reward, done, info)
+        if isinstance(res, tuple):
+            if len(res) == 5:
+                sp, r, done, truncated, info = res
+            elif len(res) == 4:
+                sp, r, done, info = res
+                truncated = False
+            elif len(res) == 3:
+                sp, r, done = res
+                truncated = False
+                info = {}
+            else:
+                raise ValueError("Invalid return value from env.step()")
         for stp in range(self.delay_steps + 1):
             self.delayed_obs[stp] = sp if stp == self.delay_steps else self.delayed_obs[stp + 1]
         return self.delayed_obs[0], r, done, truncated, info
@@ -43,3 +74,12 @@ class DelayedRoboticEnv(gym.Env):
 class RLlibDelayedRoboticEnv(DelayedRoboticEnv):
     def __init__(self, env0: gym.Env, env_config):
         super().__init__(env0, env_config["delay_steps"])
+
+
+
+class DelayQueue:
+    """ a queue for delayed observations storation
+    """
+    def __init__(self, size):
+        self.size = size
+        self.queue = []

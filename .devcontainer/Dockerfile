@@ -63,7 +63,9 @@ RUN pip install \
     gymnasium \
     mujoco \ 
     gym==0.25.0 \
-    tianshou==0.4.8
+    tianshou==0.4.8 \
+    ftfy \
+    regex
 
 
 

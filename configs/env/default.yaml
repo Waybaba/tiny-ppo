@@ -1,0 +1,4 @@
+name: HalfCheetah-v4
+train_num: 1
+test_num: 1
+delay: 0
