@@ -426,6 +426,46 @@ class AsyncACDDPGPolicy(DDPGPolicy):
 		) - self._alpha * obs_next_result.log_prob
 		return target_q
 
+class SACTrainer:
+	def __init__(self,cfg):
+		self.cfg = cfg
+		self.init_logger()
+		self.train_envs, self.test_envs = self.build_envs()
+		self.train_collector, self.test_collector = self.build_collector()
+		self.net = self.build_net()
+		self.policy = self.build_policy()
+		self.trainer = self.build_trainer()
+	
+	def train(self):
+		for epoch, epoch_stat, info in self.trainer:
+			to_log = {
+				"key/reward": epoch_stat["test_reward"],
+				# "key/length": epoch_stat["test/episode_length"],
+			}
+			to_log.update(epoch_stat)
+			to_log.update(info)
+			wandb.log(to_log)
+		wandb.finish()
+	
+	def init_logger(self):
+		"""Init logger and wandb."""
+		return # TODO
+	
+	def build_envs(self):
+		return # TODO
+	
+	def build_collector(self):
+		return # TODO
+	
+	def build_net(self):
+		return # TODO
+	
+	def build_policy(self):
+		return # TODO
+	
+	def build_trainer(self):
+		return # TODO
+
 
 root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
 @hydra.main(version_base=None, config_path=str(root / "configs"), config_name="sac.yaml")
