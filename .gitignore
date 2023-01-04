@@ -9,8 +9,10 @@
 
 /data/bak/*
 __pycache__/
-/.vscode/
+/.vscode/*
 .DS_Store
+!/.vscode/launch.json
+/*.log
 
 /wandb/*
 /outputs/*
