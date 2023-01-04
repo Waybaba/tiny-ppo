@@ -23,7 +23,7 @@ class DelayedRoboticEnv(gym.Wrapper):
     def reset(self):
         res = self.env.reset()
         if isinstance(res, tuple):
-            res[-1]["current_obs"] = res[0]
+            res[-1]["obs_cur"] = res[0]
         return res
 
     def step(self, action):
@@ -33,15 +33,18 @@ class DelayedRoboticEnv(gym.Wrapper):
         for each step, the queue will be updated as [s_{t-1}, s_t, s_{t+1}]
         """
         res = self.env.step(action)
-        obs_cur, reward, done, info = res
+        obs_next_nodelay, reward, done, info = res
         # operate the queue
-        self.delay_buf.put(obs_cur)
-        while not self.delay_buf.full(): self.delay_buf.put(obs_cur) # make it full
-        obs_delayed = self.delay_buf.get()
+        self.delay_buf.put(obs_next_nodelay)
+        while not self.delay_buf.full(): self.delay_buf.put(obs_next_nodelay) # make it full
+        obs_next_delayed = self.delay_buf.get()
         # add to batch
-        info["obs_cur"] = obs_cur
-        info["obs_delayed"] = obs_delayed
-        return (obs_delayed, reward, done, info)
+        info["obs_next_nodelay"] = obs_next_nodelay
+        info["obs_next_delayed"] = obs_next_delayed
+        # copy and return
+        from copy import deepcopy
+        # return (obs_delayed, reward, done, info)
+        return (deepcopy(obs_next_delayed), deepcopy(reward), deepcopy(done), deepcopy(info))
         if isinstance(res, tuple):
             if len(res) == 5:
                 sp, r, done, truncated, info = res

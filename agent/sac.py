@@ -30,6 +30,7 @@ from tianshou.policy import DDPGPolicy
 from tianshou.exploration import BaseNoise
 from torch.distributions import Independent, Normal
 from copy import deepcopy
+from tianshou.trainer import OffpolicyTrainer
 
 class SACPolicy(DDPGPolicy):
 	"""Implementation of Soft Actor-Critic. arXiv:1812.05905.
@@ -80,7 +81,7 @@ class SACPolicy(DDPGPolicy):
 		critic1_optim: torch.optim.Optimizer,
 		critic2: torch.nn.Module,
 		critic2_optim: torch.optim.Optimizer,
-		tau: float = 0.005,
+		tau: float = 0.005, # TODO use hyperparameter in the paper
 		gamma: float = 0.99,
 		alpha: Union[float, Tuple[float, torch.Tensor, torch.optim.Optimizer]] = 0.2,
 		reward_normalization: bool = False,
@@ -188,7 +189,7 @@ class SACPolicy(DDPGPolicy):
 		actor_loss.backward()
 		self.actor_optim.step()
 
-		if self._is_auto_alpha:
+		if self._is_auto_alpha: # TODO auto alpha
 			log_prob = obs_result.log_prob.detach() + self._target_entropy
 			# please take a look at issue #258 if you'd like to change this line
 			alpha_loss = -(self._log_alpha * log_prob).mean()
@@ -295,7 +296,7 @@ class AsyncACSACPolicy(SACPolicy):
 		"""A simple wrapper script for updating critic network."""
 		weight = getattr(batch, "weight", 1.0)
 		# current_q = critic(batch.obs, batch.act).flatten()
-		current_q = critic(batch.info["obs_cur"], batch.act).flatten()
+		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
 		target_q = batch.returns.flatten()
 		td = current_q - target_q
 		# critic_loss = F.mse_loss(current_q1, target_q)
@@ -320,8 +321,8 @@ class AsyncACSACPolicy(SACPolicy):
 		act = obs_result.act
 		# current_q1a = self.critic1(batch.obs, act).flatten()
 		# current_q2a = self.critic2(batch.obs, act).flatten()
-		current_q1a = self.critic1(batch.info["obs_cur"], act).flatten()
-		current_q2a = self.critic2(batch.info["obs_cur"], act).flatten()
+		current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
+		current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
 		actor_loss = (
 			self._alpha * obs_result.log_prob.flatten() -
 			torch.min(current_q1a, current_q2a)
@@ -330,7 +331,7 @@ class AsyncACSACPolicy(SACPolicy):
 		actor_loss.backward()
 		self.actor_optim.step()
 
-		if self._is_auto_alpha:
+		if self._is_auto_alpha: # TODO check if need no delay
 			log_prob = obs_result.log_prob.detach() + self._target_entropy
 			# please take a look at issue #258 if you'd like to change this line
 			alpha_loss = -(self._log_alpha * log_prob).mean()
@@ -351,6 +352,30 @@ class AsyncACSACPolicy(SACPolicy):
 			result["alpha"] = self._alpha.item()  # type: ignore
 
 		return result
+	
+	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
+		batch = buffer[indices]  # batch.obs: s_{t+n}
+		# next_batch = buffer[buffer.next(indices)]  # next_batch.obs: s_{t+n+1}
+		# next_batch.obs_cur = next_batch.info["obs_nodelay"]
+		# obs_next_result = self(batch, input="obs_cur")
+		batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
+		obs_next_result = self(batch, input="obs_next_nodelay") # actor use delayed obs
+		act_ = obs_next_result.act
+		target_q = torch.min(
+			# self.critic1_old(batch.obs_next, act_),
+			# self.critic2_old(batch.obs_next, act_),
+			self.critic1_old(batch.info["obs_next_nodelay"], act_),
+			self.critic2_old(batch.info["obs_next_nodelay"], act_),
+		) - self._alpha * obs_next_result.log_prob
+		return target_q
+
+	def process_fn(
+		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
+	) -> Batch:
+		batch = super().process_fn(batch, buffer, indices)
+		prev_batch = buffer[buffer.prev(indices)]
+		batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
+		return batch
 
 class AsyncACDDPGPolicy(DDPGPolicy):
 	@staticmethod
@@ -386,6 +411,20 @@ class AsyncACDDPGPolicy(DDPGPolicy):
 			"loss/critic": critic_loss.item(),
 		}
 
+	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
+		batch = buffer[indices]  # batch.obs: s_{t+n}
+		next_batch = buffer[indices + 1]  # next_batch.obs: s_{t+n+1}
+		next_batch.obs_cur = next_batch.info["obs_cur"]
+		# obs_next_result = self(batch, input="obs_cur")
+		obs_next_result = self(next_batch, input="obs_cur")
+		act_ = obs_next_result.act
+		target_q = torch.min(
+			# self.critic1_old(batch.obs_next, act_),
+			# self.critic2_old(batch.obs_next, act_),
+			self.critic1_old(next_batch.obs_cur, act_),
+			self.critic2_old(next_batch.obs_cur, act_),
+		) - self._alpha * obs_next_result.log_prob
+		return target_q
 
 
 root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)

@@ -12,7 +12,7 @@ device: "cuda"
 net:
   _target_: tianshou.utils.net.common.Net
   _partial_: true
-  hidden_sizes: [64, 64]
+  hidden_sizes: [256, 256]
   softmax: false
   device: ${device}
 actor:
@@ -26,7 +26,7 @@ actor_optim:
 net_c1:
   _target_: tianshou.utils.net.common.Net
   _partial_: true
-  hidden_sizes: [64, 64]
+  hidden_sizes: [256, 256] # TODO more width and less depth
   concat: true
   device: ${device}
 critic1:
@@ -36,11 +36,11 @@ critic1:
 critic1_optim:
   _target_: torch.optim.Adam
   _partial_: true
-  lr: 3e-3
+  lr: 1e-3
 net_c2:
   _target_: tianshou.utils.net.common.Net
   _partial_: true
-  hidden_sizes: [64, 64]
+  hidden_sizes: [256, 256]
   concat: true
   device: ${device}
 critic2:
@@ -50,7 +50,7 @@ critic2:
 critic2_optim:
   _target_: torch.optim.Adam
   _partial_: true
-  lr: 3e-3
+  lr: 1e-3
 policy:
   # _target_: tianshou.policy.SACPolicy
   # _target_: agent.sac.CustomSACPolicy
@@ -59,13 +59,14 @@ policy:
   tau: 0.005
   gamma: 0.99
   alpha: 0.2
+  estimation_step: 1
 train_collector:
   _target_: tianshou.data.Collector
   _partial_: true
   buffer: 
-    _target_: tianshou.data.VectorReplayBuffer
-    total_size: 20000
-    buffer_num: 2
+    _target_: tianshou.data.ReplayBuffer
+    size: 1000000
+    # buffer_num: 2
   exploration_noise: true
 test_collector:
   _target_: tianshou.data.Collector
@@ -73,12 +74,14 @@ test_collector:
 trainer:
   _target_: tianshou.trainer.OffpolicyTrainer
   _partial_: true
+  max_epoch: 200
+  step_per_epoch: 5000
+  step_per_collect: 1
+  episode_per_test: 10
   batch_size: 256
-  step_per_epoch: 1000 # ~200/s
-  max_epoch: 50
-  episode_per_test: 2
-  step_per_collect: 2000
-  repeat_per_collect: 10
-
+  # repeat_per_collect: 1
+  update_per_step: 1
+  test_in_train: false
+  
 
 
