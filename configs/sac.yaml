@@ -23,6 +23,7 @@ actor_optim:
   _target_: torch.optim.Adam
   _partial_: true
   lr: 3e-4
+  gamma: 0.99
 net_c1:
   _target_: tianshou.utils.net.common.Net
   _partial_: true
@@ -34,27 +35,17 @@ critic1:
   _partial_: true
   device: ${device}
 critic1_optim:
-  _target_: torch.optim.Adam
+  _target_: ${actor_optim._target_}
   _partial_: true
   lr: 1e-3
-net_c2:
-  _target_: tianshou.utils.net.common.Net
-  _partial_: true
-  hidden_sizes: [256, 256]
-  concat: true
-  device: ${device}
-critic2:
-  _target_: tianshou.utils.net.continuous.Critic
-  _partial_: true
-  device: ${device}
-critic2_optim:
-  _target_: torch.optim.Adam
-  _partial_: true
-  lr: 1e-3
+  gamma: 0.99
+net_c2: ${net_c1}
+critic2: ${critic1}
+critic2_optim: ${critic1_optim}
 policy:
-  # _target_: tianshou.policy.SACPolicy
+  _target_: tianshou.policy.SACPolicy
   # _target_: agent.sac.CustomSACPolicy
-  _target_: agent.sac.AsyncACSACPolicy
+  # _target_: agent.sac.AsyncACSACPolicy
   _partial_: true
   tau: 0.005
   gamma: 0.99

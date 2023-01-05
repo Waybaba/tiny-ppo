@@ -476,7 +476,7 @@ def main(cfg):
 		return env
 	# init
 	utils.print_config_tree(cfg, resolve=True)
-	wandb.init(project=cfg.task_name, tags=cfg.tags, config=utils.config_format(cfg))
+	wandb.init(project=cfg.task_name, tags=cfg.tags, config=utils.config_format(cfg),dir=cfg.output_dir+"/wandb")
 	cfg = hydra.utils.instantiate(cfg)
 	# env & not & policy
 	train_envs = tianshou.env.DummyVectorEnv([partial(make_env, cfg.env) for _ in range(cfg.env.train_num)])
