@@ -474,10 +474,12 @@ def main(cfg):
 		env = gym.make(env_cfg.name)
 		env = DelayedRoboticEnv(env, env_cfg.delay)
 		return env
+	
 	# init
 	utils.print_config_tree(cfg, resolve=True)
 	wandb.init(project=cfg.task_name, tags=cfg.tags, config=utils.config_format(cfg),dir=cfg.output_dir)
 	cfg = hydra.utils.instantiate(cfg)
+	torch.manual_seed(cfg.seed) # TODO add env seed
 	# env & not & policy
 	train_envs = tianshou.env.DummyVectorEnv([partial(make_env, cfg.env) for _ in range(cfg.env.train_num)])
 	test_envs = tianshou.env.DummyVectorEnv([partial(make_env, cfg.env) for _ in range(cfg.env.test_num)])
