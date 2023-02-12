@@ -11,11 +11,6 @@ ENV UDATADIR=/data \
     UPRJDIR=/code \
     UOUTDIR=/output \
     UDEVICEID=docker
-ENV FIFTYONE_DATASET_ZOO_DIR=${UDATADIR}/fiftyone \
-    FIFTYONE_DEFAULT_DATASET_DIR=${UDATADIR}/fiftyone \
-    FIFTYONE_MODEL_ZOO_DIR=${UDATADIR}/fiftyone/__models__ \
-    FIFTYONE_DATABASE_DIR=${UDATADIR}/fiftyone/database/mongo
-
 
 # apt
 RUN apt-get update && apt-get install -y \
@@ -38,7 +33,7 @@ RUN conda install -y --name base -c conda-forge \
 
 RUN pip install \
     opencv-python \
-    pytorch-lightning \
+    pytorch-lightning==1.7.7 \
     # hydra-joblib-launcher \
     hydra-core \
     hydra-colorlog \
