@@ -1,0 +1,5 @@
+_target_: tianshou.utils.net.common.Net
+_partial_: true
+hidden_sizes: [256, 256]
+softmax: false
+device: ${device}

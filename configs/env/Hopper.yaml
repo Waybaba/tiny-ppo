@@ -1,4 +1,4 @@
 defaults:
   - default.yaml
-name: HalfCheetah-v4
+name: Hopper-v4
 delay: 0

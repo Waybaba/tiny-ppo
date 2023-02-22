@@ -1,0 +1,70 @@
+description: AMLT
+
+target:
+  service: singularity
+  name: msrresrchvc    # more GPUs 
+
+environment:
+  image: waybaba/rl:v2
+  username: waybaba
+  setup:
+    - echo "setup start..."
+    - export UPRJDIR=/mnt/default/
+    - export UDATADIR=/mnt/storage/data
+    - export UOUTDIR=/mnt/storage/output
+    - mkdir -p /mnt/storage/output /mnt/storage/data
+    - echo "setup finished!"
+
+
+code:
+  local_dir: $CONFIG_DIR/../../
+
+storage:
+  input:
+    storage_account_name: resrchvc4data
+    container_name: v-wangwei1
+    mount_dir: /mnt/storage
+    local_dir: /home/v-wangwei1/storage
+
+# search:
+#   job_template:
+#     name: delay_{experiment_name:s}_{auto:5s}
+#     command:
+#     - python agent/sac.py
+#       train_collector.buffer.size={train_collector_buffer_size}
+#       policy._target_=tianshou.policy.SACPolicy
+#       env.delay={env_delay}
+#       seed={seed}
+#       tags=["delay_amlt_test_2"]
+#   type: grid
+#   max_trials: 10000
+#   params:
+#     - name: train_collector_buffer_size
+#       values: [1000000,100000,10000]
+#     - name: env_delay
+#       values: [1,4,8,16,2,32,0]
+#     - name: seed
+#       values: [0,1,2,3,4]
+search:
+  job_template:
+    name: delay_amlt_rnn_and_normal{experiment_name:s}_{auto:5s}
+    command:
+    - python agent/sac.py
+      train_collector.buffer.size={train_collector_buffer_size}
+      policy._target_=agent.sac.AsyncACSACPolicy
+      env.delay={env_delay}
+      net={net}
+      net@net_c1={net}
+      seed={seed}
+      tags=["delay_amlt_rnn_and_normal"]
+  type: grid
+  max_trials: 10000
+  params:
+    - name: train_collector_buffer_size
+      values: [1000000,100000,10000]
+    - name: env_delay
+      values: [1,4,8,16,2,32,0]
+    - name: seed
+      values: [0,1,2,3,4]
+    - name: net
+      values: [default,rnn]

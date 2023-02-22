@@ -3,7 +3,7 @@
 	"context": ".",
 	"dockerFile": "Dockerfile",
 	"runArgs": [
-		"--name", "plightning-${localEnv:UDEVICEID}",
+		"--name", "rl-${localEnv:UDEVICEID}",
 		"--gpus=all",
 		// "-p", "6006:6006",
 		// "-p", "5151:5151",

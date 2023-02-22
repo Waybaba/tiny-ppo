@@ -82,7 +82,7 @@ RUN curl https://mujoco.org/download/mujoco210-linux-x86_64.tar.gz --output mujo
 RUN mkdir ~/.mujoco
 RUN tar -xf mujoco210.tar.gz --directory ~/.mujoco
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/.mujoco/mujoco210/bin
-
+USER root
 
 
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Sequence
-
+import gym
 import rich
 import rich.syntax
 import rich.tree
@@ -8,6 +8,16 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf, open_dict
 from pytorch_lightning.utilities import rank_zero_only
 from rich.prompt import Prompt
+from tianshou.utils.net.common import Net
+from gym.envs.mujoco.half_cheetah_v4 import HalfCheetahEnv
+
+from typing import Dict, List, Optional, Union, Sequence, Any, Tuple, Callable, TypeVar, Generic, cast, Type, Mapping
+from torch import nn
+import torch
+import numpy as np
+from tianshou.utils.net.common import MLP
+ModuleType = Type[nn.Module]
+
 
 from utils import pylogger
 
@@ -19,6 +29,15 @@ from pytorch_lightning.utilities.logger import (
     _sanitize_callable_params,
 )
 
+def seed_everything(seed: int):
+    import random, os
+    import numpy as np
+    import torch
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
 
 def config_format(cfg: DictConfig) -> DictConfig:
     """Formats config to be saved to wandb."""
@@ -85,3 +104,117 @@ def print_config_tree(
     if save_to_file:
         with open(Path(cfg.paths.output_dir, "config_tree.log"), "w") as file:
             rich.print(tree, file=file)
+
+class RNNNet(nn.Module):
+    """ use same parameter with Net, but add a RNN layer before the MLP
+    extra parameters:
+        rnn_size: int, default 256 # add a RNN layer before the MLP
+    """
+    def __init__(self, state_shape, **kwargs):
+        super().__init__()
+        # 
+        kwargs["state_shape"] = state_shape
+        if "concat" in kwargs and kwargs["concat"]: # use as critic or actor
+            input_dim = kwargs["state_shape"][0] + kwargs["action_shape"][0]
+        else:
+            input_dim = kwargs["state_shape"][0]
+        # rnn
+        self.rnn = None # TODO
+        rnn_output_dim = rnn_state_dim = kwargs.pop("rnn_size", 256)
+        self.rnn = nn.RNN(input_dim, rnn_state_dim, batch_first=True)
+        # mlp
+        kwargs["state_shape"] = (rnn_output_dim,)
+        # self.net = Net(**kwargs) 
+        self.net = MLP(rnn_output_dim, kwargs["hidden_sizes"][-1], kwargs["hidden_sizes"][:-1])
+        # 
+        self.output_dim = kwargs["hidden_sizes"][-1]
+        self.device = kwargs["device"]
+        self.softmax = kwargs["softmax"]
+        self.to(self.device)
+
+    def forward(
+        self,
+        obs: Union[np.ndarray, torch.Tensor],
+        state: Any = None,
+        info: Dict[str, Any] = {},
+    ) -> Tuple[Union[np.ndarray, torch.Tensor], Any]:
+        if isinstance(obs, np.ndarray):
+            obs = torch.as_tensor(obs, dtype=torch.float32).to(self.device)
+        x, hidden_s = self.rnn(obs)
+        logits = self.net(x)
+        if self.softmax:
+            logits = torch.softmax(logits, dim=-1)
+        return logits, state
+
+class RNNNetX(nn.Module):
+    """ A simple RNN network behaving like tianshou.utils.net.common.Net
+    """
+    def __init__(self, state_shape, action_shape=0, num_atoms=1, **kwargs):
+        super().__init__()
+        self.softmax = kwargs.pop('softmax', False)
+        self.device = kwargs.pop('device', 'cpu')
+        hidden_sizes = kwargs.pop('hidden_sizes', [256, 256])
+        print(kwargs)
+        self.num_atoms = num_atoms
+        input_dim = int(np.prod(state_shape))
+        action_dim = int(np.prod(action_shape)) * num_atoms
+        self.output_dim = action_dim
+        self.output_dim = self.output_dim or hidden_sizes[-1]
+        # build pytorch RNN network
+        self.rnn = nn.RNN(input_dim, hidden_sizes[0], batch_first=True)
+        self.net = MLP(hidden_sizes[0], action_dim, hidden_sizes[1:])
+        self.model = nn.Sequential(self.rnn, self.net)
+        self.to(self.device)
+    
+    def forward(
+        self,
+        obs: Union[np.ndarray, torch.Tensor],
+        state: Any = None,
+        info: Dict[str, Any] = {},
+    ) -> Tuple[Union[np.ndarray, torch.Tensor], Any]:
+        if isinstance(obs, np.ndarray):
+            obs = torch.as_tensor(obs, dtype=torch.float32).to(self.device)
+        x, hidden_s = self.rnn(obs)
+        logits = self.net(x)
+        if self.softmax:
+            logits = torch.softmax(logits, dim=-1)
+        return logits, state
+
+class DummyNumEnv(HalfCheetahEnv):
+    """A dummy environment that generate obs number arabic number from 0 to inf.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.count = 0
+        self.max_step = 100
+
+    def reset(self):
+        """ rewrite obs to numbers
+        """
+        self.count = 0
+        res = super().reset()
+        if isinstance(res, tuple):
+            obs = res[0]
+            obs = np.ones_like(obs) * self.count * 0.01
+            res = (obs, *res[1:])
+        return res
+
+    def step(self, action):
+        """ rewrite obs to numbers
+        """
+        self.count += 1
+        res = super().step(action)
+        obs = res[0]
+        obs = np.ones_like(obs) * self.count
+        res = (obs, *res[1:])
+        if self.count > 100:
+            # res[2] = True
+            res = (obs, res[1], True, *res[3:])
+        return res
+
+
+from gym.envs.registration import register
+register(
+    id='DummyNum-v0',
+    entry_point='utils.__init__:DummyNumEnv',
+)

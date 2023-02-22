@@ -28,6 +28,17 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/agent/sac.py",
 			"console": "integratedTerminal",
+			"args": [
+				// "env.name=Hopper-v4",
+				"env.name=HalfCheetah-v4",
+				// "env.name=DummyNum-v0",
+				// "net=rnn",
+				// "net@net_c1=rnn",
+				"env.delay=1",
+				// "policy._target_="
+				// list all env in mujoco
+				// envs=Ant-v4,Hopper-v4,HalfCheetah-v4,Walker2d-v4,Humanoid-v4,HumanoidStandup-v4
+			],
 			"justMyCode": true
 		},
 		{

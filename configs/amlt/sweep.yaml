@@ -1,0 +1,54 @@
+description: AMLT
+
+target:
+  service: singularity
+  name: msrresrchvc    # more GPUs 
+  # name: msroctovc   # less GPUs
+  # # vc: resrchvc
+
+environment:
+  image: waybaba/rl:v2
+  username: waybaba
+  setup:
+    - echo "setup start..."
+    # - sudo su
+    # - echo "root activated..."
+    - export UPRJDIR=/mnt/default/
+    - export UDATADIR=/mnt/storage/data
+    - export UOUTDIR=/mnt/storage/output
+    - mkdir -p /mnt/storage/output /mnt/storage/data
+    - echo "setup finished!"
+    # - bash
+
+
+code:
+  # local directory of the code. this will be uploaded to the server.
+  # $CONFIG_DIR is expanded to the directory of this config file
+  local_dir: $CONFIG_DIR/../../
+
+storage:
+  input:
+    storage_account_name: resrchvc4data
+    container_name: v-wangwei1
+    mount_dir: /mnt/storage
+    local_dir: /home/v-wangwei1/storage
+
+search:
+  job_template:
+    name: delay_HalfCheetah_AsyncACSAC_ccc_multi_seed_{experiment_name:s}_{auto:5s}
+    command:
+    - python agent/sac.py
+      train_collector.buffer.size={train_collector_buffer_size}
+      policy._target_=tianshou.policy.SACPolicy
+      env.delay={env_delay}
+      seed={seed}
+      tags=["delay_amlt_test_2"]
+  type: grid
+  max_trials: 1000
+  params:
+    - name: train_collector_buffer_size
+      values: [1000000]
+    - name: env_delay
+      values: [1,4]
+    - name: seed 
+      values: [0,1]

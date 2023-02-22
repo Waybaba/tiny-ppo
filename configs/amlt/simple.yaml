@@ -1,0 +1,78 @@
+description: AMLT
+
+target:
+  service: singularity
+  name: msrresrchvc    # more GPUs 
+  # name: msroctovc   # less GPUs
+  # # vc: resrchvc
+
+environment:
+  image: waybaba/rl:v2
+  username: waybaba
+  setup:
+    - echo "setup start..."
+    # - sudo su
+    # - echo "root activated..."
+    - export UPRJDIR=/mnt/default/
+    - export UDATADIR=/mnt/storage/data
+    - export UOUTDIR=/mnt/storage/output
+    - mkdir -p /mnt/storage/output /mnt/storage/data
+    - echo "setup finished!"
+    # - bash
+
+
+code:
+  # local directory of the code. this will be uploaded to the server.
+  # $CONFIG_DIR is expanded to the directory of this config file
+  local_dir: $CONFIG_DIR/../../
+
+storage:
+  # output:
+  #   storage_account_name: resrchvc4data
+  #   container_name: v-wangwei1
+  #   mount_dir: /mnt/data
+  #   local_dir: $UOUTDIR
+  # output:
+  #   storage_account_name: resrchvc4data
+  #   container_name: v-wangwei1
+  #   mount_dir: /mnt/output
+  #   local_dir: $UOUTDIR
+  input:
+    storage_account_name: resrchvc4data
+    container_name: v-wangwei1
+    mount_dir: /mnt/storage
+    local_dir: /home/v-wangwei1/storage
+
+# storage:
+#     input:
+#         storage_account_name: msrashaiteamdrive
+#         container_name: teamdrive
+#         mount_dir: /blob
+
+# data:
+#   local_dir: $UDATADIR
+#   remote_dir: data # remote in blob (would checksum with local_dir if exists)
+  
+
+# list of jobs to run, we run 2 jobs in this example
+jobs:
+# - name: high_lr
+#   # sku: G1
+#   command:
+#   - python agent/sac.py
+# - name: low_lr
+#   # sku: G1
+#   command:
+#   - python agent/sac.py
+- name: debug
+  command:
+  - echo "debug start..."
+  - echo "UPRJDIR $UPRJDIR"
+  - echo "UDATADIR $UDATADIR"
+  # - python agent/sac.py
+  - echo "/mnt/storage/data"
+  - ls /mnt/storage/data
+  - echo "/mnt"
+  - ls /mnt
+  - echo `date` >> /mnt/storage/output/test.txt
+  - echo "debug finished!"

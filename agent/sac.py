@@ -385,7 +385,7 @@ class AsyncACDDPGPolicy(DDPGPolicy):
 		"""A simple wrapper script for updating critic network."""
 		weight = getattr(batch, "weight", 1.0)
 		# current_q = critic(batch.obs, batch.act).flatten()
-		current_q = critic(batch.info["obs_cur"], batch.act).flatten()
+		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
 		target_q = batch.returns.flatten()
 		td = current_q - target_q
 		# critic_loss = F.mse_loss(current_q1, target_q)
@@ -401,7 +401,7 @@ class AsyncACDDPGPolicy(DDPGPolicy):
 		batch.weight = td  # prio-buffer
 		# actor
 		# actor_loss = -self.critic(batch.obs, self(batch).act).mean()
-		actor_loss = -self.critic(batch.info["obs_cur"], self(batch).act).mean()
+		actor_loss = -self.critic(batch.info["obs_nodelay"], self(batch).act).mean()
 		self.actor_optim.zero_grad()
 		actor_loss.backward()
 		self.actor_optim.step()
@@ -474,12 +474,11 @@ def main(cfg):
 		env = gym.make(env_cfg.name)
 		env = DelayedRoboticEnv(env, env_cfg.delay)
 		return env
-	
 	# init
 	utils.print_config_tree(cfg, resolve=True)
 	wandb.init(project=cfg.task_name, tags=cfg.tags, config=utils.config_format(cfg),dir=cfg.output_dir)
 	cfg = hydra.utils.instantiate(cfg)
-	torch.manual_seed(cfg.seed) # TODO add env seed
+	utils.seed_everything(cfg.seed) # TODO add env seed
 	# env & not & policy
 	train_envs = tianshou.env.DummyVectorEnv([partial(make_env, cfg.env) for _ in range(cfg.env.train_num)])
 	test_envs = tianshou.env.DummyVectorEnv([partial(make_env, cfg.env) for _ in range(cfg.env.test_num)])
@@ -487,10 +486,10 @@ def main(cfg):
 	net = cfg.net(env.observation_space.shape)
 	actor = cfg.actor(net, env.action_space.shape).to(cfg.device)
 	actor_optim = cfg.actor_optim(actor.parameters())
-	net_c1 = cfg.net_c1(env.observation_space.shape, env.action_space.shape)
+	net_c1 = cfg.net_c1(env.observation_space.shape, action_shape=env.action_space.shape)
 	critic1 = cfg.critic1(net_c1).to(cfg.device)
 	critic1_optim = cfg.critic1_optim(critic1.parameters())
-	net_c2 = cfg.net_c2(env.observation_space.shape, env.action_space.shape)
+	net_c2 = cfg.net_c2(env.observation_space.shape, action_shape=env.action_space.shape)
 	critic2 = cfg.critic2(net_c2).to(cfg.device)
 	critic2_optim = cfg.critic2_optim(critic2.parameters())
 	policy = cfg.policy(
