@@ -8,8 +8,8 @@ from pprint import pprint
 import torch
 import wandb
 import numpy as np
-# import gymnasium as gym
-import gym
+import gymnasium as gym
+# import gym
 import sys
 from utils.delay import DelayedRoboticEnv
 from tianshou.data import Batch, ReplayBuffer
@@ -23,6 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 import rich
 import utils
 from functools import partial
+
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -108,6 +109,7 @@ class SACPolicy(DDPGPolicy):
 			self._is_auto_alpha = True
 			self._target_entropy, self._log_alpha, self._alpha_optim = alpha
 			assert alpha[1].shape == torch.Size([1]) and alpha[1].requires_grad
+			self._alpha_optim = self._alpha_optim([alpha[1]])
 			self._alpha = self._log_alpha.detach().exp()
 		else:
 			self._alpha = alpha
@@ -299,8 +301,9 @@ class AsyncACSACPolicy(SACPolicy):
 		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
 		target_q = batch.returns.flatten()
 		td = current_q - target_q
-		# critic_loss = F.mse_loss(current_q1, target_q)
-		critic_loss = (td.pow(2) * weight).mean()
+		mse_loss = torch.nn.MSELoss() # 
+		critic_loss = mse_loss(current_q, target_q) # 
+		# critic_loss = (td.pow(2) * weight).mean()
 		optimizer.zero_grad()
 		critic_loss.backward()
 		optimizer.step()
@@ -317,7 +320,37 @@ class AsyncACSACPolicy(SACPolicy):
 		batch.weight = (td1 + td2) / 2.0  # prio-buffer
 
 		# actor
-		obs_result = self(batch)
+		# obs_result = self(batch)
+		###### get actor output
+		state = None
+		input = "obs"
+		obs = batch[input]
+		logits, hidden = self.actor(obs, state=state, info=batch.info)
+		assert isinstance(logits, tuple)
+		dist = Independent(Normal(*logits), 1)
+		if self._deterministic_eval and not self.training:
+			act = logits[0]
+		else:
+			act = dist.rsample()
+		log_prob = dist.log_prob(act).unsqueeze(-1)
+		# apply correction for Tanh squashing when computing logprob from Gaussian
+		# You can check out the original SAC paper (arXiv 1801.01290): Eq 21.
+		# in appendix C to get some understanding of this equation.
+		squashed_action = torch.tanh(act)
+		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
+										self._SACPolicy__eps).sum(-1, keepdim=True)
+		obs_result = Batch(
+			logits=logits,
+			act=squashed_action,
+			state=hidden,
+			dist=dist,
+			log_prob=log_prob,
+			mua = logits[0],
+			siga = logits[1],
+		)
+		mua_tensor = obs_result.mua
+		siga_tensor = obs_result.siga
+		######
 		act = obs_result.act
 		# current_q1a = self.critic1(batch.obs, act).flatten()
 		# current_q2a = self.critic2(batch.obs, act).flatten()
@@ -346,6 +379,9 @@ class AsyncACSACPolicy(SACPolicy):
 			"loss/actor": actor_loss.item(),
 			"loss/critic1": critic1_loss.item(),
 			"loss/critic2": critic2_loss.item(),
+			"mu_sig_pow2": torch.mean(siga_tensor.pow(2) + mua_tensor.pow(2) ).item(),
+			"target_entropy": self._target_entropy,
+			"_log_alpha": self._log_alpha.item(),
 		}
 		if self._is_auto_alpha:
 			result["loss/alpha"] = alpha_loss.item()
@@ -359,7 +395,7 @@ class AsyncACSACPolicy(SACPolicy):
 		# next_batch.obs_cur = next_batch.info["obs_nodelay"]
 		# obs_next_result = self(batch, input="obs_cur")
 		batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
-		obs_next_result = self(batch, input="obs_next_nodelay") # actor use delayed obs
+		obs_next_result = self(batch, input="obs_next") # actor use delayed obs
 		act_ = obs_next_result.act
 		target_q = torch.min(
 			# self.critic1_old(batch.obs_next, act_),
@@ -468,7 +504,7 @@ class SACTrainer:
 
 
 root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
-@hydra.main(version_base=None, config_path=str(root / "configs"), config_name="sac.yaml")
+@hydra.main(version_base=None, config_path=str(root / "configs"), config_name="sac.yaml")	
 def main(cfg):
 	def make_env(env_cfg):
 		env = gym.make(env_cfg.name)

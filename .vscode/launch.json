@@ -30,8 +30,8 @@
 			"console": "integratedTerminal",
 			"args": [
 				// "env.name=Hopper-v4",
-				"env.name=HalfCheetah-v4",
-				// "env.name=DummyNum-v0",
+				// "env.name=HalfCheetah-v4",
+				"env.name=DummyNum-v0",
 				// "net=rnn",
 				// "net@net_c1=rnn",
 				"env.delay=1",

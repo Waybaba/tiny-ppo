@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Sequence
-import gym
+import gymnasium as gym
 import rich
 import rich.syntax
 import rich.tree
@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from pytorch_lightning.utilities import rank_zero_only
 from rich.prompt import Prompt
 from tianshou.utils.net.common import Net
-from gym.envs.mujoco.half_cheetah_v4 import HalfCheetahEnv
+from gymnasium.envs.mujoco.half_cheetah_v4 import HalfCheetahEnv
 
 from typing import Dict, List, Optional, Union, Sequence, Any, Tuple, Callable, TypeVar, Generic, cast, Type, Mapping
 from torch import nn
@@ -215,6 +215,12 @@ class DummyNumEnv(HalfCheetahEnv):
 
 from gym.envs.registration import register
 register(
+    id='DummyNum-v0',
+    entry_point='utils.__init__:DummyNumEnv',
+)
+
+import gymnasium as gym
+gym.envs.registration.register(
     id='DummyNum-v0',
     entry_point='utils.__init__:DummyNumEnv',
 )
