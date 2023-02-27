@@ -108,6 +108,23 @@ class SACPolicy(DDPGPolicy):
 		if isinstance(alpha, tuple):
 			self._is_auto_alpha = True
 			self._target_entropy, self._log_alpha, self._alpha_optim = alpha
+			if type(self._target_entropy) == str and self._target_entropy == "neg_act_num":
+				if hasattr(self.actor, "mu"): # get act dim TODO improvement here
+					if hasattr(self.actor.mu, "output_dim"):
+						act_num = self.actor.mu.output_dim
+					elif hasattr(self.actor.mu, "out_features"):
+						act_num = self.actor.mu.out_features
+					else:
+						raise ValueError("Can not get actor output dim.")
+				elif hasattr(self.actor, "output_dim"):
+					act_num = self.actor.output_dim
+				else:
+					raise ValueError("Invalid actor type.")
+				self._target_entropy = - act_num
+			elif type(self._target_entropy) == float:
+				pass
+			else: 
+				raise ValueError("Invalid target entropy type.")
 			assert alpha[1].shape == torch.Size([1]) and alpha[1].requires_grad
 			self._alpha_optim = self._alpha_optim([alpha[1]])
 			self._alpha = self._log_alpha.detach().exp()
@@ -291,19 +308,54 @@ class CustomSACPolicy(SACPolicy):
 		return result
 
 class AsyncACSACPolicy(SACPolicy):
-	@staticmethod
-	def _mse_optimizer(
+	def __init__(
+		self,
+		actor: torch.nn.Module,
+		actor_optim: torch.optim.Optimizer,
+		critic1: torch.nn.Module,
+		critic1_optim: torch.optim.Optimizer,
+		critic2: torch.nn.Module,
+		critic2_optim: torch.optim.Optimizer,
+		tau: float = 0.005, # TODO use hyperparameter in the paper
+		gamma: float = 0.99,
+		alpha: Union[float, Tuple[float, torch.Tensor, torch.optim.Optimizer]] = 0.2,
+		reward_normalization: bool = False,
+		estimation_step: int = 1,
+		exploration_noise: Optional[BaseNoise] = None,
+		deterministic_eval: bool = True,
+		**kwargs: Any,
+	) -> None:
+		self.critic_use_oracle_obs = kwargs.pop("critic_use_oracle_obs")
+		return super().__init__(
+			actor,	
+			actor_optim,
+			critic1,
+			critic1_optim,
+			critic2,
+			critic2_optim,
+			tau=tau,
+			gamma=gamma,
+			alpha=alpha,
+			reward_normalization=reward_normalization,
+			estimation_step=estimation_step,
+			exploration_noise=exploration_noise,
+			deterministic_eval=deterministic_eval,
+			**kwargs
+		)
+
+
+	def _mse_optimizer(self,
 		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
 	) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""A simple wrapper script for updating critic network."""
 		weight = getattr(batch, "weight", 1.0)
-		# current_q = critic(batch.obs, batch.act).flatten()
-		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+		if self.critic_use_oracle_obs:
+			current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+		else:
+			current_q = critic(batch.obs, batch.act).flatten()
 		target_q = batch.returns.flatten()
 		td = current_q - target_q
-		mse_loss = torch.nn.MSELoss() # 
-		critic_loss = mse_loss(current_q, target_q) # 
-		# critic_loss = (td.pow(2) * weight).mean()
+		critic_loss = (td.pow(2) * weight).mean()
 		optimizer.zero_grad()
 		critic_loss.backward()
 		optimizer.step()
@@ -320,42 +372,14 @@ class AsyncACSACPolicy(SACPolicy):
 		batch.weight = (td1 + td2) / 2.0  # prio-buffer
 
 		# actor
-		# obs_result = self(batch)
-		###### get actor output
-		state = None
-		input = "obs"
-		obs = batch[input]
-		logits, hidden = self.actor(obs, state=state, info=batch.info)
-		assert isinstance(logits, tuple)
-		dist = Independent(Normal(*logits), 1)
-		if self._deterministic_eval and not self.training:
-			act = logits[0]
-		else:
-			act = dist.rsample()
-		log_prob = dist.log_prob(act).unsqueeze(-1)
-		# apply correction for Tanh squashing when computing logprob from Gaussian
-		# You can check out the original SAC paper (arXiv 1801.01290): Eq 21.
-		# in appendix C to get some understanding of this equation.
-		squashed_action = torch.tanh(act)
-		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
-										self._SACPolicy__eps).sum(-1, keepdim=True)
-		obs_result = Batch(
-			logits=logits,
-			act=squashed_action,
-			state=hidden,
-			dist=dist,
-			log_prob=log_prob,
-			mua = logits[0],
-			siga = logits[1],
-		)
-		mua_tensor = obs_result.mua
-		siga_tensor = obs_result.siga
-		######
+		obs_result = self(batch)
 		act = obs_result.act
-		# current_q1a = self.critic1(batch.obs, act).flatten()
-		# current_q2a = self.critic2(batch.obs, act).flatten()
-		current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
-		current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+		if self.critic_use_oracle_obs:
+			current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
+			current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+		else:
+			current_q1a = self.critic1(batch.obs, act).flatten()
+			current_q2a = self.critic2(batch.obs, act).flatten()
 		actor_loss = (
 			self._alpha * obs_result.log_prob.flatten() -
 			torch.min(current_q1a, current_q2a)
@@ -364,7 +388,7 @@ class AsyncACSACPolicy(SACPolicy):
 		actor_loss.backward()
 		self.actor_optim.step()
 
-		if self._is_auto_alpha: # TODO check if need no delay
+		if self._is_auto_alpha:
 			log_prob = obs_result.log_prob.detach() + self._target_entropy
 			# please take a look at issue #258 if you'd like to change this line
 			alpha_loss = -(self._log_alpha * log_prob).mean()
@@ -379,29 +403,26 @@ class AsyncACSACPolicy(SACPolicy):
 			"loss/actor": actor_loss.item(),
 			"loss/critic1": critic1_loss.item(),
 			"loss/critic2": critic2_loss.item(),
-			"mu_sig_pow2": torch.mean(siga_tensor.pow(2) + mua_tensor.pow(2) ).item(),
-			"target_entropy": self._target_entropy,
-			"_log_alpha": self._log_alpha.item(),
 		}
 		if self._is_auto_alpha:
+			result["target_entropy"] = self._target_entropy
 			result["loss/alpha"] = alpha_loss.item()
+			result["_log_alpha"] = self._log_alpha.item()
 			result["alpha"] = self._alpha.item()  # type: ignore
 
 		return result
 	
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
 		batch = buffer[indices]  # batch.obs: s_{t+n}
-		# next_batch = buffer[buffer.next(indices)]  # next_batch.obs: s_{t+n+1}
-		# next_batch.obs_cur = next_batch.info["obs_nodelay"]
-		# obs_next_result = self(batch, input="obs_cur")
-		batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
 		obs_next_result = self(batch, input="obs_next") # actor use delayed obs
 		act_ = obs_next_result.act
 		target_q = torch.min(
-			# self.critic1_old(batch.obs_next, act_),
-			# self.critic2_old(batch.obs_next, act_),
-			self.critic1_old(batch.info["obs_next_nodelay"], act_),
-			self.critic2_old(batch.info["obs_next_nodelay"], act_),
+			self.critic1_old(batch.info["obs_next_nodelay"], act_) \
+			if self.critic_use_oracle_obs else \
+			self.critic1_old(batch.obs_next, act_),
+			self.critic2_old(batch.info["obs_next_nodelay"], act_) \
+			if self.critic_use_oracle_obs else \
+			self.critic2_old(batch.obs_next, act_)
 		) - self._alpha * obs_next_result.log_prob
 		return target_q
 
@@ -409,8 +430,9 @@ class AsyncACSACPolicy(SACPolicy):
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
 	) -> Batch:
 		batch = super().process_fn(batch, buffer, indices)
-		prev_batch = buffer[buffer.prev(indices)]
-		batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
+		if self.critic_use_oracle_obs:
+			prev_batch = buffer[buffer.prev(indices)]
+			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
 		return batch
 
 class AsyncACDDPGPolicy(DDPGPolicy):
@@ -519,8 +541,12 @@ def main(cfg):
 	train_envs = tianshou.env.DummyVectorEnv([partial(make_env, cfg.env) for _ in range(cfg.env.train_num)])
 	test_envs = tianshou.env.DummyVectorEnv([partial(make_env, cfg.env) for _ in range(cfg.env.test_num)])
 	env = make_env(cfg.env)
-	net = cfg.net(env.observation_space.shape)
-	actor = cfg.actor(net, env.action_space.shape).to(cfg.device)
+	if hasattr(cfg, "actor_use_rnn") and cfg.actor_use_rnn == True: # use rnn for actor or not
+		assert cfg.net is None, "actor_use_rnn == True, net should be None"
+		actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+	else:
+		net = cfg.net(env.observation_space.shape)
+		actor = cfg.actor(net, env.action_space.shape).to(cfg.device)
 	actor_optim = cfg.actor_optim(actor.parameters())
 	net_c1 = cfg.net_c1(env.observation_space.shape, action_shape=env.action_space.shape)
 	critic1 = cfg.critic1(net_c1).to(cfg.device)
@@ -535,8 +561,8 @@ def main(cfg):
 		action_space=env.action_space,
 	)
 	# collector
-	train_collector = cfg.train_collector(policy, train_envs)
-	test_collector = cfg.test_collector(policy, test_envs)
+	train_collector = cfg.collector.train_collector(policy, train_envs)
+	test_collector = cfg.collector.test_collector(policy, test_envs)
 	# train
 	logger = tianshou.utils.WandbLogger(config=cfg)
 	logger.load(SummaryWriter(cfg.output_dir))

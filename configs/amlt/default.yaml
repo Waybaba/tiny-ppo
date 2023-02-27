@@ -153,13 +153,15 @@ search:
     name: delay_amlt_rnn_and_normal{experiment_name:s}_{auto:5s}
     command:
     - python agent/sac.py
-      train_collector.buffer.size={train_collector_buffer_size}
+      policy.critic_use_oracle_obs={critic_use_oracle_obs}
+      collector.train_collector.buffer.size={train_collector_buffer_size}
       policy._target_=agent.sac.AsyncACSACPolicy
       env.delay={env_delay}
+      env.name={env_name}
       net={net}
       net@net_c1={net}
       seed={seed}
-      tags=["mine_long_night_with_noreg_mse_big_next_obs_bug"]
+      tags=["START_complex"]
   type: grid
   max_trials: 10000
   params:
@@ -169,5 +171,10 @@ search:
       values: [1,4,8,16,2,32,0]
     - name: seed
       values: [0,1,2,3,4]
+    - name: critic_use_oracle_obs
+      values: [true]
     - name: net
       values: [default]
+    - name: env_name
+      # values: [HalfCheetah-v4]
+      values: [Ant-v4,Hopper-v4,Walker2d-v4]

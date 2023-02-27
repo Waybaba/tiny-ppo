@@ -1,6 +1,7 @@
 defaults:
   - hydra: default.yaml
   - paths: default.yaml
+  - env: HalfCheetah.yaml
   - net: default.yaml
   - net@net_c1: default.yaml
   - _self_
@@ -10,11 +11,14 @@ tags: ["debug"]
 
 output_dir: "${paths.output_dir}"
 device: "cuda"
+actor_use_rnn: true
+net: null # check consistency with net_use_rnn in the code
 actor:
-  _target_: tianshou.utils.net.continuous.ActorProb
+  _target_: tianshou.utils.net.continuous.RecurrentActorProb
   _partial_: true
-  # hidden_sizes: [256, 256]
-  hidden_sizes: [256]
+  # hidden_sizes: [256]
+  layer_num: 4
+  hidden_layer_size: 256
   device: ${device}
 actor_optim:
   _target_: torch.optim.Adam
@@ -26,7 +30,6 @@ critic1:
   _target_: tianshou.utils.net.continuous.Critic
   _partial_: true
   # hidden_sizes: [256]
-  hidden_sizes: []
   device: ${device}
 critic1_optim:
   _target_: ${actor_optim._target_}
@@ -39,10 +42,10 @@ policy:
   # _target_: tianshou.policy.SACPolicy
   # _target_: agent.sac.CustomSACPolicy
   _target_: agent.sac.AsyncACSACPolicy
+  critic_use_oracle_obs: true
   _partial_: true
   tau: 0.005
   gamma: 0.99
-  critic_use_oracle_obs: false
   # alpha: 0.2
   alpha:
     _target_: builtins.tuple
@@ -59,12 +62,6 @@ policy:
           _partial_: true
           lr: ${actor_optim.lr}
   estimation_step: 1
-
-env:
-  name: HalfCheetah-v4
-  train_num: 1
-  test_num: 1
-  delay: 0
 collector:
   train_collector:
     _target_: tianshou.data.Collector
