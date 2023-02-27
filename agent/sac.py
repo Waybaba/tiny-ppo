@@ -526,7 +526,7 @@ class SACTrainer:
 
 
 root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
-@hydra.main(version_base=None, config_path=str(root / "configs"), config_name="sac.yaml")	
+@hydra.main(version_base=None, config_path=str(root / "configs"), config_name="train.yaml")	
 def main(cfg):
 	def make_env(env_cfg):
 		env = gym.make(env_cfg.name)
@@ -580,6 +580,7 @@ def main(cfg):
 		to_log.update(info)
 		wandb.log(to_log)
 	wandb.finish()
+	
 	
 if __name__ == "__main__":
 	main()

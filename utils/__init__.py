@@ -16,6 +16,8 @@ from torch import nn
 import torch
 import numpy as np
 from tianshou.utils.net.common import MLP
+from utils.delay import DelayedRoboticEnv
+
 ModuleType = Type[nn.Module]
 
 
@@ -28,6 +30,11 @@ from pytorch_lightning.utilities.logger import (
     _flatten_dict,
     _sanitize_callable_params,
 )
+
+def make_env(env_cfg):
+    env = gym.make(env_cfg.name)
+    env = DelayedRoboticEnv(env, env_cfg.delay)
+    return env
 
 def seed_everything(seed: int):
     import random, os

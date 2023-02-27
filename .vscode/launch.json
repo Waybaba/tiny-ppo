@@ -12,6 +12,20 @@
 			"console": "integratedTerminal",
 			"justMyCode": true
 		},
+		// entry.py
+		{
+			"name": "entry",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/entry.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				"experiment=sac",
+				"env.name=HalfCheetah-v4",
+				"env.delay=0",
+			],
+		},
 		// vpg.py
 		{
 			"name": "vpg",
@@ -19,7 +33,20 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/agent/vpg.py",
 			"console": "integratedTerminal",
-			"justMyCode": true
+			"justMyCode": true,
+			"args": [
+				// "env.name=Hopper-v4",
+				"experiment=sac",
+				"env.name=HalfCheetah-v4",
+				// "env.name=DummyNum-v0",
+				// "net=rnn",
+				// "net@net_c1=rnn",
+				"env.delay=0",
+				// "policy._target_="
+				// list all env in mujoco
+				// envs=Ant-v4,Hopper-v4,HalfCheetah-v4,Walker2d-v4,Humanoid-v4,HumanoidStandup-v4
+				// "--cfg", "job",
+			],
 		},
 		// sac.py
 		{
@@ -30,14 +57,16 @@
 			"console": "integratedTerminal",
 			"args": [
 				// "env.name=Hopper-v4",
-				// "env.name=HalfCheetah-v4",
-				"env.name=DummyNum-v0",
+				"experiment=sac",
+				"env.name=HalfCheetah-v4",
+				// "env.name=DummyNum-v0",
 				// "net=rnn",
 				// "net@net_c1=rnn",
-				"env.delay=1",
+				"env.delay=0",
 				// "policy._target_="
 				// list all env in mujoco
 				// envs=Ant-v4,Hopper-v4,HalfCheetah-v4,Walker2d-v4,Humanoid-v4,HumanoidStandup-v4
+				"--cfg", "job",
 			],
 			"justMyCode": true
 		},

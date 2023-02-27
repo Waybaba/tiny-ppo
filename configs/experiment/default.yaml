@@ -1,3 +1,8 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
 defaults:
   - hydra: default.yaml
   - paths: default.yaml
@@ -5,6 +10,12 @@ defaults:
   - net@net_c1: default.yaml
   - _self_
 
+# info
+task_name: "RL"
+tags: ["debug"]
+
+output_dir: "${paths.output_dir}"
+device: "cuda"
 actor:
   _target_: tianshou.utils.net.continuous.ActorProb
   _partial_: true
@@ -54,6 +65,7 @@ policy:
           _partial_: true
           lr: 3e-4
   estimation_step: 1
+
 env:
   name: HalfCheetah-v4
   train_num: 1
