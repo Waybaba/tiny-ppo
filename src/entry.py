@@ -40,8 +40,7 @@ def main(cfg):
 	utils.print_config_tree(cfg, resolve=True)
 	# initialize hydra cfg
 	cfg = hydra.utils.instantiate(cfg)
-	runner = cfg.runner(cfg)
-	runner.run()
+	cfg.runner().start(cfg)
 
 	
 if __name__ == "__main__":

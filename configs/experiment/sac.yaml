@@ -40,16 +40,18 @@ trainer:
   episode_per_test: 10
   batch_size: 256
   test_in_train: false
-
+start_timesteps: 10000
 # SAC specific
 runner:
-  _target_: src.runner.SACRunner # ! TODO
+  _target_: src.runner.SACRunner
   _partial_: true
 actor:
   _target_: tianshou.utils.net.continuous.ActorProb
   _partial_: true
   # hidden_sizes: [256, 256]
   hidden_sizes: []
+  unbounded: true
+  conditioned_sigma: true
   device: ${device}
 actor_optim:
   _target_: torch.optim.Adam
@@ -71,14 +73,13 @@ net_c2: ${net_c1}
 critic2: ${critic1}
 critic2_optim: ${critic1_optim}
 policy:
-  # _target_: tianshou.policy.SACPolicy
-  # _target_: agent.sac.CustomSACPolicy
-  _target_: agent.sac.AsyncACSACPolicy
+  _target_: src.runner.CustomSACPolicy
   _partial_: true
   tau: 0.005
   gamma: 0.99
   critic_use_oracle_obs: false
   # alpha: 0.2
+  estimation_step: 1
   alpha:
     _target_: builtins.tuple
     _args_:
@@ -93,4 +94,3 @@ policy:
         - _target_: torch.optim.Adam
           _partial_: true
           lr: 3e-4
-  estimation_step: 1
