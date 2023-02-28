@@ -46,11 +46,13 @@ start_timesteps: 10000
 runner:
   _target_: src.runner.SACRunner
   _partial_: true
+net: null
+actor_use_rnn: true
 actor:
-  _target_: tianshou.utils.net.continuous.ActorProb
+  _target_: tianshou.utils.net.continuous.RecurrentActorProb
   _partial_: true
-  # hidden_sizes: [256, 256]
-  hidden_sizes: []
+  layer_num: 2
+  hidden_layer_size: 256
   unbounded: true
   conditioned_sigma: true
   device: ${device}

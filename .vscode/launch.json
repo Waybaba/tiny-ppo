@@ -48,47 +48,33 @@
 				// "--cfg", "job",
 			],
 		},
-		// sac.py
+		// entry.py sac
 		{
 			"name": "sac",
 			"type": "python",
 			"request": "launch",
-			"program": "${workspaceFolder}/agent/sac.py",
+			"program": "${workspaceFolder}/src/entry.py",
 			"console": "integratedTerminal",
+			"justMyCode": true,
 			"args": [
-				// "env.name=Hopper-v4",
 				"experiment=sac",
 				"env.name=HalfCheetah-v4",
-				// "env.name=DummyNum-v0",
-				// "net=rnn",
-				// "net@net_c1=rnn",
 				"env.delay=0",
-				// "policy._target_="
-				// list all env in mujoco
-				// envs=Ant-v4,Hopper-v4,HalfCheetah-v4,Walker2d-v4,Humanoid-v4,HumanoidStandup-v4
-				"--cfg", "job",
 			],
-			"justMyCode": true
 		},
-		// sac.py rnn
+		// entry.py sac_rnn
 		{
 			"name": "sac_rnn",
 			"type": "python",
 			"request": "launch",
-			"program": "${workspaceFolder}/agent/sac.py",
+			"program": "${workspaceFolder}/src/entry.py",
 			"console": "integratedTerminal",
+			"justMyCode": true,
 			"args": [
-				// "env.name=Hopper-v4",
-				// "env.name=HalfCheetah-v4",
-				"env.name=DummyNum-v0",
-				// "net=rnn",
-				// "net@net_c1=rnn",
-				"env.delay=1",
-				// "policy._target_="
-				// list all env in mujoco
-				// envs=Ant-v4,Hopper-v4,HalfCheetah-v4,Walker2d-v4,Humanoid-v4,HumanoidStandup-v4
+				"experiment=sac_rnn",
+				"env.name=HalfCheetah-v4",
+				"env.delay=0",
 			],
-			"justMyCode": true
 		},
 		{
 			"name": "ddpg",

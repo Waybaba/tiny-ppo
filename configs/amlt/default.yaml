@@ -147,34 +147,67 @@ storage:
 #     - name: net
 #       values: [default]
 
-# mine_with_params_as_donqi_plus_net_trainable_alpha_lr_change_reg_7
+# # mine_with_params_as_donqi_plus_net_trainable_alpha_lr_change_reg_7
+# search:
+#   job_template:
+#     name: delay_amlt_rnn_and_normal{experiment_name:s}_{auto:5s}
+#     command:
+#     - python agent/sac.py
+#       policy.critic_use_oracle_obs={critic_use_oracle_obs}
+#       collector.train_collector.buffer.size={train_collector_buffer_size}
+#       policy._target_=agent.sac.AsyncACSACPolicy
+#       env.delay={env_delay}
+#       env.name={env_name}
+#       net={net}
+#       net@net_c1={net}
+#       seed={seed}
+#       tags=["START_complex"]
+#   type: grid
+#   max_trials: 10000
+#   params:
+#     - name: train_collector_buffer_size
+#       values: [1000000]
+#     - name: env_delay
+#       values: [1,4,8,16,2,32,0]
+#     - name: seed
+#       values: [0,1,2,3,4]
+#     - name: critic_use_oracle_obs
+#       values: [true]
+#     - name: net
+#       values: [default]
+#     - name: env_name
+#       # values: [HalfCheetah-v4]
+#       values: [Ant-v4,Hopper-v4,Walker2d-v4]
+
+# tianshou_sac_baseline
 search:
   job_template:
     name: delay_amlt_rnn_and_normal{experiment_name:s}_{auto:5s}
     command:
     - python agent/sac.py
+      experiment=sac
       policy.critic_use_oracle_obs={critic_use_oracle_obs}
       collector.train_collector.buffer.size={train_collector_buffer_size}
-      policy._target_=agent.sac.AsyncACSACPolicy
-      env.delay={env_delay}
+      policy._target_=src.runner.CustomSACPolicy
       env.name={env_name}
+      env.delay={env_delay}
+      seed={seed}
       net={net}
       net@net_c1={net}
-      seed={seed}
-      tags=["START_complex"]
+      tags=["tianshou_sac_baseline"]
   type: grid
   max_trials: 10000
   params:
     - name: train_collector_buffer_size
       values: [1000000]
     - name: env_delay
-      values: [1,4,8,16,2,32,0]
+      values: [0]
     - name: seed
       values: [0,1,2,3,4]
     - name: critic_use_oracle_obs
-      values: [true]
+      values: [false,true]
     - name: net
       values: [default]
     - name: env_name
       # values: [HalfCheetah-v4]
-      values: [Ant-v4,Hopper-v4,Walker2d-v4]
+      values: [Ant-v4,Hopper-v4,Walker2d-v4,HalfCheetah-v4]

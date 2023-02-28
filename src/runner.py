@@ -307,6 +307,55 @@ class CustomSACPolicy_(SACPolicy):
 
 		return result
 
+class AsyncACDDPGPolicy(DDPGPolicy):
+	@staticmethod
+	def _mse_optimizer(
+		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
+	) -> Tuple[torch.Tensor, torch.Tensor]:
+		"""A simple wrapper script for updating critic network."""
+		weight = getattr(batch, "weight", 1.0)
+		# current_q = critic(batch.obs, batch.act).flatten()
+		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+		target_q = batch.returns.flatten()
+		td = current_q - target_q
+		# critic_loss = F.mse_loss(current_q1, target_q)
+		critic_loss = (td.pow(2) * weight).mean()
+		optimizer.zero_grad()
+		critic_loss.backward()
+		optimizer.step()
+		return td, critic_loss
+
+	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
+		# critic
+		td, critic_loss = self._mse_optimizer(batch, self.critic, self.critic_optim)
+		batch.weight = td  # prio-buffer
+		# actor
+		# actor_loss = -self.critic(batch.obs, self(batch).act).mean()
+		actor_loss = -self.critic(batch.info["obs_nodelay"], self(batch).act).mean()
+		self.actor_optim.zero_grad()
+		actor_loss.backward()
+		self.actor_optim.step()
+		self.sync_weight()
+		return {
+			"loss/actor": actor_loss.item(),
+			"loss/critic": critic_loss.item(),
+		}
+
+	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
+		batch = buffer[indices]  # batch.obs: s_{t+n}
+		next_batch = buffer[indices + 1]  # next_batch.obs: s_{t+n+1}
+		next_batch.obs_cur = next_batch.info["obs_cur"]
+		# obs_next_result = self(batch, input="obs_cur")
+		obs_next_result = self(next_batch, input="obs_cur")
+		act_ = obs_next_result.act
+		target_q = torch.min(
+			# self.critic1_old(batch.obs_next, act_),
+			# self.critic2_old(batch.obs_next, act_),
+			self.critic1_old(next_batch.obs_cur, act_),
+			self.critic2_old(next_batch.obs_cur, act_),
+		) - self._alpha * obs_next_result.log_prob
+		return target_q
+
 class CustomSACPolicy(SACPolicy):
 	def __init__(
 		self,
@@ -342,8 +391,6 @@ class CustomSACPolicy(SACPolicy):
 			deterministic_eval=deterministic_eval,
 			**kwargs
 		)
-
-
 	def _mse_optimizer(self,
 		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
 	) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -435,56 +482,6 @@ class CustomSACPolicy(SACPolicy):
 			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
 		return batch
 
-class AsyncACDDPGPolicy(DDPGPolicy):
-	@staticmethod
-	def _mse_optimizer(
-		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
-	) -> Tuple[torch.Tensor, torch.Tensor]:
-		"""A simple wrapper script for updating critic network."""
-		weight = getattr(batch, "weight", 1.0)
-		# current_q = critic(batch.obs, batch.act).flatten()
-		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
-		target_q = batch.returns.flatten()
-		td = current_q - target_q
-		# critic_loss = F.mse_loss(current_q1, target_q)
-		critic_loss = (td.pow(2) * weight).mean()
-		optimizer.zero_grad()
-		critic_loss.backward()
-		optimizer.step()
-		return td, critic_loss
-
-	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
-		# critic
-		td, critic_loss = self._mse_optimizer(batch, self.critic, self.critic_optim)
-		batch.weight = td  # prio-buffer
-		# actor
-		# actor_loss = -self.critic(batch.obs, self(batch).act).mean()
-		actor_loss = -self.critic(batch.info["obs_nodelay"], self(batch).act).mean()
-		self.actor_optim.zero_grad()
-		actor_loss.backward()
-		self.actor_optim.step()
-		self.sync_weight()
-		return {
-			"loss/actor": actor_loss.item(),
-			"loss/critic": critic_loss.item(),
-		}
-
-	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
-		batch = buffer[indices]  # batch.obs: s_{t+n}
-		next_batch = buffer[indices + 1]  # next_batch.obs: s_{t+n+1}
-		next_batch.obs_cur = next_batch.info["obs_cur"]
-		# obs_next_result = self(batch, input="obs_cur")
-		obs_next_result = self(next_batch, input="obs_cur")
-		act_ = obs_next_result.act
-		target_q = torch.min(
-			# self.critic1_old(batch.obs_next, act_),
-			# self.critic2_old(batch.obs_next, act_),
-			self.critic1_old(next_batch.obs_cur, act_),
-			self.critic2_old(next_batch.obs_cur, act_),
-		) - self._alpha * obs_next_result.log_prob
-		return target_q
-
-
 # Runner
 
 class DefaultRLRunner:
@@ -500,7 +497,7 @@ class DefaultRLRunner:
 	def start(self, cfg):
 		print("RLRunner start ...")
 		self.cfg = cfg
-		self.env = cfg.env # ! TODO replace cfg to self.cfg
+		self.env = cfg.env
 		# init
 		wandb.init(project=cfg.task_name, tags=cfg.tags, config=utils.config_format(cfg),dir=cfg.output_dir)
 		utils.seed_everything(cfg.seed) # TODO add env seed
