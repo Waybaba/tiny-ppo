@@ -179,13 +179,13 @@ storage:
 #       # values: [HalfCheetah-v4]
 #       values: [Ant-v4,Hopper-v4,Walker2d-v4]
 
-# tianshou_sac_baseline
 search:
   job_template:
     name: delay_amlt_rnn_and_normal{experiment_name:s}_{auto:5s}
     command:
     - python agent/sac.py
-      experiment=sac
+      experiment={experiment}
+      actor_rnn.stack_num={stack_num}
       policy.critic_use_oracle_obs={critic_use_oracle_obs}
       collector.train_collector.buffer.size={train_collector_buffer_size}
       policy._target_=src.runner.CustomSACPolicy
@@ -194,20 +194,27 @@ search:
       seed={seed}
       net={net}
       net@net_c1={net}
-      tags=["tianshou_sac_baseline"]
+      tags=[{tag}]
   type: grid
   max_trials: 10000
   params:
     - name: train_collector_buffer_size
       values: [1000000]
     - name: env_delay
-      values: [0]
+      # values: [0,1,2,4,8,16,32]
+      values: [0,2,8,32]
     - name: seed
       values: [0,1,2,3,4]
     - name: critic_use_oracle_obs
-      values: [false,true]
+      values: [true]
     - name: net
       values: [default]
     - name: env_name
-      # values: [HalfCheetah-v4]
-      values: [Ant-v4,Hopper-v4,Walker2d-v4,HalfCheetah-v4]
+      values: [HalfCheetah-v4]
+      # values: [Ant-v4,Hopper-v4,Walker2d-v4,HalfCheetah-v4]
+    - name: experiment
+      values: [sac_rnn]
+    - name: stack_num
+      values: [1,4,8,32]
+    - name: tag
+      values: ["sac_rnn_first_test"]

@@ -47,7 +47,7 @@ runner:
   _target_: src.runner.SACRunner
   _partial_: true
 actor:
-  _target_: tianshou.utils.net.continuous.ActorProb
+  _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
   # hidden_sizes: [256, 256]
   hidden_sizes: []

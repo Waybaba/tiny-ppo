@@ -15,9 +15,11 @@ from utils.delay import DelayedRoboticEnv
 from tianshou.data import Batch, ReplayBuffer
 from tianshou.data import Batch, ReplayBuffer, to_torch, to_torch_as
 from tianshou.policy import BasePolicy, PGPolicy, SACPolicy
-from tianshou.utils import RunningMeanStd
-from tianshou.utils.net.common import ActorCritic, Net
-from tianshou.utils.net.continuous import Actor, ActorProb, Critic
+from typing import Any, Dict, Optional, Sequence, Tuple, Type, Union
+import numpy as np
+import torch
+from torch import nn
+from tianshou.utils.net.common import MLP
 import tianshou
 from torch.utils.tensorboard import SummaryWriter
 import rich
@@ -31,7 +33,6 @@ from tianshou.policy import DDPGPolicy
 from tianshou.exploration import BaseNoise
 from torch.distributions import Independent, Normal
 from copy import deepcopy
-from tianshou.trainer import OffpolicyTrainer
 
 class SACPolicy(DDPGPolicy):
 	"""Implementation of Soft Actor-Critic. arXiv:1812.05905.
@@ -144,36 +145,6 @@ class SACPolicy(DDPGPolicy):
 	def sync_weight(self) -> None:
 		self.soft_update(self.critic1_old, self.critic1, self.tau)
 		self.soft_update(self.critic2_old, self.critic2, self.tau)
-
-	def forward(  # type: ignore
-		self,
-		batch: Batch,
-		state: Optional[Union[dict, Batch, np.ndarray]] = None,
-		input: str = "obs",
-		**kwargs: Any,
-	) -> Batch:
-		obs = batch[input]
-		logits, hidden = self.actor(obs, state=state, info=batch.info)
-		assert isinstance(logits, tuple)
-		dist = Independent(Normal(*logits), 1)
-		if self._deterministic_eval and not self.training:
-			act = logits[0]
-		else:
-			act = dist.rsample()
-		log_prob = dist.log_prob(act).unsqueeze(-1)
-		# apply correction for Tanh squashing when computing logprob from Gaussian
-		# You can check out the original SAC paper (arXiv 1801.01290): Eq 21.
-		# in appendix C to get some understanding of this equation.
-		squashed_action = torch.tanh(act)
-		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
-										self.__eps).sum(-1, keepdim=True)
-		return Batch(
-			logits=logits,
-			act=squashed_action,
-			state=hidden,
-			dist=dist,
-			log_prob=log_prob
-		)
 
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
 		batch = buffer[indices]  # batch.obs: s_{t+n}
@@ -375,6 +346,7 @@ class CustomSACPolicy(SACPolicy):
 		**kwargs: Any,
 	) -> None:
 		self.critic_use_oracle_obs = kwargs.pop("critic_use_oracle_obs")
+		self.actor_rnn = kwargs.pop("actor_rnn")
 		return super().__init__(
 			actor,	
 			actor_optim,
@@ -391,15 +363,22 @@ class CustomSACPolicy(SACPolicy):
 			deterministic_eval=deterministic_eval,
 			**kwargs
 		)
+	
 	def _mse_optimizer(self,
 		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
 	) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""A simple wrapper script for updating critic network."""
 		weight = getattr(batch, "weight", 1.0)
-		if self.critic_use_oracle_obs:
-			current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+		if not self.actor_rnn: # ! TODO check order, whether -1 is correct or 0
+			if self.critic_use_oracle_obs:
+				current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+			else:
+				current_q = critic(batch.obs, batch.act).flatten()
 		else:
-			current_q = critic(batch.obs, batch.act).flatten()
+			if self.critic_use_oracle_obs:
+				current_q = critic(batch.info["obs_nodelay"][:,-1], batch.act).flatten()
+			else:
+				current_q = critic(batch.obs[:,-1], batch.act).flatten()
 		target_q = batch.returns.flatten()
 		td = current_q - target_q
 		critic_loss = (td.pow(2) * weight).mean()
@@ -421,12 +400,22 @@ class CustomSACPolicy(SACPolicy):
 		# actor
 		obs_result = self(batch)
 		act = obs_result.act
-		if self.critic_use_oracle_obs:
-			current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
-			current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+		
+		if not self.actor_rnn:
+			if self.critic_use_oracle_obs:
+				current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
+				current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+			else:
+				current_q1a = self.critic1(batch.obs, act).flatten()
+				current_q1a = self.critic1(batch.obs, act).flatten()
 		else:
-			current_q1a = self.critic1(batch.obs, act).flatten()
-			current_q2a = self.critic2(batch.obs, act).flatten()
+			if self.critic_use_oracle_obs:
+				current_q1a = self.critic1(batch.info["obs_nodelay"][:,-1], act).flatten()
+				current_q2a = self.critic2(batch.info["obs_nodelay"][:,-1], act).flatten()
+			else:
+				current_q1a = self.critic1(batch.obs[:,-1], act).flatten()
+				current_q2a = self.critic2(batch.obs[:,-1], act).flatten()
+
 		actor_loss = (
 			self._alpha * obs_result.log_prob.flatten() -
 			torch.min(current_q1a, current_q2a)
@@ -461,16 +450,32 @@ class CustomSACPolicy(SACPolicy):
 	
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
 		batch = buffer[indices]  # batch.obs: s_{t+n}
-		obs_next_result = self(batch, input="obs_next") # actor use delayed obs
+		if not self.actor_rnn:
+			obs_next_result = self(batch, input="obs_next") # actor use delayed obs
+		else:
+			batch.obs_act = np.concatenate([batch.obs_next, buffer.get(indices,"act")], axis=2) # B,L,... # ! TODO check order, whether -1 is correct or 0
+			obs_next_result = self(batch, input="obs_act") # actor use delayed obs
+
 		act_ = obs_next_result.act
-		target_q = torch.min(
-			self.critic1_old(batch.info["obs_next_nodelay"], act_) \
-			if self.critic_use_oracle_obs else \
-			self.critic1_old(batch.obs_next, act_),
-			self.critic2_old(batch.info["obs_next_nodelay"], act_) \
-			if self.critic_use_oracle_obs else \
-			self.critic2_old(batch.obs_next, act_)
-		) - self._alpha * obs_next_result.log_prob
+		if not self.actor_rnn:
+			target_q = torch.min(
+				self.critic1_old(batch.info["obs_next_nodelay"], act_) \
+				if self.critic_use_oracle_obs else \
+				self.critic1_old(batch.obs_next, act_),
+				self.critic2_old(batch.info["obs_next_nodelay"], act_) \
+				if self.critic_use_oracle_obs else \
+				self.critic2_old(batch.obs_next, act_)
+			) - self._alpha * obs_next_result.log_prob
+		else:
+			target_q = torch.min(
+				self.critic1_old(batch.info["obs_next_nodelay"][:,-1], act_) \
+				if self.critic_use_oracle_obs else \
+				self.critic1_old(batch.obs_next[:,-1], act_),
+				self.critic2_old(batch.info["obs_next_nodelay"][:,-1], act_) \
+				if self.critic_use_oracle_obs else \
+				self.critic2_old(batch.obs_next[:,-1], act_)
+			) - self._alpha * obs_next_result.log_prob
+
 		return target_q
 
 	def process_fn(
@@ -481,6 +486,133 @@ class CustomSACPolicy(SACPolicy):
 			prev_batch = buffer[buffer.prev(indices)]
 			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
 		return batch
+
+
+	def forward(  # type: ignore
+		self,
+		batch: Batch,
+		state: Optional[Union[dict, Batch, np.ndarray]] = None,
+		input: str = "obs",
+		**kwargs: Any,
+	) -> Batch:
+		obs = batch[input]
+		if self.actor_rnn:
+			if len(obs.shape) == 2: # (B, s_dim) online 
+				if len(batch.act.shape) == 0: # first step, when act is not available
+					obs = np.zeros([obs.shape[0], 1, self.actor.nn.input_size])
+				else:
+					obs = np.concatenate([obs, batch.act], axis=1)
+			else: # (B, L, s_dim) offline self.learn
+				obs = obs
+		logits, hidden = self.actor(obs, state=state, info=batch.info)
+		assert isinstance(logits, tuple)
+		dist = Independent(Normal(*logits), 1)
+		if self._deterministic_eval and not self.training:
+			act = logits[0]
+		else:
+			act = dist.rsample()
+		log_prob = dist.log_prob(act).unsqueeze(-1)
+		# apply correction for Tanh squashing when computing logprob from Gaussian
+		# You can check out the original SAC paper (arXiv 1801.01290): Eq 21.
+		# in appendix C to get some understanding of this equation.
+		squashed_action = torch.tanh(act)
+		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
+										np.finfo(np.float32).eps.item()).sum(-1, keepdim=True)
+		return Batch(
+			logits=logits,
+			act=squashed_action,
+			state=hidden,
+			dist=dist,
+			log_prob=log_prob
+		)
+
+class CustomRecurrentActorProb(nn.Module):
+	"""Recurrent version of ActorProb.
+
+	For advanced usage (how to customize the network), please refer to
+	:ref:`build_the_network`.
+	"""
+	SIGMA_MIN = -20
+	SIGMA_MAX = 2
+	
+	def __init__(
+		self,
+		layer_num: int,
+		state_shape: Sequence[int],
+		action_shape: Sequence[int],
+		hidden_layer_size: int = 128,
+		max_action: float = 1.0,
+		device: Union[str, int, torch.device] = "cpu",
+		unbounded: bool = False,
+		conditioned_sigma: bool = False,
+		concat: bool = False,
+	) -> None:
+		super().__init__()
+		self.device = device
+		input_dim = int(np.prod(state_shape))
+		action_dim = int(np.prod(action_shape))
+		if concat:
+			input_dim += action_dim
+		self.nn = nn.LSTM(
+			input_size=input_dim,
+			hidden_size=hidden_layer_size,
+			num_layers=layer_num,
+			batch_first=True,
+		)
+		output_dim = int(np.prod(action_shape))
+		self.mu = nn.Linear(hidden_layer_size, output_dim)
+		self._c_sigma = conditioned_sigma
+		if conditioned_sigma:
+			self.sigma = nn.Linear(hidden_layer_size, output_dim)
+		else:
+			self.sigma_param = nn.Parameter(torch.zeros(output_dim, 1))
+		self._max = max_action
+		self._unbounded = unbounded
+
+	def forward(
+		self,
+		obs: Union[np.ndarray, torch.Tensor],
+		state: Optional[Dict[str, torch.Tensor]] = None,
+		info: Dict[str, Any] = {},
+	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
+		"""Almost the same as :class:`~tianshou.utils.net.common.Recurrent`."""
+		obs = torch.as_tensor(
+			obs,
+			device=self.device,
+			dtype=torch.float32,
+		)
+		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
+		# In short, the tensor's shape in training phase is longer than which
+		# in evaluation phase.
+		if len(obs.shape) == 2:
+			obs = obs.unsqueeze(-2)
+		self.nn.flatten_parameters()
+		if state is None:
+			obs, (hidden, cell) = self.nn(obs)
+		else:
+			# we store the stack data in [bsz, len, ...] format
+			# but pytorch rnn needs [len, bsz, ...]
+			obs, (hidden, cell) = self.nn(
+				obs, (
+					state["hidden"].transpose(0, 1).contiguous(),
+					state["cell"].transpose(0, 1).contiguous()
+				)
+			)
+		logits = obs[:, -1]
+		mu = self.mu(logits)
+		if not self._unbounded:
+			mu = self._max * torch.tanh(mu)
+		if self._c_sigma:
+			sigma = torch.clamp(self.sigma(logits), min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
+		else:
+			shape = [1] * len(mu.shape)
+			shape[1] = -1
+			sigma = (self.sigma_param.view(shape) + torch.zeros_like(mu)).exp()
+		# please ensure the first dim is batch size: [bsz, len, ...]
+		return (mu, sigma), {
+			"hidden": hidden.transpose(0, 1).detach(),
+			"cell": cell.transpose(0, 1).detach()
+		}
 
 # Runner
 
@@ -515,8 +647,11 @@ class SACRunner(DefaultRLRunner):
 		test_envs = self.test_envs
 		if hasattr(cfg, "actor_use_rnn") and cfg.actor_use_rnn == True: # use rnn for actor or not
 			assert cfg.net is None, "actor_use_rnn == True, net should be None"
+			assert cfg.actor_rnn is not None, "actor_use_rnn == True, actor_rnn should not be None"
 			actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
 		else:
+			assert cfg.net is not None, "actor_use_rnn == False, net should not be None"
+			assert cfg.actor_rnn is None, "actor_use_rnn == False, actor_rnn should be None"
 			net = cfg.net(env.observation_space.shape)
 			actor = cfg.actor(net, env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
 		actor_optim = cfg.actor_optim(actor.parameters())

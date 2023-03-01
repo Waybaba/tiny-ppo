@@ -26,6 +26,7 @@ collector:
     buffer: 
       _target_: tianshou.data.ReplayBuffer
       size: 1000000
+      stack_num: 8
       # buffer_num: 2
     exploration_noise: true
   test_collector:
@@ -46,15 +47,18 @@ start_timesteps: 10000
 runner:
   _target_: src.runner.SACRunner
   _partial_: true
-net: null
+net: null # for rnn
 actor_use_rnn: true
+actor_rnn:
+  stack_num: 8
 actor:
-  _target_: tianshou.utils.net.continuous.RecurrentActorProb
+  _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
   layer_num: 2
   hidden_layer_size: 256
   unbounded: true
   conditioned_sigma: true
+  concat: true # obs + action as input
   device: ${device}
 actor_optim:
   _target_: torch.optim.Adam
@@ -82,6 +86,7 @@ policy:
   gamma: 0.99
   critic_use_oracle_obs: false
   # alpha: 0.2
+  actor_rnn: ${actor_rnn}
   estimation_step: 1
   alpha:
     _target_: builtins.tuple

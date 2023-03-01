@@ -60,6 +60,7 @@
 				"experiment=sac",
 				"env.name=HalfCheetah-v4",
 				"env.delay=0",
+				"start_timesteps=1",
 			],
 		},
 		// entry.py sac_rnn
@@ -74,6 +75,7 @@
 				"experiment=sac_rnn",
 				"env.name=HalfCheetah-v4",
 				"env.delay=0",
+				"start_timesteps=1",
 			],
 		},
 		{
