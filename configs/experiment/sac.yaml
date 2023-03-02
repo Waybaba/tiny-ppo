@@ -84,7 +84,7 @@ policy:
   gamma: 0.99
   actor_rnn: ${actor_rnn}
   actor_input_act: ${actor_input_act}
-  critic_use_oracle_obs: false
+  critic_use_oracle_obs: true
   # alpha: 0.2
   estimation_step: 1
   alpha:

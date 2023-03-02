@@ -33,7 +33,7 @@ from pytorch_lightning.utilities.logger import (
 
 def make_env(env_cfg):
     env = gym.make(env_cfg.name)
-    env = DelayedRoboticEnv(env, env_cfg.delay)
+    env = DelayedRoboticEnv(env, env_cfg.delay, env_cfg.historical_act)
     return env
 
 def seed_everything(seed: int):
@@ -95,7 +95,6 @@ def print_config_tree(
     # generate config tree from queue
     for field in queue:
         branch = tree.add(field, style=style, guide_style=style)
-
         config_group = cfg[field]
         if isinstance(config_group, DictConfig):
             branch_content = OmegaConf.to_yaml(config_group, resolve=resolve)
@@ -217,6 +216,9 @@ class DummyNumEnv(HalfCheetahEnv):
         if self.count > 100:
             # res[2] = True
             res = (obs, res[1], True, *res[3:])
+        # reward: 1 - (action - self.count) / 100
+        reward = 1 - (action - self.count) / 100
+        res = (obs, reward, *res[2:])
         return res
 
 

@@ -18,6 +18,7 @@ env:
   train_num: 1
   test_num: 1
   delay: 0
+  historical_act: ${historical_act}
 collector:
   train_collector:
     _target_: tianshou.data.Collector
@@ -25,7 +26,7 @@ collector:
     buffer: 
       _target_: tianshou.data.ReplayBuffer
       size: 1000000
-      stack_num: 8
+      # stack_num: 8
       # buffer_num: 2
     exploration_noise: true
   test_collector:
@@ -47,20 +48,26 @@ runner:
   _target_: src.runner.SACRunner
   _partial_: true
 net: null # for rnn
-actor_rnn:
-  stack_num: 16
-# actor_rnn: false
-actor_input_act: false
+actor_rnn: null
+# actor_rnn:
+#   stack_num: ${collector.train_collector.buffer.stack_num}
+actor_input_act: null
+# actor_input_act: # ! TODO no meaning now
+#   type: "stack" # "stack", "stack_repeat_prev_obs", "cat". ps. when cat, no rnn
+# historical_act: null
+historical_act:
+  type: "cat-8" # "cat-8" means cat(obs,a_t-1,...,a_t-8)
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
-  rnn_layer_num: 1 
+  rnn_layer_num: 0
   rnn_hidden_layer_size: 256
   mlp_hidden_sizes: [256, 256]
   mlp_softmax: false
   unbounded: true
   conditioned_sigma: true
   concat: ${actor_input_act} # obs + action as input
+  historical_act: ${historical_act}
   device: ${device}
 actor_optim:
   _target_: torch.optim.Adam
@@ -86,9 +93,10 @@ policy:
   _partial_: true
   tau: 0.005
   gamma: 0.99
-  critic_use_oracle_obs: false
+  critic_use_oracle_obs: true
   actor_rnn: ${actor_rnn}
   actor_input_act: ${actor_input_act}
+  historical_act: ${historical_act}
   estimation_step: 1
   alpha:
     _target_: builtins.tuple

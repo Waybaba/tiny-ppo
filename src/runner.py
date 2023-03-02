@@ -348,6 +348,7 @@ class CustomSACPolicy(SACPolicy):
 		self.critic_use_oracle_obs = kwargs.pop("critic_use_oracle_obs")
 		self.actor_rnn = kwargs.pop("actor_rnn")
 		self.actor_input_act = kwargs.pop("actor_input_act")
+		self.historical_act = kwargs.pop("historical_act")
 		return super().__init__(
 			actor,	
 			actor_optim,
@@ -398,10 +399,14 @@ class CustomSACPolicy(SACPolicy):
 		)
 		batch.weight = (td1 + td2) / 2.0  # prio-buffer
 
-		# actor
+		# actor ###ACTOR_FORWARD
 		if not self.actor_rnn:
 			if not self.actor_input_act:
-				obs_result = self(batch)
+				if not self.historical_act:
+					obs_result = self(batch)
+				else:
+					batch.obs_cat_act = np.concatenate([batch.obs, batch.info["historical_act"]], axis=1)
+					obs_result = self(batch, input="obs_cat_act")
 			else:
 				batch.obs_act = np.concatenate([batch.obs, batch.info["act_prev"]], axis=1)
 				obs_result = self(batch, input="obs_act")
@@ -414,13 +419,14 @@ class CustomSACPolicy(SACPolicy):
 				batch.obs_act = np.concatenate([batch.obs, batch.info["stacked_act_prev"]], axis=2) # B,L,... use (S_t,a_t-1) # ! TODO check order, whether -1 is correct or 0
 				obs_result = self(batch, input="obs_act") # actor use delayed obs
 		act = obs_result.act
+		
 		if not self.actor_rnn:
 			if self.critic_use_oracle_obs:
 				current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
 				current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
 			else:
 				current_q1a = self.critic1(batch.obs, act).flatten()
-				current_q1a = self.critic1(batch.obs, act).flatten()
+				current_q2a = self.critic2(batch.obs, act).flatten()
 		else:
 			if self.critic_use_oracle_obs:
 				current_q1a = self.critic1(batch.info["obs_nodelay"][:,-1], act).flatten()
@@ -463,11 +469,17 @@ class CustomSACPolicy(SACPolicy):
 	
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
 		batch = buffer[indices]  # batch.obs: s_{t+n}
+		###ACTOR_FORWARD
 		if not self.actor_rnn:
 			if not self.actor_input_act: 
-				obs_next_result = self(batch, input="obs_next") # ! CHECK
+				if self.historical_act:
+					historical_act = buffer[buffer.next(indices)].info["historical_act"]
+					batch.obs_cat_act = np.concatenate([batch.obs_next, historical_act], axis=1)
+					obs_next_result = self(batch, input="obs_cat_act")
+				else:
+					obs_next_result = self(batch, input="obs_next") # actor use delayed obs
 			else:
-				obs_next_result = self(batch, input="obs_next") # actor use delayed obs
+				obs_next_result = self(batch, input="obs_next")
 		else:
 			if not self.actor_input_act:
 				obs_next_result = self(batch)
@@ -509,6 +521,8 @@ class CustomSACPolicy(SACPolicy):
 		if not self.actor_rnn:
 			if self.actor_input_act:
 				batch.info["act_prev"] = buffer[buffer.prev(indices)].act
+			else:
+				batch.info["historical_act_next"] = buffer[buffer.next(indices)].info["historical_act"]
 		else:
 			if self.actor_input_act:
 				batch.info["stacked_act"] = buffer.get(indices, "act")
@@ -522,33 +536,47 @@ class CustomSACPolicy(SACPolicy):
 		input: str = "obs",
 		**kwargs: Any,
 	) -> Batch:
+		###ACTOR_FORWARD note that env.step would call this function automatically
 		obs = batch[input]
-		if self.actor_rnn:
-			if not self.actor_input_act:
-				obs = obs
-			else:
-				if len(obs.shape) == 2: # (B, s_dim) online 
-					if len(batch.act.shape) == 0: # first step, when act is not available
-						obs_act = np.zeros([obs.shape[0], 1, self.actor.nn.input_size])
+		if not self.actor_input_act: # ! TODO check
+			if self.historical_act:
+				if len(batch.act.shape) == 0: # online - first step, when act is not available
+					obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
+				else:
+					if input == "obs":
+						obs = np.concatenate([obs, batch.info["historical_act"]], axis=-1)
+					elif input == "obs_next":
+						raise NotImplementedError(f"input {input} not implemented")
+					elif input == "obs_cat_act":
+						obs = batch.obs_cat_act
 					else:
-						obs_act = np.concatenate([obs, batch.act], axis=1)
-				else: # (B, L, s_dim) offline self.learn
-					obs_act = obs
-		else:
-			if not self.actor_input_act:
-				obs = obs
-			else:
-				if len(obs.shape) == 2: # (B, s_dim) online 
-					if len(batch.act.shape) == 0: # first step, when act is not available
-						obs_act = np.zeros([obs.shape[0], self.actor.nn.input_size])
-					else:
-						obs_act = np.concatenate([obs, batch.act], axis=1)
-				else: # (B, L, s_dim) offline self.learn
-					obs_act = obs
-		if self.actor_input_act:
-			logits, hidden = self.actor(obs_act, state=state, info=batch.info)
-		else:
+						raise NotImplementedError(f"input {input} not implemented")
 			logits, hidden = self.actor(obs, state=state, info=batch.info)
+		else:
+			if not self.actor_rnn:
+				assert len(obs.shape) == 2, f"obs.shape {obs.shape} != 2"
+				if obs.shape[1] == self.actor.nn.input_size: # (B, s+act_dim) offline
+					assert input == "obs_act", f"input {input} != obs_act"
+					obs_act = obs
+				else:
+					if len(batch.act.shape) == 0: # online - first step, when act is not available
+						obs_act = np.zeros([obs.shape[0], self.actor.nn.input_size])
+					else: # online - normal
+						obs_act = np.concatenate([obs, batch.act], axis=1)
+			else:
+				if len(obs.shape) == 2: # (1, s_dim) online
+					if len(batch.act.shape) == 0: # online - first step, when act is not available
+						obs_act = np.zeros([obs.shape[0], 1, self.actor.nn.input_size])
+					else: # online - normal
+						obs_act = np.concatenate([obs, batch.info["prev_act"]], axis=1)
+				elif len(obs.shape) == 3: # (B, L, s+a_dim) offline self.learn
+					assert input == "obs_act", f"input {input} != obs_act"
+					assert obs.shape[2] == self.actor.nn.input_size, f"obs.shape[2] {obs.shape[2]} != self.actor.nn.input_size {self.actor.nn.input_size}"
+					obs_act = obs
+				else:
+					raise ValueError(f"obs.shape {obs.shape} is not supported")
+			logits, hidden = self.actor(obs_act, state=state, info=batch.info)
+			
 		assert isinstance(logits, tuple)
 		dist = Independent(Normal(*logits), 1)
 		if self._deterministic_eval and not self.training:
@@ -572,6 +600,12 @@ class CustomSACPolicy(SACPolicy):
 
 class DummyNet(nn.Module):
 	"""Return input as output."""
+	def __init__(self, **kwargs):
+		super().__init__()
+		# set all kwargs as self.xxx
+		for k, v in kwargs.items():
+			setattr(self, k, v)
+		
 	def forward(self, x):
 		return x
 
@@ -603,14 +637,22 @@ class CustomRecurrentActorProb(nn.Module):
 		unbounded: bool = False,
 		conditioned_sigma: bool = False,
 		concat: bool = False,
+		historical_act: str = None,
 	) -> None:
 		# ! TODO add mlp_softmax
 		super().__init__()
 		self.device = device
+		self.rnn_layer_num = rnn_layer_num
 		input_dim = int(np.prod(state_shape))
 		action_dim = int(np.prod(action_shape))
-		if concat:
-			input_dim += action_dim
+		if historical_act: # e.g. {type: "cat-8"}
+			historical_act, cat_len = historical_act.type.split("-")
+			cat_len = int(cat_len)
+			input_dim += action_dim * cat_len
+			assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
+		else:
+			if concat:
+				input_dim += action_dim
 		if rnn_layer_num:
 			self.nn = nn.LSTM(
 				input_size=input_dim,
@@ -619,7 +661,7 @@ class CustomRecurrentActorProb(nn.Module):
 				batch_first=True,
 			)
 		else:
-			self.nn = DummyNet()
+			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
 		output_dim = int(np.prod(action_shape))
 		# self.mu = nn.Linear(hidden_layer_size, output_dim)
 		self.mu = MLP(
@@ -632,7 +674,7 @@ class CustomRecurrentActorProb(nn.Module):
 		if conditioned_sigma:
 			# self.sigma = nn.Linear(hidden_layer_size, output_dim)
 			self.sigma = MLP(
-				rnn_hidden_layer_size,  # type: ignore
+				rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
 				output_dim,
 				mlp_hidden_sizes,
 				device=self.device
@@ -659,19 +701,22 @@ class CustomRecurrentActorProb(nn.Module):
 		# in evaluation phase.
 		if len(obs.shape) == 2:
 			obs = obs.unsqueeze(-2)
-		self.nn.flatten_parameters()
-		if state is None:
-			obs, (hidden, cell) = self.nn(obs)
-		else:
-			# we store the stack data in [bsz, len, ...] format
-			# but pytorch rnn needs [len, bsz, ...]
-			obs, (hidden, cell) = self.nn(
-				obs, (
-					state["hidden"].transpose(0, 1).contiguous(),
-					state["cell"].transpose(0, 1).contiguous()
+		if self.rnn_layer_num:
+			self.nn.flatten_parameters()
+			if state is None:
+				obs, (hidden, cell) = self.nn(obs)
+			else:
+				# we store the stack data in [bsz, len, ...] format
+				# but pytorch rnn needs [len, bsz, ...]
+				obs, (hidden, cell) = self.nn(
+					obs, (
+						state["hidden"].transpose(0, 1).contiguous(),
+						state["cell"].transpose(0, 1).contiguous()
+					)
 				)
-			)
-		logits = obs[:, -1]
+			logits = obs[:, -1]
+		else:
+			logits = obs
 		mu = self.mu(logits)
 		if not self._unbounded:
 			mu = self._max * torch.tanh(mu)
@@ -682,10 +727,11 @@ class CustomRecurrentActorProb(nn.Module):
 			shape[1] = -1
 			sigma = (self.sigma_param.view(shape) + torch.zeros_like(mu)).exp()
 		# please ensure the first dim is batch size: [bsz, len, ...]
+		# hidden and cell are [num_layers, bsz, hidden_size]
 		return (mu, sigma), {
 			"hidden": hidden.transpose(0, 1).detach(),
 			"cell": cell.transpose(0, 1).detach()
-		}
+		} if self.rnn_layer_num else None
 
 # Runner
 
