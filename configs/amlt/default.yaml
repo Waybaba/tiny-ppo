@@ -183,16 +183,19 @@ search:
   job_template:
     name: delay_amlt_rnn_and_normal{experiment_name:s}_{auto:5s}
     command:
-    - python agent/sac.py
+    - python src/entry.py
       experiment={experiment}
+      actor_input_act={actor_input_act}
       actor_rnn.stack_num={stack_num}
+      actor.rnn_layer_num={actor_rnn_layer_num}
+      actor.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
+      actor.mlp_hidden_sizes={actor_mlp_hidden_sizes}
       policy.critic_use_oracle_obs={critic_use_oracle_obs}
       collector.train_collector.buffer.size={train_collector_buffer_size}
       policy._target_=src.runner.CustomSACPolicy
       env.name={env_name}
       env.delay={env_delay}
       seed={seed}
-      net={net}
       net@net_c1={net}
       tags=[{tag}]
   type: grid
@@ -202,7 +205,7 @@ search:
       values: [1000000]
     - name: env_delay
       # values: [0,1,2,4,8,16,32]
-      values: [0,2,8,32]
+      values: [0,2,8,16,32]
     - name: seed
       values: [0,1,2,3,4]
     - name: critic_use_oracle_obs
@@ -215,6 +218,14 @@ search:
     - name: experiment
       values: [sac_rnn]
     - name: stack_num
-      values: [1,4,8,32]
+      values: [8,16]
     - name: tag
-      values: ["sac_rnn_first_test"]
+      values: ["sac_rnn_with_action_input_test_1or2RNN2MLP_withActOrNot"]
+    - name: actor_rnn_layer_num
+      values: [1,2]
+    - name: actor_rnn_hidden_layer_size
+      values: [256]
+    - name: actor_mlp_hidden_sizes
+      values: ["[256,256]"]
+    - name: actor_input_act
+      values: [true,false]

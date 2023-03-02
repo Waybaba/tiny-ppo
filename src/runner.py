@@ -347,6 +347,7 @@ class CustomSACPolicy(SACPolicy):
 	) -> None:
 		self.critic_use_oracle_obs = kwargs.pop("critic_use_oracle_obs")
 		self.actor_rnn = kwargs.pop("actor_rnn")
+		self.actor_input_act = kwargs.pop("actor_input_act")
 		return super().__init__(
 			actor,	
 			actor_optim,
@@ -398,9 +399,21 @@ class CustomSACPolicy(SACPolicy):
 		batch.weight = (td1 + td2) / 2.0  # prio-buffer
 
 		# actor
-		obs_result = self(batch)
+		if not self.actor_rnn:
+			if not self.actor_input_act:
+				obs_result = self(batch)
+			else:
+				batch.obs_act = np.concatenate([batch.obs, batch.info["act_prev"]], axis=1)
+				obs_result = self(batch, input="obs_act")
+		else:
+			# ! TODO check order, whether -1 is correct or 0
+			# ! TODO check step of obs, ...
+			if not self.actor_input_act: 
+				obs_result = self(batch)
+			else:
+				batch.obs_act = np.concatenate([batch.obs, batch.info["stacked_act_prev"]], axis=2) # B,L,... use (S_t,a_t-1) # ! TODO check order, whether -1 is correct or 0
+				obs_result = self(batch, input="obs_act") # actor use delayed obs
 		act = obs_result.act
-		
 		if not self.actor_rnn:
 			if self.critic_use_oracle_obs:
 				current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
@@ -451,10 +464,18 @@ class CustomSACPolicy(SACPolicy):
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
 		batch = buffer[indices]  # batch.obs: s_{t+n}
 		if not self.actor_rnn:
-			obs_next_result = self(batch, input="obs_next") # actor use delayed obs
+			if not self.actor_input_act: 
+				obs_next_result = self(batch, input="obs_next") # ! CHECK
+			else:
+				obs_next_result = self(batch, input="obs_next") # actor use delayed obs
 		else:
-			batch.obs_act = np.concatenate([batch.obs_next, buffer.get(indices,"act")], axis=2) # B,L,... # ! TODO check order, whether -1 is correct or 0
-			obs_next_result = self(batch, input="obs_act") # actor use delayed obs
+			if not self.actor_input_act:
+				obs_next_result = self(batch)
+				obs_next_result = self(batch, input="obs_next") # actor use delayed obs
+			else:
+				act = buffer.get(indices, "act")
+				batch.obs_act = np.concatenate([batch.obs_next,act], axis=2) # B,L,... use (S_t+1,a_t)# ! TODO check order, whether -1 is correct or 0
+				obs_next_result = self(batch, input="obs_act") # actor use delayed obs
 
 		act_ = obs_next_result.act
 		if not self.actor_rnn:
@@ -481,12 +502,18 @@ class CustomSACPolicy(SACPolicy):
 	def process_fn(
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
 	) -> Batch:
-		batch = super().process_fn(batch, buffer, indices)
+		super().process_fn(batch, buffer, indices)
 		if self.critic_use_oracle_obs:
 			prev_batch = buffer[buffer.prev(indices)]
 			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
+		if not self.actor_rnn:
+			if self.actor_input_act:
+				batch.info["act_prev"] = buffer[buffer.prev(indices)].act
+		else:
+			if self.actor_input_act:
+				batch.info["stacked_act"] = buffer.get(indices, "act")
+				batch.info["stacked_act_prev"] = buffer.get(buffer.prev(indices), "act")
 		return batch
-
 
 	def forward(  # type: ignore
 		self,
@@ -497,14 +524,31 @@ class CustomSACPolicy(SACPolicy):
 	) -> Batch:
 		obs = batch[input]
 		if self.actor_rnn:
-			if len(obs.shape) == 2: # (B, s_dim) online 
-				if len(batch.act.shape) == 0: # first step, when act is not available
-					obs = np.zeros([obs.shape[0], 1, self.actor.nn.input_size])
-				else:
-					obs = np.concatenate([obs, batch.act], axis=1)
-			else: # (B, L, s_dim) offline self.learn
+			if not self.actor_input_act:
 				obs = obs
-		logits, hidden = self.actor(obs, state=state, info=batch.info)
+			else:
+				if len(obs.shape) == 2: # (B, s_dim) online 
+					if len(batch.act.shape) == 0: # first step, when act is not available
+						obs_act = np.zeros([obs.shape[0], 1, self.actor.nn.input_size])
+					else:
+						obs_act = np.concatenate([obs, batch.act], axis=1)
+				else: # (B, L, s_dim) offline self.learn
+					obs_act = obs
+		else:
+			if not self.actor_input_act:
+				obs = obs
+			else:
+				if len(obs.shape) == 2: # (B, s_dim) online 
+					if len(batch.act.shape) == 0: # first step, when act is not available
+						obs_act = np.zeros([obs.shape[0], self.actor.nn.input_size])
+					else:
+						obs_act = np.concatenate([obs, batch.act], axis=1)
+				else: # (B, L, s_dim) offline self.learn
+					obs_act = obs
+		if self.actor_input_act:
+			logits, hidden = self.actor(obs_act, state=state, info=batch.info)
+		else:
+			logits, hidden = self.actor(obs, state=state, info=batch.info)
 		assert isinstance(logits, tuple)
 		dist = Independent(Normal(*logits), 1)
 		if self._deterministic_eval and not self.training:
@@ -526,44 +570,73 @@ class CustomSACPolicy(SACPolicy):
 			log_prob=log_prob
 		)
 
+class DummyNet(nn.Module):
+	"""Return input as output."""
+	def forward(self, x):
+		return x
+
 class CustomRecurrentActorProb(nn.Module):
 	"""Recurrent version of ActorProb.
 
-	For advanced usage (how to customize the network), please refer to
-	:ref:`build_the_network`.
+	edit log:
+		1. add rnn_hidden_layer_size and mlp_hidden_sizes for consecutive processing
+			original ActorProb only has one hidden layer after lstm. In the new version, 
+			we can customize both the size of RNN hidden layer (with rnn_hidden_layer_size)
+			and the size of mlp hidden layer (with mlp_hidden_sizes)
+			RNN: rnn_hidden_layer_size * rnn_layer_num
+			MLP: mlp_hidden_sizes[0] * mlp_hidden_sizes[1] * ...
+
 	"""
 	SIGMA_MIN = -20
 	SIGMA_MAX = 2
 	
 	def __init__(
 		self,
-		layer_num: int,
 		state_shape: Sequence[int],
 		action_shape: Sequence[int],
-		hidden_layer_size: int = 128,
+		rnn_layer_num: int = 0,
+		rnn_hidden_layer_size: int = 128,
+		mlp_hidden_sizes: Sequence[int] = (),
+		mlp_softmax: bool = False,
 		max_action: float = 1.0,
 		device: Union[str, int, torch.device] = "cpu",
 		unbounded: bool = False,
 		conditioned_sigma: bool = False,
 		concat: bool = False,
 	) -> None:
+		# ! TODO add mlp_softmax
 		super().__init__()
 		self.device = device
 		input_dim = int(np.prod(state_shape))
 		action_dim = int(np.prod(action_shape))
 		if concat:
 			input_dim += action_dim
-		self.nn = nn.LSTM(
-			input_size=input_dim,
-			hidden_size=hidden_layer_size,
-			num_layers=layer_num,
-			batch_first=True,
-		)
+		if rnn_layer_num:
+			self.nn = nn.LSTM(
+				input_size=input_dim,
+				hidden_size=rnn_hidden_layer_size,
+				num_layers=rnn_layer_num,
+				batch_first=True,
+			)
+		else:
+			self.nn = DummyNet()
 		output_dim = int(np.prod(action_shape))
-		self.mu = nn.Linear(hidden_layer_size, output_dim)
+		# self.mu = nn.Linear(hidden_layer_size, output_dim)
+		self.mu = MLP(
+			rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
+			output_dim,
+			mlp_hidden_sizes,
+			device=self.device
+		)
 		self._c_sigma = conditioned_sigma
 		if conditioned_sigma:
-			self.sigma = nn.Linear(hidden_layer_size, output_dim)
+			# self.sigma = nn.Linear(hidden_layer_size, output_dim)
+			self.sigma = MLP(
+				rnn_hidden_layer_size,  # type: ignore
+				output_dim,
+				mlp_hidden_sizes,
+				device=self.device
+			)
 		else:
 			self.sigma_param = nn.Parameter(torch.zeros(output_dim, 1))
 		self._max = max_action
@@ -645,15 +718,7 @@ class SACRunner(DefaultRLRunner):
 		env = self.env
 		train_envs = self.train_envs
 		test_envs = self.test_envs
-		if hasattr(cfg, "actor_use_rnn") and cfg.actor_use_rnn == True: # use rnn for actor or not
-			assert cfg.net is None, "actor_use_rnn == True, net should be None"
-			assert cfg.actor_rnn is not None, "actor_use_rnn == True, actor_rnn should not be None"
-			actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
-		else:
-			assert cfg.net is not None, "actor_use_rnn == False, net should not be None"
-			assert cfg.actor_rnn is None, "actor_use_rnn == False, actor_rnn should be None"
-			net = cfg.net(env.observation_space.shape)
-			actor = cfg.actor(net, env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
+		actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
 		actor_optim = cfg.actor_optim(actor.parameters())
 		net_c1 = cfg.net_c1(env.observation_space.shape, action_shape=env.action_space.shape)
 		critic1 = cfg.critic1(net_c1).to(cfg.device)

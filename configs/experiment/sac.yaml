@@ -4,7 +4,6 @@
 # python train.py experiment=example
 
 defaults:
-  - /net: default.yaml
   - /net@net_c1: default.yaml
   - /actor: null
   - _self_
@@ -46,13 +45,18 @@ start_timesteps: 10000
 runner:
   _target_: src.runner.SACRunner
   _partial_: true
+actor_rnn: false
+actor_input_act: true
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
-  # hidden_sizes: [256, 256]
-  hidden_sizes: []
+  rnn_layer_num: 0
+  rnn_hidden_layer_size: 256
+  mlp_hidden_sizes: [256, 256]
+  mlp_softmax: false
   unbounded: true
   conditioned_sigma: true
+  concat: ${actor_input_act} # obs + action as input
   device: ${device}
 actor_optim:
   _target_: torch.optim.Adam
@@ -78,6 +82,8 @@ policy:
   _partial_: true
   tau: 0.005
   gamma: 0.99
+  actor_rnn: ${actor_rnn}
+  actor_input_act: ${actor_input_act}
   critic_use_oracle_obs: false
   # alpha: 0.2
   estimation_step: 1
