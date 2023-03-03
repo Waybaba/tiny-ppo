@@ -3,11 +3,13 @@ import numpy as np
 from queue import Queue
 
 class DelayedRoboticEnv(gym.Wrapper):
-    def __init__(self, env0: gym.Env, delay_steps=2, historical_act=None):
+    def __init__(self, env0: gym.Env, delay_steps=2, global_config=None): # ! TODO remove all extra cfg
         super().__init__(env0)
         self.env = env0
         self.delay_steps = delay_steps
-        self.historical_act = historical_act # e.g. cat-8
+        self.global_cfg = global_config
+        # ! TODO info["cated_act"], info["last_act"] for FORWARD
+
 
         # self.action_space = self.env.action_space
 
@@ -22,17 +24,15 @@ class DelayedRoboticEnv(gym.Wrapper):
         self.delay_buf = Queue(maxsize=delay_steps+1)
         # make a queue for actions
         self.prev_act = np.zeros(self.env.action_space.shape)
-        if self.historical_act is not None:
-            self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(int(self.historical_act.type.split("-")[1]))]
+        self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(int(self.global_cfg.historical_act.num))] # ! if not exits
 
     def reset(self):
         res = self.env.reset()
         if isinstance(res, tuple): # (obs, {}) # discard info {}
             # res[-1]["obs_cur"] = res[0]
             return res[0]
-        self.prev_act = np.zeros_like(self.env.action_space.shape)
-        if self.historical_act is not None:
-            self.act_buf = [np.zeros_like(self.env.action_space.shape) for _ in range(int(self.historical_act.type.split("-")[1]))]
+        self.prev_act = np.zeros_like(self.env.action_space.shape) # ! TODO conditional set
+        self.act_buf = [np.zeros_like(self.env.action_space.shape) for _ in range(int(self.historical_act.type.split("-")[1]))]
         return res
 
     def step(self, action):
@@ -56,10 +56,9 @@ class DelayedRoboticEnv(gym.Wrapper):
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
         info["prev_act"] = self.prev_act
-        if self.historical_act is not None:
-            info["historical_act"] = np.concatenate(self.act_buf, axis=0)
-            self.act_buf.append(action)
-            self.act_buf.pop(0)
+        info["historical_act"] = np.concatenate(self.act_buf, axis=0)
+        self.act_buf.append(action)
+        self.act_buf.pop(0)
         self.prev_act = action
         # copy and return
         from copy import deepcopy

@@ -65,7 +65,6 @@ policy:
           _partial_: true
           lr: 3e-4
   estimation_step: 1
-
 env:
   name: HalfCheetah-v4
   train_num: 1

@@ -185,38 +185,39 @@ search:
     command:
     - python src/entry.py
       experiment={experiment}
-      actor_input_act={actor_input_act}
-      actor_rnn={actor_rnn}
-      historical_act.type={historical_act_type}
-      policy.critic_use_oracle_obs={critic_use_oracle_obs}
-      collector.train_collector.buffer.size={train_collector_buffer_size}
-      policy._target_=src.runner.CustomSACPolicy
       env.name={env_name}
+      actor.mlp_hidden_sizes={actor_mlp_hidden_sizes}
+      actor.rnn_layer_num={actor_actor_rnn_layer_num}
+      actor.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
       env.delay={env_delay}
       seed={seed}
       tags=[{tag}]
+      global_cfg.historical_act.type={historical_act_type}
+      global_cfg.historical_act.num={historical_act_num}
   type: grid
   max_trials: 10000
   params:
-    - name: train_collector_buffer_size
-      values: [1000000]
     - name: env_delay
       # values: [0,1,2,4,8,16,32]
       values: [0,2,8,16]
     - name: seed
       values: [0,1,2,3,4]
-    - name: critic_use_oracle_obs
-      values: [true]
     - name: env_name
       values: [HalfCheetah-v4]
       # values: [Ant-v4,Hopper-v4,Walker2d-v4,HalfCheetah-v4]
     - name: experiment
       values: [sac_rnn]
     - name: tag
-      values: ["sac_rnn_cat_act_mlp"]
-    - name: actor_rnn
-      values: [false]
-    - name: actor_input_act
-      values: [false]
+      values: ["sac_rnn_stack_act_rnn_deeper_NewCode"]
     - name: historical_act_type
-      values: [cat-1,cat-4,cat-8,cat-16,cat-32]
+      values: [stack_rnn]
+    - name: historical_act_num
+      values: [1,2,4,8]
+    - name: actor_mlp_hidden_sizes
+      values: ["[256,256]"]
+    - name: actor_rnn_layer_num
+      values: [1,2,4]
+    - name: actor_rnn_hidden_layer_size
+      values: [256]
+
+    

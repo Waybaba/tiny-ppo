@@ -1,6 +1,7 @@
 import pyrootutils
 root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
-from typing import Any, Dict, List, Optional, Type, Union, Tuple
+from typing import Callable, Any, Dict, List, Optional, Type, Union, Tuple
+from tianshou.data import Batch, ReplayBuffer, to_numpy, to_torch_as
 import numpy as np
 import torch
 import hydra
@@ -9,6 +10,7 @@ import torch
 import wandb
 import numpy as np
 import gymnasium as gym
+from tianshou.policy.base import _nstep_return
 # import gym
 import sys
 from utils.delay import DelayedRoboticEnv
@@ -33,6 +35,58 @@ from tianshou.policy import DDPGPolicy
 from tianshou.exploration import BaseNoise
 from torch.distributions import Independent, Normal
 from copy import deepcopy
+
+
+# policy
+
+class AsyncACDDPGPolicy(DDPGPolicy):
+	@staticmethod
+	def _mse_optimizer(
+		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
+	) -> Tuple[torch.Tensor, torch.Tensor]:
+		"""A simple wrapper script for updating critic network."""
+		weight = getattr(batch, "weight", 1.0)
+		# current_q = critic(batch.obs, batch.act).flatten()
+		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+		target_q = batch.returns.flatten()
+		td = current_q - target_q
+		# critic_loss = F.mse_loss(current_q1, target_q)
+		critic_loss = (td.pow(2) * weight).mean()
+		optimizer.zero_grad()
+		critic_loss.backward()
+		optimizer.step()
+		return td, critic_loss
+
+	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
+		# critic
+		td, critic_loss = self._mse_optimizer(batch, self.critic, self.critic_optim)
+		batch.weight = td  # prio-buffer
+		# actor
+		# actor_loss = -self.critic(batch.obs, self(batch).act).mean()
+		actor_loss = -self.critic(batch.info["obs_nodelay"], self(batch).act).mean()
+		self.actor_optim.zero_grad()
+		actor_loss.backward()
+		self.actor_optim.step()
+		self.sync_weight()
+		return {
+			"loss/actor": actor_loss.item(),
+			"loss/critic": critic_loss.item(),
+		}
+
+	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
+		batch = buffer[indices]  # batch.obs: s_{t+n}
+		next_batch = buffer[indices + 1]  # next_batch.obs: s_{t+n+1}
+		next_batch.obs_cur = next_batch.info["obs_cur"]
+		# obs_next_result = self(batch, input="obs_cur")
+		obs_next_result = self(next_batch, input="obs_cur")
+		act_ = obs_next_result.act
+		target_q = torch.min(
+			# self.critic1_old(batch.obs_next, act_),
+			# self.critic2_old(batch.obs_next, act_),
+			self.critic1_old(next_batch.obs_cur, act_),
+			self.critic2_old(next_batch.obs_cur, act_),
+		) - self._alpha * obs_next_result.log_prob
+		return target_q
 
 class SACPolicy(DDPGPolicy):
 	"""Implementation of Soft Actor-Critic. arXiv:1812.05905.
@@ -201,132 +255,6 @@ class SACPolicy(DDPGPolicy):
 
 		return result
 
-class CustomSACPolicy_(SACPolicy):
-
-	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
-		batch = buffer[indices]  # batch.obs: s_{t+n}
-		next_batch = buffer[buffer.next(indices)]  # next_batch.obs: s_{t+n+1}
-		obs_next_result = self(batch, input="obs_next")
-		act_ = obs_next_result.act
-		target_q = torch.min(
-			self.critic1_old(next_batch.obs, act_),
-			self.critic2_old(next_batch.obs, act_),
-		) - self._alpha * obs_next_result.log_prob
-		return target_q
-
-	@staticmethod
-	def _mse_optimizer(
-		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
-	) -> Tuple[torch.Tensor, torch.Tensor]:
-		"""A simple wrapper script for updating critic network."""
-		weight = getattr(batch, "weight", 1.0)
-		current_q = critic(batch.obs, batch.act).flatten()
-		target_q = batch.returns.flatten()
-		td = current_q - target_q
-		# critic_loss = F.mse_loss(current_q1, target_q)
-		critic_loss = (td.pow(2) * weight).mean()
-		optimizer.zero_grad()
-		critic_loss.backward()
-		optimizer.step()
-		return td, critic_loss
-
-	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
-		# critic 1&2
-		batch_for_critic = Batch(batch, copy=True)
-		if "current_obs" in batch.info.keys(): # use non-delayed obs for critic if available
-			batch_for_critic.obs = batch_for_critic.info.current_obs
-		td1, critic1_loss = self._mse_optimizer(
-			batch_for_critic, self.critic1, self.critic1_optim
-		)
-		td2, critic2_loss = self._mse_optimizer(
-			batch_for_critic, self.critic2, self.critic2_optim
-		)
-		batch_for_critic.weight = (td1 + td2) / 2.0  # prio-buffer
-
-		# actor
-		obs_result = self(batch_for_critic)
-		act = obs_result.act
-		current_q1a = self.critic1(batch_for_critic.obs, act).flatten()
-		current_q2a = self.critic2(batch_for_critic.obs, act).flatten()
-		actor_loss = (
-			self._alpha * obs_result.log_prob.flatten() -
-			torch.min(current_q1a, current_q2a)
-		).mean()
-		self.actor_optim.zero_grad()
-		actor_loss.backward()
-		self.actor_optim.step()
-
-		if self._is_auto_alpha:
-			log_prob = obs_result.log_prob.detach() + self._target_entropy
-			# please take a look at issue #258 if you'd like to change this line
-			alpha_loss = -(self._log_alpha * log_prob).mean()
-			self._alpha_optim.zero_grad()
-			alpha_loss.backward()
-			self._alpha_optim.step()
-			self._alpha = self._log_alpha.detach().exp()
-
-		self.sync_weight()
-
-		result = {
-			"loss/actor": actor_loss.item(),
-			"loss/critic1": critic1_loss.item(),
-			"loss/critic2": critic2_loss.item(),
-		}
-		if self._is_auto_alpha:
-			result["loss/alpha"] = alpha_loss.item()
-			result["alpha"] = self._alpha.item()  # type: ignore
-
-		return result
-
-class AsyncACDDPGPolicy(DDPGPolicy):
-	@staticmethod
-	def _mse_optimizer(
-		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
-	) -> Tuple[torch.Tensor, torch.Tensor]:
-		"""A simple wrapper script for updating critic network."""
-		weight = getattr(batch, "weight", 1.0)
-		# current_q = critic(batch.obs, batch.act).flatten()
-		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
-		target_q = batch.returns.flatten()
-		td = current_q - target_q
-		# critic_loss = F.mse_loss(current_q1, target_q)
-		critic_loss = (td.pow(2) * weight).mean()
-		optimizer.zero_grad()
-		critic_loss.backward()
-		optimizer.step()
-		return td, critic_loss
-
-	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
-		# critic
-		td, critic_loss = self._mse_optimizer(batch, self.critic, self.critic_optim)
-		batch.weight = td  # prio-buffer
-		# actor
-		# actor_loss = -self.critic(batch.obs, self(batch).act).mean()
-		actor_loss = -self.critic(batch.info["obs_nodelay"], self(batch).act).mean()
-		self.actor_optim.zero_grad()
-		actor_loss.backward()
-		self.actor_optim.step()
-		self.sync_weight()
-		return {
-			"loss/actor": actor_loss.item(),
-			"loss/critic": critic_loss.item(),
-		}
-
-	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
-		batch = buffer[indices]  # batch.obs: s_{t+n}
-		next_batch = buffer[indices + 1]  # next_batch.obs: s_{t+n+1}
-		next_batch.obs_cur = next_batch.info["obs_cur"]
-		# obs_next_result = self(batch, input="obs_cur")
-		obs_next_result = self(next_batch, input="obs_cur")
-		act_ = obs_next_result.act
-		target_q = torch.min(
-			# self.critic1_old(batch.obs_next, act_),
-			# self.critic2_old(batch.obs_next, act_),
-			self.critic1_old(next_batch.obs_cur, act_),
-			self.critic2_old(next_batch.obs_cur, act_),
-		) - self._alpha * obs_next_result.log_prob
-		return target_q
-
 class CustomSACPolicy(SACPolicy):
 	def __init__(
 		self,
@@ -346,9 +274,7 @@ class CustomSACPolicy(SACPolicy):
 		**kwargs: Any,
 	) -> None:
 		self.critic_use_oracle_obs = kwargs.pop("critic_use_oracle_obs")
-		self.actor_rnn = kwargs.pop("actor_rnn")
-		self.actor_input_act = kwargs.pop("actor_input_act")
-		self.historical_act = kwargs.pop("historical_act")
+		self.global_cfg = kwargs.pop("global_cfg")
 		return super().__init__(
 			actor,	
 			actor_optim,
@@ -371,16 +297,24 @@ class CustomSACPolicy(SACPolicy):
 	) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""A simple wrapper script for updating critic network."""
 		weight = getattr(batch, "weight", 1.0)
-		if not self.actor_rnn: # ! TODO check order, whether -1 is correct or 0
+		if self.global_cfg.historical_act:
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				if self.critic_use_oracle_obs:
+					current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+				else:
+					current_q = critic(batch.obs, batch.act).flatten()
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				if self.critic_use_oracle_obs:
+					current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+				else:
+					current_q = critic(batch.obs, batch.act).flatten() # ! TODO can be merged with the above
+			else:
+				raise NotImplementedError
+		else:
 			if self.critic_use_oracle_obs:
 				current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
 			else:
 				current_q = critic(batch.obs, batch.act).flatten()
-		else:
-			if self.critic_use_oracle_obs:
-				current_q = critic(batch.info["obs_nodelay"][:,-1], batch.act).flatten()
-			else:
-				current_q = critic(batch.obs[:,-1], batch.act).flatten()
 		target_q = batch.returns.flatten()
 		td = current_q - target_q
 		critic_loss = (td.pow(2) * weight).mean()
@@ -400,40 +334,80 @@ class CustomSACPolicy(SACPolicy):
 		batch.weight = (td1 + td2) / 2.0  # prio-buffer
 
 		# actor ###ACTOR_FORWARD
-		if not self.actor_rnn:
-			if not self.actor_input_act:
-				if not self.historical_act:
-					obs_result = self(batch)
-				else:
-					batch.obs_cat_act = np.concatenate([batch.obs, batch.info["historical_act"]], axis=1)
-					obs_result = self(batch, input="obs_cat_act")
+		# if not self.actor_rnn:
+		# 	if not self.actor_input_act:
+		# 		if not self.historical_act:
+		# 			obs_result = self(batch)
+		# 		else:
+		# 			batch.obs_cat_act = np.concatenate([batch.obs, batch.info["historical_act"]], axis=1)
+		# 			obs_result = self(batch, input="obs_cat_act")
+		# 	else:
+		# 		batch.obs_act = np.concatenate([batch.obs, batch.info["act_prev"]], axis=1)
+		# 		obs_result = self(batch, input="obs_act")
+		# else:
+		# 	# ! TODO check order, whether -1 is correct or 0
+		# 	# ! TODO check step of obs, ...
+		# 	if not self.actor_input_act: 
+		# 		obs_result = self(batch)
+		# 	else:
+		# 		batch.obs_act = np.concatenate([batch.obs, batch.info["stacked_act_prev"]], axis=2) # B,L,... use (S_t,a_t-1) # ! TODO check order, whether -1 is correct or 0
+		# 		obs_result = self(batch, input="obs_act") # actor use delayed obs
+		# act = obs_result.act
+		# get act
+		if self.global_cfg.historical_act:
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				batch.obs_cat_act = np.concatenate([batch.obs, batch.info["historical_act"]], axis=1)
+				obs_result = self(batch, input="obs_cat_act")
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				assert batch.is_preprocessed == True, "batch.is_preprocessed == True"
+				assert hasattr(batch, "obs_stack_act"), "hasattr(batch, 'obs_stack_act')"
+				obs_result = self(batch, input="obs_stack_act")
 			else:
-				batch.obs_act = np.concatenate([batch.obs, batch.info["act_prev"]], axis=1)
-				obs_result = self(batch, input="obs_act")
+				raise NotImplementedError
 		else:
-			# ! TODO check order, whether -1 is correct or 0
-			# ! TODO check step of obs, ...
-			if not self.actor_input_act: 
-				obs_result = self(batch)
-			else:
-				batch.obs_act = np.concatenate([batch.obs, batch.info["stacked_act_prev"]], axis=2) # B,L,... use (S_t,a_t-1) # ! TODO check order, whether -1 is correct or 0
-				obs_result = self(batch, input="obs_act") # actor use delayed obs
+			obs_result = self(batch)
 		act = obs_result.act
-		
-		if not self.actor_rnn:
+
+		# cal q
+		if self.global_cfg.historical_act:
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				if self.critic_use_oracle_obs:
+					current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
+					current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+				else:
+					current_q1a = self.critic1(batch.obs, act).flatten()
+					current_q2a = self.critic2(batch.obs, act).flatten()
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				if self.critic_use_oracle_obs: # ! TODO can be merged with above 
+					current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
+					current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+				else:
+					current_q1a = self.critic1(batch.obs, act).flatten()
+					current_q2a = self.critic2(batch.obs, act).flatten()
+			else:
+				raise NotImplementedError
+		else:
 			if self.critic_use_oracle_obs:
 				current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
 				current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
 			else:
 				current_q1a = self.critic1(batch.obs, act).flatten()
 				current_q2a = self.critic2(batch.obs, act).flatten()
-		else:
-			if self.critic_use_oracle_obs:
-				current_q1a = self.critic1(batch.info["obs_nodelay"][:,-1], act).flatten()
-				current_q2a = self.critic2(batch.info["obs_nodelay"][:,-1], act).flatten()
-			else:
-				current_q1a = self.critic1(batch.obs[:,-1], act).flatten()
-				current_q2a = self.critic2(batch.obs[:,-1], act).flatten()
+
+		# if not self.actor_rnn:
+		# 	if self.critic_use_oracle_obs:
+		# 		current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
+		# 		current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+		# 	else:
+		# 		current_q1a = self.critic1(batch.obs, act).flatten()
+		# 		current_q2a = self.critic2(batch.obs, act).flatten()
+		# else:
+		# 	if self.critic_use_oracle_obs:
+		# 		current_q1a = self.critic1(batch.info["obs_nodelay"][:,-1], act).flatten()
+		# 		current_q2a = self.critic2(batch.info["obs_nodelay"][:,-1], act).flatten()
+		# 	else:
+		# 		current_q1a = self.critic1(batch.obs[:,-1], act).flatten()
+		# 		current_q2a = self.critic2(batch.obs[:,-1], act).flatten()
 
 		actor_loss = (
 			self._alpha * obs_result.log_prob.flatten() -
@@ -470,27 +444,73 @@ class CustomSACPolicy(SACPolicy):
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
 		batch = buffer[indices]  # batch.obs: s_{t+n}
 		###ACTOR_FORWARD
-		if not self.actor_rnn:
-			if not self.actor_input_act: 
-				if self.historical_act:
-					historical_act = buffer[buffer.next(indices)].info["historical_act"]
-					batch.obs_cat_act = np.concatenate([batch.obs_next, historical_act], axis=1)
-					obs_next_result = self(batch, input="obs_cat_act")
-				else:
-					obs_next_result = self(batch, input="obs_next") # actor use delayed obs
+		# if not self.actor_rnn:
+		# 	if not self.actor_input_act: 
+		# 		if self.historical_act:
+		# 			historical_act = buffer[buffer.next(indices)].info["historical_act"]
+		# 			batch.obs_cat_act = np.concatenate([batch.obs_next, historical_act], axis=1)
+		# 			obs_next_result = self(batch, input="obs_cat_act")
+		# 		else:
+		# 			obs_next_result = self(batch, input="obs_next") # actor use delayed obs
+		# 	else:
+		# 		obs_next_result = self(batch, input="obs_next")
+		# else:
+		# 	if not self.actor_input_act:
+		# 		obs_next_result = self(batch)
+		# 		obs_next_result = self(batch, input="obs_next") # actor use delayed obs
+		# 	else:
+		# 		act = buffer.get(indices, "act")
+		# 		batch.obs_act = np.concatenate([batch.obs_next,act], axis=2) # B,L,... use (S_t+1,a_t)# ! TODO check order, whether -1 is correct or 0
+		# 		obs_next_result = self(batch, input="obs_act") # actor use delayed obs
+		if self.global_cfg.historical_act:
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				next_historical_act = buffer[buffer.next(indices)].info["historical_act"]
+				batch.obs_cat_act = np.concatenate([batch.obs_next, next_historical_act], axis=1)
+				# ! TODO check buffer[buffer.next(indices)].obs == buffer[indices].obs_next
+				batch.is_preprocessed = True
+				obs_next_result = self(batch, input="obs_cat_act")
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				historical_obs = buffer.get(indices, "obs_next", stack_num=self.global_cfg.historical_act.num)
+				# historical_act = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.historical_act.num)
+				# buffer[buffer.next(indices)].obs == buffer[indices].obs_next
+				# buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num)
+				# buffer.get(buffer.next(indices), "info", stack_num=self.global_cfg.historical_act.num)["prev_act"]
+				# buffer[indices].act == buffer[buffer.next(indices)].info["prev_act"]
+				# buffer[indices].info["prev_act"] == buffer[buffer.prev(indices)].act
+				# buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num) == buffer.get(buffer.next(indices), "info", stack_num=self.global_cfg.historical_act.num)["prev_act"]
+				historical_act = buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num)
+				# ! TODO check buffer[buffer.next(indices)].obs == buffer[indices].obs_next
+				batch.obs_stack_act = np.concatenate([historical_obs, historical_act], axis=-1)
+				batch.is_preprocessed = True
+				obs_next_result = self(batch, input="obs_stack_act")
 			else:
-				obs_next_result = self(batch, input="obs_next")
-		else:
-			if not self.actor_input_act:
-				obs_next_result = self(batch)
-				obs_next_result = self(batch, input="obs_next") # actor use delayed obs
-			else:
-				act = buffer.get(indices, "act")
-				batch.obs_act = np.concatenate([batch.obs_next,act], axis=2) # B,L,... use (S_t+1,a_t)# ! TODO check order, whether -1 is correct or 0
-				obs_next_result = self(batch, input="obs_act") # actor use delayed obs
+				raise NotImplementedError
+		else: # normal mode
+			obs_next_result = self(batch, input="obs_next")
 
 		act_ = obs_next_result.act
-		if not self.actor_rnn:
+		if self.global_cfg.historical_act:
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				target_q = torch.min(
+					self.critic1_old(batch.info["obs_next_nodelay"], act_) \
+					if self.critic_use_oracle_obs else \
+					self.critic1_old(batch.obs_next, act_),
+					self.critic2_old(batch.info["obs_next_nodelay"], act_) \
+					if self.critic_use_oracle_obs else \
+					self.critic2_old(batch.obs_next, act_)
+				) - self._alpha * obs_next_result.log_prob
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				target_q = torch.min( # ! TODO can be merged with above
+					self.critic1_old(batch.info["obs_next_nodelay"], act_) \
+					if self.critic_use_oracle_obs else \
+					self.critic1_old(batch.obs_next, act_),
+					self.critic2_old(batch.info["obs_next_nodelay"], act_) \
+					if self.critic_use_oracle_obs else \
+					self.critic2_old(batch.obs_next, act_)
+				) - self._alpha * obs_next_result.log_prob
+			else:
+				raise NotImplementedError
+		else:
 			target_q = torch.min(
 				self.critic1_old(batch.info["obs_next_nodelay"], act_) \
 				if self.critic_use_oracle_obs else \
@@ -499,34 +519,94 @@ class CustomSACPolicy(SACPolicy):
 				if self.critic_use_oracle_obs else \
 				self.critic2_old(batch.obs_next, act_)
 			) - self._alpha * obs_next_result.log_prob
-		else:
-			target_q = torch.min(
-				self.critic1_old(batch.info["obs_next_nodelay"][:,-1], act_) \
-				if self.critic_use_oracle_obs else \
-				self.critic1_old(batch.obs_next[:,-1], act_),
-				self.critic2_old(batch.info["obs_next_nodelay"][:,-1], act_) \
-				if self.critic_use_oracle_obs else \
-				self.critic2_old(batch.obs_next[:,-1], act_)
-			) - self._alpha * obs_next_result.log_prob
 
 		return target_q
 
 	def process_fn(
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
 	) -> Batch:
-		super().process_fn(batch, buffer, indices)
+		# add basic keys
 		if self.critic_use_oracle_obs:
 			prev_batch = buffer[buffer.prev(indices)]
 			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
-		if not self.actor_rnn:
-			if self.actor_input_act:
-				batch.info["act_prev"] = buffer[buffer.prev(indices)].act
-			else:
-				batch.info["historical_act_next"] = buffer[buffer.next(indices)].info["historical_act"]
-		else:
-			if self.actor_input_act:
-				batch.info["stacked_act"] = buffer.get(indices, "act")
-				batch.info["stacked_act_prev"] = buffer.get(buffer.prev(indices), "act")
+		if self.global_cfg.historical_act:
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				pass # ! check whether we need more keys
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				# get [{obs_t-N, act_t-N-1}, {obs_t-N+1, act_t-N}, ..., {obs_t-1, act_t-2}, {obs_t, act_t-1}]
+				historical_obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
+				historical_act = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.historical_act.num)
+				batch.obs_stack_act = np.concatenate([historical_obs, historical_act], axis=-1)
+		# if not self.actor_rnn:
+		# 	if self.actor_input_act:
+		# 		batch.info["act_prev"] = buffer[buffer.prev(indices)].act
+		# 	else:
+		# 		batch.info["historical_act_next"] = buffer[buffer.next(indices)].info["historical_act"]
+		# else:
+		# 	if self.actor_input_act:
+		# 		batch.info["stacked_act"] = buffer.get(indices, "act")
+		# 		batch.info["stacked_act_prev"] = buffer.get(buffer.prev(indices), "act")
+		# add return key (need basic keys)
+		batch = self.compute_nstep_return(
+			batch, buffer, indices, self._target_q, self._gamma, self._n_step,
+			self._rew_norm
+		)
+		# end flag
+		batch.is_preprocessed = True
+		return batch
+
+	@staticmethod
+	def compute_nstep_return(
+		batch: Batch,
+		buffer: ReplayBuffer,
+		indice: np.ndarray,
+		target_q_fn: Callable[[ReplayBuffer, np.ndarray], torch.Tensor],
+		gamma: float = 0.99,
+		n_step: int = 1,
+		rew_norm: bool = False,
+	) -> Batch:
+		r"""Compute n-step return for Q-learning targets.
+
+		.. math::
+			G_t = \sum_{i = t}^{t + n - 1} \gamma^{i - t}(1 - d_i)r_i +
+			\gamma^n (1 - d_{t + n}) Q_{\mathrm{target}}(s_{t + n})
+
+		where :math:`\gamma` is the discount factor, :math:`\gamma \in [0, 1]`,
+		:math:`d_t` is the done flag of step :math:`t`.
+
+		:param Batch batch: a data batch, which is equal to buffer[indice].
+		:param ReplayBuffer buffer: the data buffer.
+		:param function target_q_fn: a function which compute target Q value
+			of "obs_next" given data buffer and wanted indices.
+		:param float gamma: the discount factor, should be in [0, 1]. Default to 0.99.
+		:param int n_step: the number of estimation step, should be an int greater
+			than 0. Default to 1.
+		:param bool rew_norm: normalize the reward to Normal(0, 1), Default to False.
+
+		:return: a Batch. The result will be stored in batch.returns as a
+			torch.Tensor with the same shape as target_q_fn's return tensor.
+		"""
+		assert not rew_norm, \
+			"Reward normalization in computing n-step returns is unsupported now."
+		rew = buffer.rew
+		bsz = len(indice)
+		indices = [indice]
+		for _ in range(n_step - 1):
+			indices.append(buffer.next(indices[-1]))
+		indices = np.stack(indices)
+		# terminal indicates buffer indexes nstep after 'indice',
+		# and are truncated at the end of each episode
+		terminal = indices[-1]
+		with torch.no_grad():
+			target_q_torch = target_q_fn(buffer, terminal)  # (bsz, ?)
+		target_q = to_numpy(target_q_torch.reshape(bsz, -1))
+		target_q = target_q * BasePolicy.value_mask(buffer, terminal).reshape(-1, 1)
+		end_flag = buffer.done.copy()
+		end_flag[buffer.unfinished_index()] = True
+		target_q = _nstep_return(rew, end_flag, target_q, indices, gamma, n_step)
+		batch.returns = to_torch_as(target_q, target_q_torch)
+		if hasattr(batch, "weight"):  # prio buffer update
+			batch.weight = to_torch_as(batch.weight, target_q_torch)
 		return batch
 
 	def forward(  # type: ignore
@@ -538,44 +618,68 @@ class CustomSACPolicy(SACPolicy):
 	) -> Batch:
 		###ACTOR_FORWARD note that env.step would call this function automatically
 		obs = batch[input]
-		if not self.actor_input_act: # ! TODO check
-			if self.historical_act:
-				if len(batch.act.shape) == 0: # online - first step, when act is not available
-					obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
-				else:
-					if input == "obs":
-						obs = np.concatenate([obs, batch.info["historical_act"]], axis=-1)
-					elif input == "obs_next":
-						raise NotImplementedError(f"input {input} not implemented")
-					elif input == "obs_cat_act":
-						obs = batch.obs_cat_act
+		if self.global_cfg.historical_act:
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
+					obs = batch[input]
+				else: # online input
+					if len(batch.act.shape) == 0: # first step
+						obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
 					else:
-						raise NotImplementedError(f"input {input} not implemented")
-			logits, hidden = self.actor(obs, state=state, info=batch.info)
-		else:
-			if not self.actor_rnn:
-				assert len(obs.shape) == 2, f"obs.shape {obs.shape} != 2"
-				if obs.shape[1] == self.actor.nn.input_size: # (B, s+act_dim) offline
-					assert input == "obs_act", f"input {input} != obs_act"
-					obs_act = obs
-				else:
-					if len(batch.act.shape) == 0: # online - first step, when act is not available
-						obs_act = np.zeros([obs.shape[0], self.actor.nn.input_size])
-					else: # online - normal
-						obs_act = np.concatenate([obs, batch.act], axis=1)
+						obs = np.concatenate([obs, batch.info["historical_act"]], axis=-1)
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
+					obs = batch[input]
+				else: # online input - cat(act, obs))
+					if len(batch.act.shape) == 0: # first step
+						obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
+					else:
+						obs = np.concatenate([obs, batch.info["prev_act"]], axis=-1)
 			else:
-				if len(obs.shape) == 2: # (1, s_dim) online
-					if len(batch.act.shape) == 0: # online - first step, when act is not available
-						obs_act = np.zeros([obs.shape[0], 1, self.actor.nn.input_size])
-					else: # online - normal
-						obs_act = np.concatenate([obs, batch.info["prev_act"]], axis=1)
-				elif len(obs.shape) == 3: # (B, L, s+a_dim) offline self.learn
-					assert input == "obs_act", f"input {input} != obs_act"
-					assert obs.shape[2] == self.actor.nn.input_size, f"obs.shape[2] {obs.shape[2]} != self.actor.nn.input_size {self.actor.nn.input_size}"
-					obs_act = obs
-				else:
-					raise ValueError(f"obs.shape {obs.shape} is not supported")
-			logits, hidden = self.actor(obs_act, state=state, info=batch.info)
+				raise NotImplementedError(f"historical_act.type {self.global_cfg.historical_act.type} not implemented")
+		else: # normal mode
+			obs = batch[input]
+		
+		logits, hidden = self.actor(obs, state=state, info=batch.info)
+
+		# if not self.actor_input_act: # ! TODO check
+		# 	if self.historical_act:
+		# 		if len(batch.act.shape) == 0: # online - first step, when act is not available
+		# 			obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
+		# 		else:
+		# 			if input == "obs":
+		# 				obs = np.concatenate([obs, batch.info["historical_act"]], axis=-1)
+		# 			elif input == "obs_next":
+		# 				raise NotImplementedError(f"input {input} not implemented")
+		# 			elif input == "obs_cat_act":
+		# 				obs = batch.obs_cat_act
+		# 			else:
+		# 				raise NotImplementedError(f"input {input} not implemented")
+		# 	logits, hidden = self.actor(obs, state=state, info=batch.info)
+		# else:
+		# 	if not self.actor_rnn:
+		# 		assert len(obs.shape) == 2, f"obs.shape {obs.shape} != 2"
+		# 		if obs.shape[1] == self.actor.nn.input_size: # (B, s+act_dim) offline
+		# 			assert input == "obs_act", f"input {input} != obs_act"
+		# 			obs_act = obs
+		# 		else:
+		# 			if len(batch.act.shape) == 0: # online - first step, when act is not available
+		# 				obs_act = np.zeros([obs.shape[0], self.actor.nn.input_size])
+		# 			else: # online - normal
+		# 				obs_act = np.concatenate([obs, batch.act], axis=1)
+		# 	else:
+		# 		if len(obs.shape) == 2: # (1, s_dim) online
+		# 			if len(batch.act.shape) == 0: # online - first step, when act is not available
+		# 				obs_act = np.zeros([obs.shape[0], 1, self.actor.nn.input_size])
+		# 			else: # online - normal
+		# 				obs_act = np.concatenate([obs, batch.info["prev_act"]], axis=1)
+		# 		elif len(obs.shape) == 3: # (B, L, s+a_dim) offline self.learn
+		# 			assert input == "obs_act", f"input {input} != obs_act"
+		# 			assert obs.shape[2] == self.actor.nn.input_size, f"obs.shape[2] {obs.shape[2]} != self.actor.nn.input_size {self.actor.nn.input_size}"
+		# 			obs_act = obs
+		# 		else:
+		# 			raise ValueError(f"obs.shape {obs.shape} is not supported")
+		# 	logits, hidden = self.actor(obs_act, state=state, info=batch.info)
 			
 		assert isinstance(logits, tuple)
 		dist = Independent(Normal(*logits), 1)
@@ -597,17 +701,6 @@ class CustomSACPolicy(SACPolicy):
 			dist=dist,
 			log_prob=log_prob
 		)
-
-class DummyNet(nn.Module):
-	"""Return input as output."""
-	def __init__(self, **kwargs):
-		super().__init__()
-		# set all kwargs as self.xxx
-		for k, v in kwargs.items():
-			setattr(self, k, v)
-		
-	def forward(self, x):
-		return x
 
 class CustomRecurrentActorProb(nn.Module):
 	"""Recurrent version of ActorProb.
@@ -638,18 +731,27 @@ class CustomRecurrentActorProb(nn.Module):
 		conditioned_sigma: bool = False,
 		concat: bool = False,
 		historical_act: str = None,
+		global_cfg: object = None,
 	) -> None:
-		# ! TODO add mlp_softmax
+		# ! TODO add mlp_softmax ! remove extra cfg
+		# ! TODO add rnn dummy mechinism introduction
 		super().__init__()
+		self.global_cfg = global_cfg # ! TODO customize network structure
 		self.device = device
 		self.rnn_layer_num = rnn_layer_num
 		input_dim = int(np.prod(state_shape))
 		action_dim = int(np.prod(action_shape))
-		if historical_act: # e.g. {type: "cat-8"}
-			historical_act, cat_len = historical_act.type.split("-")
-			cat_len = int(cat_len)
-			input_dim += action_dim * cat_len
-			assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
+		if self.global_cfg.historical_act: # e.g. {type: "cat-8"}
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				input_dim += action_dim * int(self.global_cfg.historical_act.num)
+				assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
+				assert concat == False, "concat must be False when using historical_act"
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				input_dim += action_dim
+				assert rnn_layer_num > 0, "rnn_layer_num must be > 0 when using historical_act"
+				assert concat == False, "concat must be False when using historical_act"
+			else:
+				raise ValueError(f"historical_act.type {self.global_cfg.historical_act.type} is not supported")
 		else:
 			if concat:
 				input_dim += action_dim
@@ -732,6 +834,19 @@ class CustomRecurrentActorProb(nn.Module):
 			"hidden": hidden.transpose(0, 1).detach(),
 			"cell": cell.transpose(0, 1).detach()
 		} if self.rnn_layer_num else None
+
+# utils
+
+class DummyNet(nn.Module):
+	"""Return input as output."""
+	def __init__(self, **kwargs):
+		super().__init__()
+		# set all kwargs as self.xxx
+		for k, v in kwargs.items():
+			setattr(self, k, v)
+		
+	def forward(self, x):
+		return x
 
 # Runner
 

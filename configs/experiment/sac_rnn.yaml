@@ -18,7 +18,7 @@ env:
   train_num: 1
   test_num: 1
   delay: 0
-  historical_act: ${historical_act}
+  global_cfg: ${global_cfg}
 collector:
   train_collector:
     _target_: tianshou.data.Collector
@@ -48,26 +48,21 @@ runner:
   _target_: src.runner.SACRunner
   _partial_: true
 net: null # for rnn
-actor_rnn: null
-# actor_rnn:
-#   stack_num: ${collector.train_collector.buffer.stack_num}
-actor_input_act: null
-# actor_input_act: # ! TODO no meaning now
-#   type: "stack" # "stack", "stack_repeat_prev_obs", "cat". ps. when cat, no rnn
-# historical_act: null
-historical_act:
-  type: "cat-8" # "cat-8" means cat(obs,a_t-1,...,a_t-8)
+global_cfg: # would be passed to actor, critic1, critic2, policy, env
+  historical_act: 
+    # type: "cat_mlp" # "stack_rnn" or "cat_mlp".  ps. stack_rnn = stack([{obs_i, a_i}] * num). cat_mlp = cat(obs_i, a_i * num)
+    type: "stack_rnn"
+    num: 8
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
-  rnn_layer_num: 0
+  rnn_layer_num: 1
   rnn_hidden_layer_size: 256
   mlp_hidden_sizes: [256, 256]
   mlp_softmax: false
   unbounded: true
   conditioned_sigma: true
-  concat: ${actor_input_act} # obs + action as input
-  historical_act: ${historical_act}
+  global_cfg: ${global_cfg}
   device: ${device}
 actor_optim:
   _target_: torch.optim.Adam
@@ -94,9 +89,7 @@ policy:
   tau: 0.005
   gamma: 0.99
   critic_use_oracle_obs: true
-  actor_rnn: ${actor_rnn}
-  actor_input_act: ${actor_input_act}
-  historical_act: ${historical_act}
+  global_cfg: ${global_cfg}
   estimation_step: 1
   alpha:
     _target_: builtins.tuple
