@@ -52,13 +52,13 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
   historical_act: 
     # type: "cat_mlp" # "stack_rnn" or "cat_mlp".  ps. stack_rnn = stack([{obs_i, a_i}] * num). cat_mlp = cat(obs_i, a_i * num)
     type: "stack_rnn"
-    num: 8
+    num: 4
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
   rnn_layer_num: 1
   rnn_hidden_layer_size: 256
-  mlp_hidden_sizes: [256, 256]
+  mlp_hidden_sizes: [256,256]
   mlp_softmax: false
   unbounded: true
   conditioned_sigma: true

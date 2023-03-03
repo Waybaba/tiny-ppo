@@ -79,6 +79,22 @@
 				"start_timesteps=1",
 			],
 		},
+		// entry.py sac_rnn
+		{
+			"name": "sac_cat",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/entry.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				"experiment=sac_cat",
+				"env.name=HalfCheetah-v4",
+				// "env.name=DummyNum-v0",
+				"env.delay=4",
+				"start_timesteps=1",
+			],
+		},
 		{
 			"name": "ddpg",
 			"type": "python",

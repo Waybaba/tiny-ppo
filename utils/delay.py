@@ -56,7 +56,8 @@ class DelayedRoboticEnv(gym.Wrapper):
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
         info["prev_act"] = self.prev_act
-        info["historical_act"] = np.concatenate(self.act_buf, axis=0)
+        info["historical_act"] = np.concatenate(self.act_buf, axis=0) \
+            if self.global_cfg.historical_act.num > 0 else None
         self.act_buf.append(action)
         self.act_buf.pop(0)
         self.prev_act = action

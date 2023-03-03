@@ -187,7 +187,7 @@ search:
       experiment={experiment}
       env.name={env_name}
       actor.mlp_hidden_sizes={actor_mlp_hidden_sizes}
-      actor.rnn_layer_num={actor_actor_rnn_layer_num}
+      actor.rnn_layer_num={actor_rnn_layer_num}
       actor.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
       env.delay={env_delay}
       seed={seed}
@@ -208,15 +208,15 @@ search:
     - name: experiment
       values: [sac_rnn]
     - name: tag
-      values: ["sac_rnn_stack_act_rnn_deeper_NewCode"]
+      values: ["sac_rnn_cat_act_mlp_deeper_NewCode_add_zero"]
     - name: historical_act_type
-      values: [stack_rnn]
+      values: [cat_mlp]
     - name: historical_act_num
-      values: [1,2,4,8]
+      values: [0,1,2,4,8]
     - name: actor_mlp_hidden_sizes
-      values: ["[256,256]"]
+      values: ["[256,256]","[256,256,256]"]
     - name: actor_rnn_layer_num
-      values: [1,2,4]
+      values: [0]
     - name: actor_rnn_hidden_layer_size
       values: [256]
 

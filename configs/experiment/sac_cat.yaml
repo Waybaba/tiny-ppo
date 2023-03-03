@@ -1,0 +1,17 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - sac_rnn.yaml
+  - _self_
+
+global_cfg: # would be passed to actor, critic1, critic2, policy, env
+  historical_act: 
+    # type: "cat_mlp" # "stack_rnn" or "cat_mlp".  ps. stack_rnn = stack([{obs_i, a_i}] * num). cat_mlp = cat(obs_i, a_i * num)
+    type: "cat_mlp"
+    num: 1 # [obs_i, {a_i} * num] 0 means no historical act ps. note that stack would start from 1
+actor:
+  rnn_layer_num: 0
+

@@ -356,7 +356,8 @@ class CustomSACPolicy(SACPolicy):
 		# get act
 		if self.global_cfg.historical_act:
 			if self.global_cfg.historical_act.type == "cat_mlp":
-				batch.obs_cat_act = np.concatenate([batch.obs, batch.info["historical_act"]], axis=1)
+				batch.obs_cat_act = np.concatenate([batch.obs, batch.info["historical_act"]], axis=1) \
+					if self.global_cfg.historical_act.num > 0 else batch.obs
 				obs_result = self(batch, input="obs_cat_act")
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				assert batch.is_preprocessed == True, "batch.is_preprocessed == True"
@@ -465,7 +466,8 @@ class CustomSACPolicy(SACPolicy):
 		if self.global_cfg.historical_act:
 			if self.global_cfg.historical_act.type == "cat_mlp":
 				next_historical_act = buffer[buffer.next(indices)].info["historical_act"]
-				batch.obs_cat_act = np.concatenate([batch.obs_next, next_historical_act], axis=1)
+				batch.obs_cat_act = np.concatenate([batch.obs_next, next_historical_act], axis=1) \
+					if self.global_cfg.historical_act.num > 0 else batch.obs_next
 				# ! TODO check buffer[buffer.next(indices)].obs == buffer[indices].obs_next
 				batch.is_preprocessed = True
 				obs_next_result = self(batch, input="obs_cat_act")
@@ -626,7 +628,8 @@ class CustomSACPolicy(SACPolicy):
 					if len(batch.act.shape) == 0: # first step
 						obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
 					else:
-						obs = np.concatenate([obs, batch.info["historical_act"]], axis=-1)
+						obs = np.concatenate([obs, batch.info["historical_act"]], axis=-1) \
+							if self.global_cfg.historical_act.num > 0 else obs
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
 					obs = batch[input]
@@ -743,7 +746,7 @@ class CustomRecurrentActorProb(nn.Module):
 		action_dim = int(np.prod(action_shape))
 		if self.global_cfg.historical_act: # e.g. {type: "cat-8"}
 			if self.global_cfg.historical_act.type == "cat_mlp":
-				input_dim += action_dim * int(self.global_cfg.historical_act.num)
+				input_dim += action_dim * self.global_cfg.historical_act.num
 				assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
 				assert concat == False, "concat must be False when using historical_act"
 			elif self.global_cfg.historical_act.type == "stack_rnn":
