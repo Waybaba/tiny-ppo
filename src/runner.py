@@ -305,9 +305,17 @@ class CustomSACPolicy(SACPolicy):
 					current_q = critic(batch.obs, batch.act).flatten()
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				if self.critic_use_oracle_obs:
-					current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+					bsz_len_shape = batch.act.shape[:2]
+					flatten_num = np.prod(bsz_len_shape)
+					current_q = critic(
+						batch.info["obs_nodelay"].reshape(flatten_num, -1), 
+						batch.act.reshape(flatten_num, -1)
+					).flatten()
 				else:
-					current_q = critic(batch.obs, batch.act).flatten() # ! TODO can be merged with the above
+					current_q = critic(
+						batch.obs.reshape(flatten_num, -1),
+						batch.act.reshape(flatten_num, -1)
+					).flatten() # ! TODO can be merged with the above
 			else:
 				raise NotImplementedError
 		else:
@@ -317,7 +325,13 @@ class CustomSACPolicy(SACPolicy):
 				current_q = critic(batch.obs, batch.act).flatten()
 		target_q = batch.returns.flatten()
 		td = current_q - target_q
-		critic_loss = (td.pow(2) * weight).mean()
+		if self.global_cfg.historical_act and self.global_cfg.historical_act.type == "stack_rnn":
+			critic_loss = (td.pow(2) * weight)
+			critic_loss = critic_loss.reshape(*bsz_len_shape, -1)
+			critic_loss = critic_loss[:, self.global_cfg.historical_act.burnin_num:]
+			critic_loss = critic_loss.mean()
+		else:
+			critic_loss = (td.pow(2) * weight).mean()
 		optimizer.zero_grad()
 		critic_loss.backward()
 		optimizer.step()
@@ -380,8 +394,16 @@ class CustomSACPolicy(SACPolicy):
 					current_q2a = self.critic2(batch.obs, act).flatten()
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				if self.critic_use_oracle_obs: # ! TODO can be merged with above 
-					current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
-					current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+					bsz_len_shape = batch.act.shape[:2]
+					flatten_num = np.prod(bsz_len_shape)
+					current_q1a = self.critic1(
+						batch.info["obs_nodelay"].reshape(flatten_num, -1),
+						act.reshape(flatten_num, -1)
+					).flatten()
+					current_q2a = self.critic2(
+						batch.info["obs_nodelay"].reshape(flatten_num, -1),
+						act.reshape(flatten_num, -1)
+					).flatten()
 				else:
 					current_q1a = self.critic1(batch.obs, act).flatten()
 					current_q2a = self.critic2(batch.obs, act).flatten()
@@ -409,11 +431,17 @@ class CustomSACPolicy(SACPolicy):
 		# 	else:
 		# 		current_q1a = self.critic1(batch.obs[:,-1], act).flatten()
 		# 		current_q2a = self.critic2(batch.obs[:,-1], act).flatten()
-
-		actor_loss = (
-			self._alpha * obs_result.log_prob.flatten() -
-			torch.min(current_q1a, current_q2a)
-		).mean()
+		if self.global_cfg.historical_act and self.global_cfg.historical_act.type == "stack_rnn":
+			actor_loss = self._alpha * obs_result.log_prob.flatten() - \
+				torch.min(current_q1a, current_q2a)
+			actor_loss = actor_loss.reshape(*bsz_len_shape, -1)
+			actor_loss = actor_loss[:, self.global_cfg.historical_act.burnin_num:]
+			actor_loss = actor_loss.mean()
+		else:
+			actor_loss = (
+				self._alpha * obs_result.log_prob.flatten() -
+				torch.min(current_q1a, current_q2a)
+			).mean()
 		self.actor_optim.zero_grad()
 		actor_loss.backward()
 		self.actor_optim.step()
@@ -473,6 +501,7 @@ class CustomSACPolicy(SACPolicy):
 				obs_next_result = self(batch, input="obs_cat_act")
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				historical_obs = buffer.get(indices, "obs_next", stack_num=self.global_cfg.historical_act.num)
+				if len(historical_obs.shape) == 2: historical_obs = historical_obs[:,None,:]
 				# historical_act = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.historical_act.num)
 				# buffer[buffer.next(indices)].obs == buffer[indices].obs_next
 				# buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num)
@@ -481,6 +510,7 @@ class CustomSACPolicy(SACPolicy):
 				# buffer[indices].info["prev_act"] == buffer[buffer.prev(indices)].act
 				# buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num) == buffer.get(buffer.next(indices), "info", stack_num=self.global_cfg.historical_act.num)["prev_act"]
 				historical_act = buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num)
+				if len(historical_act.shape) == 2: historical_act = historical_act[:,None,:]
 				# ! TODO check buffer[buffer.next(indices)].obs == buffer[indices].obs_next
 				batch.obs_stack_act = np.concatenate([historical_obs, historical_act], axis=-1)
 				batch.is_preprocessed = True
@@ -502,14 +532,20 @@ class CustomSACPolicy(SACPolicy):
 					self.critic2_old(batch.obs_next, act_)
 				) - self._alpha * obs_next_result.log_prob
 			elif self.global_cfg.historical_act.type == "stack_rnn":
-				target_q = torch.min( # ! TODO can be merged with above
-					self.critic1_old(batch.info["obs_next_nodelay"], act_) \
+				info_stacked = buffer.get(indices, "info", stack_num=self.global_cfg.historical_act.num)
+				obs_next_stacked = buffer.get(indices, "obs_next", stack_num=self.global_cfg.historical_act.num)
+				# flatten and reshape bak s=(256,80,19) -> (256*80,19), a=(256,80,4) -> (256*80,4)
+				bsz_len_shape = act_.shape[:2]
+				flatten_num = np.prod(bsz_len_shape)
+				target_q = torch.min( # ! TODO can be merged with above # (256, 80, 19)
+					self.critic1_old(info_stacked["obs_next_nodelay"].reshape(flatten_num,-1), act_.reshape(flatten_num,-1)) \
 					if self.critic_use_oracle_obs else \
-					self.critic1_old(batch.obs_next, act_),
-					self.critic2_old(batch.info["obs_next_nodelay"], act_) \
+					self.critic1_old(obs_next_stacked.reshape(flatten_num,-1), act_.reshape(flatten_num,-1)),
+					self.critic2_old(info_stacked["obs_next_nodelay"].reshape(flatten_num,-1), act_.reshape(flatten_num,-1)) \
 					if self.critic_use_oracle_obs else \
-					self.critic2_old(batch.obs_next, act_)
-				) - self._alpha * obs_next_result.log_prob
+					self.critic2_old(obs_next_stacked.reshape(flatten_num,-1), act_.reshape(flatten_num,-1))
+				) - self._alpha * obs_next_result.log_prob.reshape(flatten_num,-1)
+				target_q = target_q.reshape(*bsz_len_shape, -1)
 			else:
 				raise NotImplementedError
 		else:
@@ -536,9 +572,35 @@ class CustomSACPolicy(SACPolicy):
 				pass # ! check whether we need more keys
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				# get [{obs_t-N, act_t-N-1}, {obs_t-N+1, act_t-N}, ..., {obs_t-1, act_t-2}, {obs_t, act_t-1}]
-				historical_obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
-				historical_act = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.historical_act.num)
-				batch.obs_stack_act = np.concatenate([historical_obs, historical_act], axis=-1)
+				# historical_obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
+				# if len(historical_obs.shape) == 2: historical_obs = historical_obs[:,None,:]
+				# historical_act = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.historical_act.num)
+				# if len(historical_act.shape) == 2: historical_act = historical_act[:,None,:]
+				batch.obs_next = buffer.get(buffer.next(indices), "obs", stack_num=self.global_cfg.historical_act.num) # TODO for kv
+				batch.obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
+				batch.act = buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num)
+				batch.obs_stack_act = np.concatenate([batch.obs, batch.act], axis=-1)
+				batch.info = buffer.get(indices, "info", stack_num=self.global_cfg.historical_act.num)
+				batch.info["obs_nodelay"] = buffer.get(buffer.prev(indices), "info", stack_num=self.global_cfg.historical_act.num)["obs_next_nodelay"]
+				batch.is_another_episode = None
+				indices_stacked = []
+				latest_step = indices
+				for i in range(self.global_cfg.historical_act.num):
+					indices_stacked.insert(0, latest_step)
+					latest_step = buffer.prev(latest_step)
+				indices_stacked = np.stack(indices_stacked, axis=-1)
+				indices_stacked_prev = buffer.prev(indices_stacked)
+				start = (indices_stacked == indices_stacked_prev)
+				# index                [0, 0, 0, 0, 1, 2, 3, 4]
+				# index_prev		   [0, 0, 0, 0, 0, 1, 2, 3]
+				# cur==prev            [1, 1, 1, 1, 0, 0, 0, 0]
+				# is_another_episode   [1, 1, 1, 0, 0, 0, 0, 0]
+				for b in range(start.shape[0]): # set the last True to False
+					for i in range(start.shape[1], 0, -1):
+						if start[b,i-1]:
+							start[b,i-1] = False
+							break
+				batch.is_another_episode = start
 		# if not self.actor_rnn:
 		# 	if self.actor_input_act:
 		# 		batch.info["act_prev"] = buffer[buffer.prev(indices)].act
@@ -630,20 +692,23 @@ class CustomSACPolicy(SACPolicy):
 					else:
 						obs = np.concatenate([obs, batch.info["historical_act"]], axis=-1) \
 							if self.global_cfg.historical_act.num > 0 else obs
+				logits, hidden = self.actor(obs, state=state, info=batch.info)
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
 					obs = batch[input]
+					logits, hidden = self.actor(obs, state=state, info=batch.info)
 				else: # online input - cat(act, obs))
 					if len(batch.act.shape) == 0: # first step
 						obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
 					else:
 						obs = np.concatenate([obs, batch.info["prev_act"]], axis=-1)
+					logits, hidden = self.actor(obs, state=state, info=batch.info)
+					logits = tuple([logit.squeeze(0) for logit in logits])
 			else:
 				raise NotImplementedError(f"historical_act.type {self.global_cfg.historical_act.type} not implemented")
 		else: # normal mode
 			obs = batch[input]
-		
-		logits, hidden = self.actor(obs, state=state, info=batch.info)
+			logits, hidden = self.actor(obs, state=state, info=batch.info)
 
 		# if not self.actor_input_act: # ! TODO check
 		# 	if self.historical_act:
@@ -704,6 +769,8 @@ class CustomSACPolicy(SACPolicy):
 			dist=dist,
 			log_prob=log_prob
 		)
+
+# net
 
 class CustomRecurrentActorProb(nn.Module):
 	"""Recurrent version of ActorProb.
@@ -803,7 +870,8 @@ class CustomRecurrentActorProb(nn.Module):
 		)
 		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
 		# In short, the tensor's shape in training phase is longer than which
-		# in evaluation phase.
+		# in evaluation phase. 
+		# TODO remove following code
 		if len(obs.shape) == 2:
 			obs = obs.unsqueeze(-2)
 		if self.rnn_layer_num:
@@ -819,14 +887,30 @@ class CustomRecurrentActorProb(nn.Module):
 						state["cell"].transpose(0, 1).contiguous()
 					)
 				)
-			logits = obs[:, -1]
+			logits = obs
 		else:
 			logits = obs
-		mu = self.mu(logits)
+		if len(logits.shape) == 2: # (bsz, dim)
+			pass
+		elif len(logits.shape) == 3: # (bsz, len, dim)
+			pass
+		else:
+			raise ValueError(f"len(logits.shape) {len(logits.shape)} is not supported")
+		# flatten then forward then convert back
+		logits_ = logits.reshape(-1, logits.shape[-1])
+		mu = self.mu(logits_).reshape(*logits.shape[:-1], -1)
 		if not self._unbounded:
 			mu = self._max * torch.tanh(mu)
 		if self._c_sigma:
-			sigma = torch.clamp(self.sigma(logits), min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
+			logits_ = logits.reshape(-1, logits.shape[-1])
+			sigma = self.sigma(logits_).reshape(*logits.shape[:-1], -1)
+			sigma = torch.clamp(sigma, min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
+			if len(logits.shape) == 2: # (bsz, dim)
+				pass
+			elif len(logits.shape) == 3: # (bsz, len, dim)
+				pass
+			else:
+				raise ValueError(f"len(logits.shape) {len(logits.shape)} is not supported")
 		else:
 			shape = [1] * len(mu.shape)
 			shape[1] = -1
@@ -868,7 +952,6 @@ class DefaultRLRunner:
 		self.cfg = cfg
 		self.env = cfg.env
 		# init
-		wandb.init(project=cfg.task_name, tags=cfg.tags, config=utils.config_format(cfg),dir=cfg.output_dir)
 		utils.seed_everything(cfg.seed) # TODO add env seed
 		self.train_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.train_num)])
 		self.test_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.test_num)])

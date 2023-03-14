@@ -181,7 +181,7 @@ storage:
 
 search:
   job_template:
-    name: delay_amlt_rnn_and_normal{experiment_name:s}_{auto:5s}
+    name: RL_Delayed_{random_string:s}
     command:
     - python src/entry.py
       experiment={experiment}
@@ -189,17 +189,19 @@ search:
       actor.mlp_hidden_sizes={actor_mlp_hidden_sizes}
       actor.rnn_layer_num={actor_rnn_layer_num}
       actor.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
+      trainer.batch_size={trainer_batch_size}
       env.delay={env_delay}
       seed={seed}
       tags=[{tag}]
       global_cfg.historical_act.type={historical_act_type}
       global_cfg.historical_act.num={historical_act_num}
+      global_cfg.historical_act.burnin_num={historical_act_burnin_num}
   type: grid
   max_trials: 10000
   params:
     - name: env_delay
       # values: [0,1,2,4,8,16,32]
-      values: [0,2,8,16]
+      values: [0,2,4,8,16]
     - name: seed
       values: [0,1,2,3,4]
     - name: env_name
@@ -208,15 +210,19 @@ search:
     - name: experiment
       values: [sac_rnn]
     - name: tag
-      values: ["sac_rnn_cat_act_mlp_deeper_NewCode_add_zero"]
+      values: ["stack_act_rnn_longTermTruncatedRNN_BurninInvestigation"]
     - name: historical_act_type
-      values: [cat_mlp]
+      values: [stack_rnn]
     - name: historical_act_num
-      values: [0,1,2,4,8]
+      values: [80,200]
+    - name: historical_act_burnin_num
+      values: [0,20,40]
+    - name: trainer_batch_size
+      values: [32]
     - name: actor_mlp_hidden_sizes
-      values: ["[256,256]","[256,256,256]"]
+      values: ["[256,256]"]
     - name: actor_rnn_layer_num
-      values: [0]
+      values: [1]
     - name: actor_rnn_hidden_layer_size
       values: [256]
 
