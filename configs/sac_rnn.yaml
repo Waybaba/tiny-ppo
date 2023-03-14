@@ -11,7 +11,6 @@ tags: ["debug"]
 
 output_dir: "${paths.output_dir}"
 device: "cuda"
-actor_use_rnn: true
 net: null # check consistency with net_use_rnn in the code
 actor:
   _target_: tianshou.utils.net.continuous.RecurrentActorProb

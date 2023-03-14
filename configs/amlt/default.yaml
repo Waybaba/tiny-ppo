@@ -190,15 +190,19 @@ search:
       actor.rnn_layer_num={actor_rnn_layer_num}
       actor.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
       trainer.batch_size={trainer_batch_size}
+      policy.actor_use_oracle_obs={actor_use_oracle_obs}
       env.delay={env_delay}
       seed={seed}
       tags=[{tag}]
-      global_cfg.historical_act.type={historical_act_type}
-      global_cfg.historical_act.num={historical_act_num}
-      global_cfg.historical_act.burnin_num={historical_act_burnin_num}
+      global_cfg.historical_act=null
+      # global_cfg.historical_act.type={historical_act_type}
+      # global_cfg.historical_act.num={historical_act_num}
+      # global_cfg.historical_act.burnin_num={historical_act_burnin_num}
   type: grid
   max_trials: 10000
   params:
+    - name: actor_use_oracle_obs
+      values: [false]
     - name: env_delay
       # values: [0,1,2,4,8,16,32]
       values: [0,2,4,8,16]
@@ -208,21 +212,21 @@ search:
       values: [HalfCheetah-v4]
       # values: [Ant-v4,Hopper-v4,Walker2d-v4,HalfCheetah-v4]
     - name: experiment
-      values: [sac_rnn]
+      values: [sac_cat]
     - name: tag
-      values: ["stack_act_rnn_longTermTruncatedRNN_BurninInvestigation"]
-    - name: historical_act_type
-      values: [stack_rnn]
-    - name: historical_act_num
-      values: [80,200]
-    - name: historical_act_burnin_num
-      values: [0,20,40]
+      values: ["NomalInput_vs_CatWithZero"]
+    # - name: historical_act_type
+    #   values: [cat_mlp]
+    # - name: historical_act_num
+    #   values: [0]
+    # - name: historical_act_burnin_num
+    #   values: [0]
     - name: trainer_batch_size
-      values: [32]
+      values: [256]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
-      values: [1]
+      values: [0]
     - name: actor_rnn_hidden_layer_size
       values: [256]
 

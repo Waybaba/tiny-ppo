@@ -24,7 +24,8 @@ class DelayedRoboticEnv(gym.Wrapper):
         self.delay_buf = Queue(maxsize=delay_steps+1)
         # make a queue for actions
         self.prev_act = np.zeros(self.env.action_space.shape)
-        self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(int(self.global_cfg.historical_act.num))] # ! if not exits
+        if self.global_cfg.historical_act and self.global_cfg.historical_act.num > 0:
+            self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(int(self.global_cfg.historical_act.num))] # ! if not exits
 
     def reset(self):
         res = self.env.reset()
@@ -32,7 +33,8 @@ class DelayedRoboticEnv(gym.Wrapper):
             # res[-1]["obs_cur"] = res[0]
             return res[0]
         self.prev_act = np.zeros_like(self.env.action_space.shape) # ! TODO conditional set
-        self.act_buf = [np.zeros_like(self.env.action_space.shape) for _ in range(int(self.historical_act.type.split("-")[1]))]
+        if self.global_cfg.historical_act and self.global_cfg.historical_act.num:
+            self.act_buf = [np.zeros_like(self.env.action_space.shape) for _ in range(int(self.historical_act.type.split("-")[1]))]
         return res
 
     def step(self, action):
@@ -56,10 +58,11 @@ class DelayedRoboticEnv(gym.Wrapper):
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
         info["prev_act"] = self.prev_act
-        info["historical_act"] = np.concatenate(self.act_buf, axis=0) \
-            if self.global_cfg.historical_act.num > 0 else None
-        self.act_buf.append(action)
-        self.act_buf.pop(0)
+        if self.global_cfg.historical_act and self.global_cfg.historical_act.num:
+            info["historical_act"] = np.concatenate(self.act_buf, axis=0) \
+                if self.global_cfg.historical_act.num > 0 else None
+            self.act_buf.append(action)
+            self.act_buf.pop(0)
         self.prev_act = action
         # copy and return
         from copy import deepcopy

@@ -38,7 +38,6 @@ from copy import deepcopy
 
 
 # policy
-
 class AsyncACDDPGPolicy(DDPGPolicy):
 	@staticmethod
 	def _mse_optimizer(
@@ -274,7 +273,12 @@ class CustomSACPolicy(SACPolicy):
 		**kwargs: Any,
 	) -> None:
 		self.critic_use_oracle_obs = kwargs.pop("critic_use_oracle_obs")
+		self.actor_use_oracle_obs = kwargs.pop("actor_use_oracle_obs")
 		self.global_cfg = kwargs.pop("global_cfg")
+		if self.global_cfg.historical_act:
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				# assert actor.__class__ is not CustomRecurrentActorProb, "cat_mlp should not be used with recurrent actor"
+				assert actor.rnn_layer_num == 0, "cat_mlp should not be used with recurrent actor"
 		return super().__init__(
 			actor,	
 			actor_optim,
@@ -370,8 +374,8 @@ class CustomSACPolicy(SACPolicy):
 		# get act
 		if self.global_cfg.historical_act:
 			if self.global_cfg.historical_act.type == "cat_mlp":
-				batch.obs_cat_act = np.concatenate([batch.obs, batch.info["historical_act"]], axis=1) \
-					if self.global_cfg.historical_act.num > 0 else batch.obs
+				batch.obs_cat_act = np.concatenate([self.get_actor_obs(batch,"cur"), batch.info["historical_act"]], axis=1) \
+					if self.global_cfg.historical_act.num > 0 else self.get_actor_obs(batch,"cur") # TODO put a place holder here
 				obs_result = self(batch, input="obs_cat_act")
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				assert batch.is_preprocessed == True, "batch.is_preprocessed == True"
@@ -494,8 +498,8 @@ class CustomSACPolicy(SACPolicy):
 		if self.global_cfg.historical_act:
 			if self.global_cfg.historical_act.type == "cat_mlp":
 				next_historical_act = buffer[buffer.next(indices)].info["historical_act"]
-				batch.obs_cat_act = np.concatenate([batch.obs_next, next_historical_act], axis=1) \
-					if self.global_cfg.historical_act.num > 0 else batch.obs_next
+				batch.obs_cat_act = np.concatenate([self.get_actor_obs(batch,"next"), next_historical_act], axis=-1) \
+					if self.global_cfg.historical_act.num > 0 else self.get_actor_obs(batch,"next")
 				# ! TODO check buffer[buffer.next(indices)].obs == buffer[indices].obs_next
 				batch.is_preprocessed = True
 				obs_next_result = self(batch, input="obs_cat_act")
@@ -564,7 +568,7 @@ class CustomSACPolicy(SACPolicy):
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
 	) -> Batch:
 		# add basic keys
-		if self.critic_use_oracle_obs:
+		if self.critic_use_oracle_obs or self.actor_use_oracle_obs:
 			prev_batch = buffer[buffer.prev(indices)]
 			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
 		if self.global_cfg.historical_act:
@@ -579,7 +583,7 @@ class CustomSACPolicy(SACPolicy):
 				batch.obs_next = buffer.get(buffer.next(indices), "obs", stack_num=self.global_cfg.historical_act.num) # TODO for kv
 				batch.obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
 				batch.act = buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num)
-				batch.obs_stack_act = np.concatenate([batch.obs, batch.act], axis=-1)
+				batch.obs_stack_act = np.concatenate([self.get_actor_obs(batch,"cur"), batch.act], axis=-1)
 				batch.info = buffer.get(indices, "info", stack_num=self.global_cfg.historical_act.num)
 				batch.info["obs_nodelay"] = buffer.get(buffer.prev(indices), "info", stack_num=self.global_cfg.historical_act.num)["obs_next_nodelay"]
 				batch.is_another_episode = None
@@ -685,16 +689,21 @@ class CustomSACPolicy(SACPolicy):
 		if self.global_cfg.historical_act:
 			if self.global_cfg.historical_act.type == "cat_mlp":
 				if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
-					obs = batch[input]
+					assert input == "obs_cat_act", "input should be obs_cat_act for cat_mlp historical model"
+					obs = batch[input] # check whether CAT OBS is used
 				else: # online input
-					if len(batch.act.shape) == 0: # first step
+					if len(batch.act.shape) == 0: # first step (zero cat)
 						obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
-					else:
-						obs = np.concatenate([obs, batch.info["historical_act"]], axis=-1) \
-							if self.global_cfg.historical_act.num > 0 else obs
+					else: # normal step
+						# every element of obs and obs_next should be the same
+						assert (batch["obs"] == batch["obs_next"]).all() # TODO DEBUG ONLY remove later
+						obs = np.concatenate([self.get_actor_obs(batch,"next"), batch.info["historical_act"]], axis=-1) \
+							if self.global_cfg.historical_act.num > 0 else self.get_actor_obs(batch,"next")
 				logits, hidden = self.actor(obs, state=state, info=batch.info)
+				pass
 			elif self.global_cfg.historical_act.type == "stack_rnn":
 				if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
+					assert input == "obs_stack_act", "input should be obs_stack_act for stack_rnn historical model"
 					obs = batch[input]
 					logits, hidden = self.actor(obs, state=state, info=batch.info)
 				else: # online input - cat(act, obs))
@@ -770,7 +779,244 @@ class CustomSACPolicy(SACPolicy):
 			log_prob=log_prob
 		)
 
+	def get_critic_obs(self, batch: Batch, cur_or_next):
+		"""Get obs for critic.
+
+		Args:
+			batch (Batch): batch data
+			cur_or_next (str): "cur" or "next"
+
+		Returns:
+			np.ndarray: obs for critic
+		"""
+		if cur_or_next == "cur":
+			if self.actor_use_oracle_obs: obs = batch.info["obs_nodelay"]
+			else: obs = batch.obs
+		elif cur_or_next == "next":
+			if self.actor_use_oracle_obs: obs = batch.info["obs_next_nodelay"]
+			else: obs = batch.obs_next
+		return obs
+	
+	def get_actor_obs(self, batch: Batch, cur_or_next):
+		"""Get obs for actor.
+
+		Args:
+			batch (Batch): batch data
+			cur_or_next (str): "cur" or "next"
+
+		Returns:
+			np.ndarray: obs for actor
+		"""
+		if cur_or_next == "cur":
+			if self.actor_use_oracle_obs: obs = batch.info["obs_nodelay"]
+			else: obs = batch.obs
+		elif cur_or_next == "next":
+			if self.actor_use_oracle_obs: obs = batch.info["obs_next_nodelay"]
+			else: obs = batch.obs_next
+		return obs
+
 # net
+
+class Critic(nn.Module):
+    """Simple critic network. Will create an actor operated in continuous \
+    action space with structure of preprocess_net ---> 1(q value).
+
+    :param preprocess_net: a self-defined preprocess_net which output a
+        flattened hidden state.
+    :param hidden_sizes: a sequence of int for constructing the MLP after
+        preprocess_net. Default to empty sequence (where the MLP now contains
+        only a single linear layer).
+    :param int preprocess_net_output_dim: the output dimension of
+        preprocess_net.
+    :param linear_layer: use this module as linear layer. Default to nn.Linear.
+    :param bool flatten_input: whether to flatten input data for the last layer.
+        Default to True.
+
+    For advanced usage (how to customize the network), please refer to
+    :ref:`build_the_network`.
+
+    .. seealso::
+
+        Please refer to :class:`~tianshou.utils.net.common.Net` as an instance
+        of how preprocess_net is suggested to be defined.
+    """
+
+    def __init__(
+        self,
+        preprocess_net: nn.Module,
+        hidden_sizes: Sequence[int] = (),
+        device: Union[str, int, torch.device] = "cpu",
+        preprocess_net_output_dim: Optional[int] = None,
+        linear_layer: Type[nn.Linear] = nn.Linear,
+        flatten_input: bool = True,
+    ) -> None:
+        super().__init__()
+        self.device = device
+        self.preprocess = preprocess_net
+        self.output_dim = 1
+        input_dim = getattr(preprocess_net, "output_dim", preprocess_net_output_dim)
+        self.last = MLP(
+            input_dim,  # type: ignore
+            1,
+            hidden_sizes,
+            device=self.device,
+            linear_layer=linear_layer,
+            flatten_input=flatten_input,
+        )
+
+    def forward(
+        self,
+        obs: Union[np.ndarray, torch.Tensor],
+        act: Optional[Union[np.ndarray, torch.Tensor]] = None,
+        info: Dict[str, Any] = {},
+    ) -> torch.Tensor:
+        """Mapping: (s, a) -> logits -> Q(s, a)."""
+        obs = torch.as_tensor(
+            obs,
+            device=self.device,
+            dtype=torch.float32,
+        ).flatten(1)
+        if act is not None:
+            act = torch.as_tensor(
+                act,
+                device=self.device,
+                dtype=torch.float32,
+            ).flatten(1)
+            obs = torch.cat([obs, act], dim=1)
+        logits, hidden = self.preprocess(obs)
+        logits = self.last(logits)
+        return logits
+
+class CustomRecurrentCritic(Critic):
+	def __init__(
+		self,
+		state_shape: Sequence[int],
+		action_shape: Sequence[int],
+		rnn_layer_num: int = 0,
+		rnn_hidden_layer_size: int = 128,
+		mlp_hidden_sizes: Sequence[int] = (),
+		mlp_softmax: bool = False,
+		max_action: float = 1.0,
+		device: Union[str, int, torch.device] = "cpu",
+		unbounded: bool = False,
+		conditioned_sigma: bool = False,
+		concat: bool = False,
+		historical_act: str = None,
+		global_cfg: object = None,
+	) -> None:
+		# ! TODO add mlp_softmax ! remove extra cfg
+		# ! TODO add rnn dummy mechinism introduction
+		super().__init__()
+		self.global_cfg = global_cfg # ! TODO customize network structure
+		self.device = device
+		self.rnn_layer_num = rnn_layer_num
+		input_dim = int(np.prod(state_shape))
+		action_dim = int(np.prod(action_shape))
+		if self.global_cfg.historical_act: # e.g. {type: "cat-8"}
+			if self.global_cfg.historical_act.type == "cat_mlp":
+				input_dim += action_dim * self.global_cfg.historical_act.num
+				assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
+				assert concat == False, "concat must be False when using historical_act"
+			elif self.global_cfg.historical_act.type == "stack_rnn":
+				input_dim += action_dim
+				assert rnn_layer_num > 0, "rnn_layer_num must be > 0 when using historical_act"
+				assert concat == False, "concat must be False when using historical_act"
+			else:
+				raise ValueError(f"historical_act.type {self.global_cfg.historical_act.type} is not supported")
+		else:
+			if concat:
+				input_dim += action_dim
+		if rnn_layer_num:
+			self.nn = nn.GRU(
+				input_size=input_dim,
+				hidden_size=rnn_hidden_layer_size,
+				num_layers=rnn_layer_num,
+				batch_first=True,
+			)
+		else:
+			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
+		output_dim = int(np.prod(action_shape))
+		# self.mu = nn.Linear(hidden_layer_size, output_dim)
+		self.mu = MLP(
+			rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
+			output_dim,
+			mlp_hidden_sizes,
+			device=self.device
+		)
+		self._c_sigma = conditioned_sigma
+		if conditioned_sigma:
+			# self.sigma = nn.Linear(hidden_layer_size, output_dim)
+			self.sigma = MLP(
+				rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
+				output_dim,
+				mlp_hidden_sizes,
+				device=self.device
+			)
+		else:
+			self.sigma_param = nn.Parameter(torch.zeros(output_dim, 1))
+		self._max = max_action
+		self._unbounded = unbounded
+	
+	def forward(
+        self,
+        obs: Union[np.ndarray, torch.Tensor],
+        act: Optional[Union[np.ndarray, torch.Tensor]] = None,
+        info: Dict[str, Any] = {},
+	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
+		"""Almost the same as :class:`~tianshou.utils.net.common.Recurrent`."""
+		obs = torch.as_tensor(
+			obs,
+			device=self.device,
+			dtype=torch.float32,
+		)
+		### forward rnn
+		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
+		# In short, the tensor's shape in training phase is longer than which
+		# in evaluation phase. 
+		if self.rnn_layer_num: # use rnn
+			if len(obs.shape) == 2:
+				obs = obs.unsqueeze(-2) # TODO seems not good
+			self.nn.flatten_parameters()
+			if state is None:
+				obs, hidden = self.nn(obs)
+			else:
+				# we store the stack data in [bsz, len, ...] format
+				# but pytorch rnn needs [len, bsz, ...]
+				obs, hidden = self.nn(
+					obs, 
+					state["hidden"].transpose(0, 1).contiguous()
+				)
+			logits = obs
+		else: # skip rnn
+			logits = obs
+		### forward mlp
+		mu = self.flatten_foward(self.mu, logits)
+		if not self._unbounded:
+			mu = self._max * torch.tanh(mu)
+		if self._c_sigma:
+			sigma = self.flatten_foward(self.sigma, logits)
+			sigma = torch.clamp(sigma, min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
+		else:
+			shape = [1] * len(mu.shape)
+			shape[1] = -1
+			sigma = (self.sigma_param.view(shape) + torch.zeros_like(mu)).exp()
+		# please ensure the first dim is batch size: [bsz, len, ...]
+		# hidden and cell are [num_layers, bsz, hidden_size]
+		return (mu, sigma), {
+			"hidden": hidden.transpose(0, 1).detach(),
+			# "cell": cell.transpose(0, 1).detach()
+		} if self.rnn_layer_num else None
+	
+	def flatten_foward(self, model, input):
+		""" flattent the input except the last dim, then forward, then convert back
+			input: [N_0, N_1, ..., N_{n-1}, dim]
+			output: [N_0 * N_1 * ... * N_{n-1}, dim]
+		"""
+		shape = input.shape
+		input = input.reshape(-1, shape[-1])
+		output = model(input)
+		output = output.reshape(*shape[:-1], -1)
+		return output
 
 class CustomRecurrentActorProb(nn.Module):
 	"""Recurrent version of ActorProb.
@@ -826,7 +1072,7 @@ class CustomRecurrentActorProb(nn.Module):
 			if concat:
 				input_dim += action_dim
 		if rnn_layer_num:
-			self.nn = nn.LSTM(
+			self.nn = nn.GRU(
 				input_size=input_dim,
 				hidden_size=rnn_hidden_layer_size,
 				num_layers=rnn_layer_num,
@@ -868,49 +1114,33 @@ class CustomRecurrentActorProb(nn.Module):
 			device=self.device,
 			dtype=torch.float32,
 		)
+		### forward rnn
 		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
 		# In short, the tensor's shape in training phase is longer than which
 		# in evaluation phase. 
-		# TODO remove following code
-		if len(obs.shape) == 2:
-			obs = obs.unsqueeze(-2)
-		if self.rnn_layer_num:
+		if self.rnn_layer_num: # use rnn
+			if len(obs.shape) == 2:
+				obs = obs.unsqueeze(-2) # TODO seems not good
 			self.nn.flatten_parameters()
 			if state is None:
-				obs, (hidden, cell) = self.nn(obs)
+				obs, hidden = self.nn(obs)
 			else:
 				# we store the stack data in [bsz, len, ...] format
 				# but pytorch rnn needs [len, bsz, ...]
-				obs, (hidden, cell) = self.nn(
-					obs, (
-						state["hidden"].transpose(0, 1).contiguous(),
-						state["cell"].transpose(0, 1).contiguous()
-					)
+				obs, hidden = self.nn(
+					obs, 
+					state["hidden"].transpose(0, 1).contiguous()
 				)
 			logits = obs
-		else:
+		else: # skip rnn
 			logits = obs
-		if len(logits.shape) == 2: # (bsz, dim)
-			pass
-		elif len(logits.shape) == 3: # (bsz, len, dim)
-			pass
-		else:
-			raise ValueError(f"len(logits.shape) {len(logits.shape)} is not supported")
-		# flatten then forward then convert back
-		logits_ = logits.reshape(-1, logits.shape[-1])
-		mu = self.mu(logits_).reshape(*logits.shape[:-1], -1)
+		### forward mlp
+		mu = self.flatten_foward(self.mu, logits)
 		if not self._unbounded:
 			mu = self._max * torch.tanh(mu)
 		if self._c_sigma:
-			logits_ = logits.reshape(-1, logits.shape[-1])
-			sigma = self.sigma(logits_).reshape(*logits.shape[:-1], -1)
+			sigma = self.flatten_foward(self.sigma, logits)
 			sigma = torch.clamp(sigma, min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
-			if len(logits.shape) == 2: # (bsz, dim)
-				pass
-			elif len(logits.shape) == 3: # (bsz, len, dim)
-				pass
-			else:
-				raise ValueError(f"len(logits.shape) {len(logits.shape)} is not supported")
 		else:
 			shape = [1] * len(mu.shape)
 			shape[1] = -1
@@ -919,8 +1149,21 @@ class CustomRecurrentActorProb(nn.Module):
 		# hidden and cell are [num_layers, bsz, hidden_size]
 		return (mu, sigma), {
 			"hidden": hidden.transpose(0, 1).detach(),
-			"cell": cell.transpose(0, 1).detach()
+			# "cell": cell.transpose(0, 1).detach()
 		} if self.rnn_layer_num else None
+	
+	def flatten_foward(self, model, input):
+		""" flattent the input except the last dim, then forward, then convert back
+			input: [N_0, N_1, ..., N_{n-1}, dim]
+			output: [N_0 * N_1 * ... * N_{n-1}, dim]
+		"""
+		shape = input.shape
+		input = input.reshape(-1, shape[-1])
+		output = model(input)
+		output = output.reshape(*shape[:-1], -1)
+		return output
+
+
 
 # utils
 

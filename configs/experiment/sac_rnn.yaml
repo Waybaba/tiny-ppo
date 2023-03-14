@@ -72,7 +72,8 @@ actor_optim:
 net_c1: 
   concat: true # obs + action as input
 critic1:
-  _target_: tianshou.utils.net.continuous.Critic
+  # _target_: tianshou.utils.net.continuous.Critic
+  _target_: src.runner.Critic
   _partial_: true
   # hidden_sizes: [256]
   hidden_sizes: []
@@ -90,6 +91,8 @@ policy:
   tau: 0.005
   gamma: 0.99
   critic_use_oracle_obs: true
+  critic_input_type: symmetric # normal; oracle; symmetric
+  actor_use_oracle_obs: false
   global_cfg: ${global_cfg}
   estimation_step: 1
   alpha:

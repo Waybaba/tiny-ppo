@@ -93,6 +93,10 @@
 				// "env.name=DummyNum-v0",
 				"env.delay=4",
 				"start_timesteps=1",
+				"policy.actor_use_oracle_obs=false",
+				// "global_cfg.historical_act.num=10",
+				"global_cfg.historical_act=null",
+
 			],
 		},
 		{
