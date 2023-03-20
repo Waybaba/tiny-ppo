@@ -49,11 +49,21 @@ runner:
   _partial_: true
 net: null # for rnn
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
-  historical_act: 
-    # type: "cat_mlp" # "stack_rnn" or "cat_mlp".  ps. stack_rnn = stack([{obs_i, a_i}] * num). cat_mlp = cat(obs_i, a_i * num)
-    type: "stack_rnn"
-    num: 80
+  # historical_act: 
+  #   # type: "cat_mlp" # "stack_rnn" or "cat_mlp".  ps. stack_rnn = stack([{obs_i, a_i}] * num). cat_mlp = cat(obs_i, a_i * num)
+  #   type: "stack_rnn"
+  #   num: 80
+  #   burnin_num: 0
+  actor_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "normal" # normal or oracle
+    history_num: 1
     burnin_num: 0
+  critic_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "normal" # normal or oracle
+    history_num: ${global_cfg.actor_input.history_num}
+    burnin_num: ${global_cfg.actor_input.burnin_num}
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
@@ -90,9 +100,6 @@ policy:
   _partial_: true
   tau: 0.005
   gamma: 0.99
-  critic_use_oracle_obs: true
-  critic_input_type: symmetric # normal; oracle; symmetric
-  actor_use_oracle_obs: false
   global_cfg: ${global_cfg}
   estimation_step: 1
   alpha:

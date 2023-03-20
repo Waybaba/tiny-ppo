@@ -272,15 +272,11 @@ class CustomSACPolicy(SACPolicy):
 		deterministic_eval: bool = True,
 		**kwargs: Any,
 	) -> None:
-		self.critic_use_oracle_obs = kwargs.pop("critic_use_oracle_obs")
-		self.actor_use_oracle_obs = kwargs.pop("actor_use_oracle_obs")
 		self.global_cfg = kwargs.pop("global_cfg")
-		if self.global_cfg.historical_act:
-			if self.global_cfg.historical_act.type == "cat_mlp":
-				# assert actor.__class__ is not CustomRecurrentActorProb, "cat_mlp should not be used with recurrent actor"
-				assert actor.rnn_layer_num == 0, "cat_mlp should not be used with recurrent actor"
+		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
+			assert actor.rnn_layer_num == 0, "cat_mlp should not be used with recurrent actor"
 		return super().__init__(
-			actor,	
+			actor,
 			actor_optim,
 			critic1,
 			critic1_optim,
@@ -301,38 +297,39 @@ class CustomSACPolicy(SACPolicy):
 	) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""A simple wrapper script for updating critic network."""
 		weight = getattr(batch, "weight", 1.0)
-		if self.global_cfg.historical_act:
-			if self.global_cfg.historical_act.type == "cat_mlp":
-				if self.critic_use_oracle_obs:
-					current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
-				else:
-					current_q = critic(batch.obs, batch.act).flatten()
-			elif self.global_cfg.historical_act.type == "stack_rnn":
-				if self.critic_use_oracle_obs:
-					bsz_len_shape = batch.act.shape[:2]
-					flatten_num = np.prod(bsz_len_shape)
-					current_q = critic(
-						batch.info["obs_nodelay"].reshape(flatten_num, -1), 
-						batch.act.reshape(flatten_num, -1)
-					).flatten()
-				else:
-					current_q = critic(
-						batch.obs.reshape(flatten_num, -1),
-						batch.act.reshape(flatten_num, -1)
-					).flatten() # ! TODO can be merged with the above
-			else:
-				raise NotImplementedError
-		else:
-			if self.critic_use_oracle_obs:
-				current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
-			else:
-				current_q = critic(batch.obs, batch.act).flatten()
+		# if self.global_cfg.historical_act:
+		# 	if self.global_cfg.historical_act.type == "cat_mlp":
+		# 		if self.critic_use_oracle_obs:
+		# 			current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+		# 		else:
+		# 			current_q = critic(batch.obs, batch.act).flatten()
+		# 	elif self.global_cfg.historical_act.type == "stack_rnn":
+		# 		if self.critic_use_oracle_obs:
+		# 			bsz_len_shape = batch.act.shape[:2]
+		# 			flatten_num = np.prod(bsz_len_shape)
+		# 			current_q = critic(
+		# 				batch.info["obs_nodelay"].reshape(flatten_num, -1), 
+		# 				batch.act.reshape(flatten_num, -1)
+		# 			).flatten()
+		# 		else:
+		# 			current_q = critic(
+		# 				batch.obs.reshape(flatten_num, -1),
+		# 				batch.act.reshape(flatten_num, -1)
+		# 			).flatten() # ! TODO can be merged with the above
+		# 	else:
+		# 		raise NotImplementedError
+		# else:
+		# 	if self.critic_use_oracle_obs:
+		# 		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
+		# 	else:
+		# 		current_q = critic(batch.obs, batch.act).flatten()
+		current_q = critic(batch.critic_input_cur).flatten()
 		target_q = batch.returns.flatten()
 		td = current_q - target_q
-		if self.global_cfg.historical_act and self.global_cfg.historical_act.type == "stack_rnn":
+		if self.global_cfg.actor_input.obs_type == "normal":
 			critic_loss = (td.pow(2) * weight)
-			critic_loss = critic_loss.reshape(*bsz_len_shape, -1)
-			critic_loss = critic_loss[:, self.global_cfg.historical_act.burnin_num:]
+			# critic_loss = critic_loss.reshape(*bsz_len_shape, -1)
+			critic_loss = critic_loss[:, self.global_cfg.historical_act.burnin_num:] # ! burn in num
 			critic_loss = critic_loss.mean()
 		else:
 			critic_loss = (td.pow(2) * weight).mean()
@@ -349,78 +346,62 @@ class CustomSACPolicy(SACPolicy):
 		td2, critic2_loss = self._mse_optimizer(
 			batch, self.critic2, self.critic2_optim
 		)
-		batch.weight = (td1 + td2) / 2.0  # prio-buffer
+		batch.weight = (td1 + td2) / 2.0  # prio-buffer # TODO check complibility with burn in mask
 
 		# actor ###ACTOR_FORWARD
-		# if not self.actor_rnn:
-		# 	if not self.actor_input_act:
-		# 		if not self.historical_act:
-		# 			obs_result = self(batch)
-		# 		else:
-		# 			batch.obs_cat_act = np.concatenate([batch.obs, batch.info["historical_act"]], axis=1)
-		# 			obs_result = self(batch, input="obs_cat_act")
-		# 	else:
-		# 		batch.obs_act = np.concatenate([batch.obs, batch.info["act_prev"]], axis=1)
-		# 		obs_result = self(batch, input="obs_act")
-		# else:
-		# 	# ! TODO check order, whether -1 is correct or 0
-		# 	# ! TODO check step of obs, ...
-		# 	if not self.actor_input_act: 
-		# 		obs_result = self(batch)
-		# 	else:
-		# 		batch.obs_act = np.concatenate([batch.obs, batch.info["stacked_act_prev"]], axis=2) # B,L,... use (S_t,a_t-1) # ! TODO check order, whether -1 is correct or 0
-		# 		obs_result = self(batch, input="obs_act") # actor use delayed obs
-		# act = obs_result.act
 		# get act
-		if self.global_cfg.historical_act:
-			if self.global_cfg.historical_act.type == "cat_mlp":
-				batch.obs_cat_act = np.concatenate([self.get_actor_obs(batch,"cur"), batch.info["historical_act"]], axis=1) \
-					if self.global_cfg.historical_act.num > 0 else self.get_actor_obs(batch,"cur") # TODO put a place holder here
-				obs_result = self(batch, input="obs_cat_act")
-			elif self.global_cfg.historical_act.type == "stack_rnn":
-				assert batch.is_preprocessed == True, "batch.is_preprocessed == True"
-				assert hasattr(batch, "obs_stack_act"), "hasattr(batch, 'obs_stack_act')"
-				obs_result = self(batch, input="obs_stack_act")
-			else:
-				raise NotImplementedError
-		else:
-			obs_result = self(batch)
+		# if self.global_cfg.historical_act:
+		# 	if self.global_cfg.historical_act.type == "cat_mlp":
+		# 		batch.obs_cat_act = np.concatenate([self.get_actor_obs(batch,"cur"), batch.info["historical_act"]], axis=1) \
+		# 			if self.global_cfg.historical_act.num > 0 else self.get_actor_obs(batch,"cur") # TODO put a place holder here
+		# 		obs_result = self(batch, input="obs_cat_act")
+		# 	elif self.global_cfg.historical_act.type == "stack_rnn":
+		# 		assert batch.is_preprocessed == True, "batch.is_preprocessed == True"
+		# 		assert hasattr(batch, "obs_stack_act"), "hasattr(batch, 'obs_stack_act')"
+		# 		obs_result = self(batch, input="obs_stack_act")
+		# 	else:
+		# 		raise NotImplementedError
+		# else:
+		# 	obs_result = self(batch)
+		obs_result = self(batch, input="actor_input_cur")
 		act = obs_result.act
 
 		# cal q
-		if self.global_cfg.historical_act:
-			if self.global_cfg.historical_act.type == "cat_mlp":
-				if self.critic_use_oracle_obs:
-					current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
-					current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
-				else:
-					current_q1a = self.critic1(batch.obs, act).flatten()
-					current_q2a = self.critic2(batch.obs, act).flatten()
-			elif self.global_cfg.historical_act.type == "stack_rnn":
-				if self.critic_use_oracle_obs: # ! TODO can be merged with above 
-					bsz_len_shape = batch.act.shape[:2]
-					flatten_num = np.prod(bsz_len_shape)
-					current_q1a = self.critic1(
-						batch.info["obs_nodelay"].reshape(flatten_num, -1),
-						act.reshape(flatten_num, -1)
-					).flatten()
-					current_q2a = self.critic2(
-						batch.info["obs_nodelay"].reshape(flatten_num, -1),
-						act.reshape(flatten_num, -1)
-					).flatten()
-				else:
-					current_q1a = self.critic1(batch.obs, act).flatten()
-					current_q2a = self.critic2(batch.obs, act).flatten()
-			else:
-				raise NotImplementedError
-		else:
-			if self.critic_use_oracle_obs:
-				current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
-				current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
-			else:
-				current_q1a = self.critic1(batch.obs, act).flatten()
-				current_q2a = self.critic2(batch.obs, act).flatten()
+		# if self.global_cfg.historical_act:
+		# 	if self.global_cfg.historical_act.type == "cat_mlp":
+		# 		if self.critic_use_oracle_obs:
+		# 			current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
+		# 			current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+		# 		else:
+		# 			current_q1a = self.critic1(batch.obs, act).flatten()
+		# 			current_q2a = self.critic2(batch.obs, act).flatten()
+		# 	elif self.global_cfg.historical_act.type == "stack_rnn":
+		# 		if self.critic_use_oracle_obs: # ! TODO can be merged with above 
+		# 			bsz_len_shape = batch.act.shape[:2]
+		# 			flatten_num = np.prod(bsz_len_shape)
+		# 			current_q1a = self.critic1(
+		# 				batch.info["obs_nodelay"].reshape(flatten_num, -1),
+		# 				act.reshape(flatten_num, -1)
+		# 			).flatten()
+		# 			current_q2a = self.critic2(
+		# 				batch.info["obs_nodelay"].reshape(flatten_num, -1),
+		# 				act.reshape(flatten_num, -1)
+		# 			).flatten()
+		# 		else:
+		# 			current_q1a = self.critic1(batch.obs, act).flatten()
+		# 			current_q2a = self.critic2(batch.obs, act).flatten()
+		# 	else:
+		# 		raise NotImplementedError
+		# else:
+		# 	if self.critic_use_oracle_obs:
+		# 		current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
+		# 		current_q2a = self.critic2(batch.info["obs_nodelay"], act).flatten()
+		# 	else:
+		# 		current_q1a = self.critic1(batch.obs, act).flatten()
+		# 		current_q2a = self.critic2(batch.obs, act).flatten()
 
+		current_q1a = self.critic1(batch.crictic_input_cur).flatten()
+		current_q2a = self.critic2(batch.crictic_input_cur).flatten()
 		# if not self.actor_rnn:
 		# 	if self.critic_use_oracle_obs:
 		# 		current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
@@ -435,7 +416,7 @@ class CustomSACPolicy(SACPolicy):
 		# 	else:
 		# 		current_q1a = self.critic1(batch.obs[:,-1], act).flatten()
 		# 		current_q2a = self.critic2(batch.obs[:,-1], act).flatten()
-		if self.global_cfg.historical_act and self.global_cfg.historical_act.type == "stack_rnn":
+		if self.global_cfg.historical_act and self.global_cfg.historical_act.type == "stack_rnn": # ! TODO change condition
 			actor_loss = self._alpha * obs_result.log_prob.flatten() - \
 				torch.min(current_q1a, current_q2a)
 			actor_loss = actor_loss.reshape(*bsz_len_shape, -1)
@@ -476,6 +457,7 @@ class CustomSACPolicy(SACPolicy):
 	
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
 		batch = buffer[indices]  # batch.obs: s_{t+n}
+		# ! TODO remove
 		###ACTOR_FORWARD
 		# if not self.actor_rnn:
 		# 	if not self.actor_input_act: 
@@ -567,61 +549,62 @@ class CustomSACPolicy(SACPolicy):
 	def process_fn(
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
 	) -> Batch:
-		# add basic keys
-		if self.critic_use_oracle_obs or self.actor_use_oracle_obs:
-			prev_batch = buffer[buffer.prev(indices)]
-			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
-		if self.global_cfg.historical_act:
-			if self.global_cfg.historical_act.type == "cat_mlp":
-				pass # ! check whether we need more keys
-			elif self.global_cfg.historical_act.type == "stack_rnn":
-				# get [{obs_t-N, act_t-N-1}, {obs_t-N+1, act_t-N}, ..., {obs_t-1, act_t-2}, {obs_t, act_t-1}]
-				# historical_obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
-				# if len(historical_obs.shape) == 2: historical_obs = historical_obs[:,None,:]
-				# historical_act = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.historical_act.num)
-				# if len(historical_act.shape) == 2: historical_act = historical_act[:,None,:]
-				batch.obs_next = buffer.get(buffer.next(indices), "obs", stack_num=self.global_cfg.historical_act.num) # TODO for kv
-				batch.obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
-				batch.act = buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num)
-				batch.obs_stack_act = np.concatenate([self.get_actor_obs(batch,"cur"), batch.act], axis=-1)
-				batch.info = buffer.get(indices, "info", stack_num=self.global_cfg.historical_act.num)
-				batch.info["obs_nodelay"] = buffer.get(buffer.prev(indices), "info", stack_num=self.global_cfg.historical_act.num)["obs_next_nodelay"]
-				batch.is_another_episode = None
-				indices_stacked = []
-				latest_step = indices
-				for i in range(self.global_cfg.historical_act.num):
-					indices_stacked.insert(0, latest_step)
-					latest_step = buffer.prev(latest_step)
-				indices_stacked = np.stack(indices_stacked, axis=-1)
-				indices_stacked_prev = buffer.prev(indices_stacked)
-				start = (indices_stacked == indices_stacked_prev)
-				# index                [0, 0, 0, 0, 1, 2, 3, 4]
-				# index_prev		   [0, 0, 0, 0, 0, 1, 2, 3]
-				# cur==prev            [1, 1, 1, 1, 0, 0, 0, 0]
-				# is_another_episode   [1, 1, 1, 0, 0, 0, 0, 0]
-				for b in range(start.shape[0]): # set the last True to False
-					for i in range(start.shape[1], 0, -1):
-						if start[b,i-1]:
-							start[b,i-1] = False
-							break
-				batch.is_another_episode = start
-		# if not self.actor_rnn:
-		# 	if self.actor_input_act:
-		# 		batch.info["act_prev"] = buffer[buffer.prev(indices)].act
-		# 	else:
-		# 		batch.info["historical_act_next"] = buffer[buffer.next(indices)].info["historical_act"]
-		# else:
-		# 	if self.actor_input_act:
-		# 		batch.info["stacked_act"] = buffer.get(indices, "act")
-		# 		batch.info["stacked_act_prev"] = buffer.get(buffer.prev(indices), "act")
-		# add return key (need basic keys)
-		batch = self.compute_nstep_return(
-			batch, buffer, indices, self._target_q, self._gamma, self._n_step,
-			self._rew_norm
-		)
+		# add basic keys ! TODO remove
+		# if self.critic_use_oracle_obs or self.actor_use_oracle_obs:
+		# 	prev_batch = buffer[buffer.prev(indices)]
+		# 	batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
+		# if self.global_cfg.historical_act:
+		# 	if self.global_cfg.historical_act.type == "cat_mlp":
+		# 		pass # ! check whether we need more keys
+		# 	elif self.global_cfg.historical_act.type == "stack_rnn":
+		# 		# get [{obs_t-N, act_t-N-1}, {obs_t-N+1, act_t-N}, ..., {obs_t-1, act_t-2}, {obs_t, act_t-1}]
+		# 		# historical_obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
+		# 		# if len(historical_obs.shape) == 2: historical_obs = historical_obs[:,None,:]
+		# 		# historical_act = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.historical_act.num)
+		# 		# if len(historical_act.shape) == 2: historical_act = historical_act[:,None,:]
+		# 		batch.obs_next = buffer.get(buffer.next(indices), "obs", stack_num=self.global_cfg.historical_act.num) # TODO for kv
+		# 		batch.obs = buffer.get(indices, "obs", stack_num=self.global_cfg.historical_act.num)
+		# 		batch.act = buffer.get(indices, "act", stack_num=self.global_cfg.historical_act.num)
+		# 		batch.obs_stack_act = np.concatenate([self.get_actor_obs(batch,"cur"), batch.act], axis=-1)
+		# 		batch.info = buffer.get(indices, "info", stack_num=self.global_cfg.historical_act.num)
+		# 		batch.info["obs_nodelay"] = buffer.get(buffer.prev(indices), "info", stack_num=self.global_cfg.historical_act.num)["obs_next_nodelay"]
+		# 		batch.is_another_episode = None
+		# 		indices_stacked = []
+		# 		latest_step = indices
+		# 		for i in range(self.global_cfg.historical_act.num):
+		# 			indices_stacked.insert(0, latest_step)
+		# 			latest_step = buffer.prev(latest_step)
+		# 		indices_stacked = np.stack(indices_stacked, axis=-1)
+		# 		indices_stacked_prev = buffer.prev(indices_stacked)
+		# 		start = (indices_stacked == indices_stacked_prev)
+		# 		# index                [0, 0, 0, 0, 1, 2, 3, 4]
+		# 		# index_prev		   [0, 0, 0, 0, 0, 1, 2, 3]
+		# 		# cur==prev            [1, 1, 1, 1, 0, 0, 0, 0]
+		# 		# is_another_episode   [1, 1, 1, 0, 0, 0, 0, 0]
+		# 		for b in range(start.shape[0]): # set the last True to False
+		# 			for i in range(start.shape[1], 0, -1):
+		# 				if start[b,i-1]:
+		# 					start[b,i-1] = False
+		# 					break
+		# 		batch.is_another_episode = start
+		# ! TODO
+		if self.global_cfg.actor_input_cur.history_merge_method == "none":
+			batch.actor_input_cur = batch.obs
+			batch.actor_input_next = batch.obs_next
+			batch.critic_input_cur = batch.obs
+			batch.critic_input_next = batch.obs_next
+		else:
+			raise NotImplementedError("Not implemented yet")
+
+		batch.return_ = self.compute_return_custom(batch)
 		# end flag
 		batch.is_preprocessed = True
 		return batch
+	
+	def compute_return_custom(self, batch):
+		# ! TODO
+		return batch.rew
+
 
 	@staticmethod
 	def compute_nstep_return(
@@ -686,38 +669,46 @@ class CustomSACPolicy(SACPolicy):
 	) -> Batch:
 		###ACTOR_FORWARD note that env.step would call this function automatically
 		obs = batch[input]
-		if self.global_cfg.historical_act:
-			if self.global_cfg.historical_act.type == "cat_mlp":
-				if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
-					assert input == "obs_cat_act", "input should be obs_cat_act for cat_mlp historical model"
-					obs = batch[input] # check whether CAT OBS is used
-				else: # online input
-					if len(batch.act.shape) == 0: # first step (zero cat)
-						obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
-					else: # normal step
-						# every element of obs and obs_next should be the same
-						assert (batch["obs"] == batch["obs_next"]).all() # TODO DEBUG ONLY remove later
-						obs = np.concatenate([self.get_actor_obs(batch,"next"), batch.info["historical_act"]], axis=-1) \
-							if self.global_cfg.historical_act.num > 0 else self.get_actor_obs(batch,"next")
-				logits, hidden = self.actor(obs, state=state, info=batch.info)
-				pass
-			elif self.global_cfg.historical_act.type == "stack_rnn":
-				if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
-					assert input == "obs_stack_act", "input should be obs_stack_act for stack_rnn historical model"
-					obs = batch[input]
-					logits, hidden = self.actor(obs, state=state, info=batch.info)
-				else: # online input - cat(act, obs))
-					if len(batch.act.shape) == 0: # first step
-						obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
-					else:
-						obs = np.concatenate([obs, batch.info["prev_act"]], axis=-1)
-					logits, hidden = self.actor(obs, state=state, info=batch.info)
-					logits = tuple([logit.squeeze(0) for logit in logits])
-			else:
-				raise NotImplementedError(f"historical_act.type {self.global_cfg.historical_act.type} not implemented")
-		else: # normal mode
-			obs = batch[input]
-			logits, hidden = self.actor(obs, state=state, info=batch.info)
+		# if self.global_cfg.historical_act:
+		# 	if self.global_cfg.historical_act.type == "cat_mlp":
+		# 		if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
+		# 			assert input == "obs_cat_act", "input should be obs_cat_act for cat_mlp historical model"
+		# 			obs = batch[input] # check whether CAT OBS is used
+		# 		else: # online input
+		# 			if len(batch.act.shape) == 0: # first step (zero cat)
+		# 				obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
+		# 			else: # normal step
+		# 				# every element of obs and obs_next should be the same
+		# 				assert (batch["obs"] == batch["obs_next"]).all() # TODO DEBUG ONLY remove later
+		# 				obs = np.concatenate([self.get_actor_obs(batch,"next"), batch.info["historical_act"]], axis=-1) \
+		# 					if self.global_cfg.historical_act.num > 0 else self.get_actor_obs(batch,"next")
+		# 		logits, hidden = self.actor(obs, state=state, info=batch.info)
+		# 		pass
+		# 	elif self.global_cfg.historical_act.type == "stack_rnn":
+		# 		if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
+		# 			assert input == "obs_stack_act", "input should be obs_stack_act for stack_rnn historical model"
+		# 			obs = batch[input]
+		# 			logits, hidden = self.actor(obs, state=state, info=batch.info)
+		# 		else: # online input - cat(act, obs))
+		# 			if len(batch.act.shape) == 0: # first step
+		# 				obs = np.zeros([obs.shape[0], self.actor.nn.input_size])
+		# 			else:
+		# 				obs = np.concatenate([obs, batch.info["prev_act"]], axis=-1)
+		# 			logits, hidden = self.actor(obs, state=state, info=batch.info)
+		# 			logits = tuple([logit.squeeze(0) for logit in logits])
+		# 	else:
+		# 		raise NotImplementedError(f"historical_act.type {self.global_cfg.historical_act.type} not implemented")
+		# else: # normal mode
+		# 	obs = batch[input]
+		# 	logits, hidden = self.actor(obs, state=state, info=batch.info)
+
+		if self.global_cfg.actor_input.history_merge_method != "none":
+			# only when hitorical act is used, we should not input the obs key
+			raise NotImplementedError(f"actor_input.history_merge {self.global_cfg.actor_input.history_merge} not implemented")
+			actor_input = None
+		else:
+			actor_input = batch[input]
+		logits, hidden = self.actor(actor_input, state=state, info=batch.info)
 
 		# if not self.actor_input_act: # ! TODO check
 		# 	if self.historical_act:
@@ -867,8 +858,6 @@ class Critic(nn.Module):
     def forward(
         self,
         obs: Union[np.ndarray, torch.Tensor],
-        act: Optional[Union[np.ndarray, torch.Tensor]] = None,
-        info: Dict[str, Any] = {},
     ) -> torch.Tensor:
         """Mapping: (s, a) -> logits -> Q(s, a)."""
         obs = torch.as_tensor(
@@ -876,13 +865,6 @@ class Critic(nn.Module):
             device=self.device,
             dtype=torch.float32,
         ).flatten(1)
-        if act is not None:
-            act = torch.as_tensor(
-                act,
-                device=self.device,
-                dtype=torch.float32,
-            ).flatten(1)
-            obs = torch.cat([obs, act], dim=1)
         logits, hidden = self.preprocess(obs)
         logits = self.last(logits)
         return logits
@@ -1057,20 +1039,19 @@ class CustomRecurrentActorProb(nn.Module):
 		self.rnn_layer_num = rnn_layer_num
 		input_dim = int(np.prod(state_shape))
 		action_dim = int(np.prod(action_shape))
-		if self.global_cfg.historical_act: # e.g. {type: "cat-8"}
-			if self.global_cfg.historical_act.type == "cat_mlp":
-				input_dim += action_dim * self.global_cfg.historical_act.num
-				assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
-				assert concat == False, "concat must be False when using historical_act"
-			elif self.global_cfg.historical_act.type == "stack_rnn":
-				input_dim += action_dim
-				assert rnn_layer_num > 0, "rnn_layer_num must be > 0 when using historical_act"
-				assert concat == False, "concat must be False when using historical_act"
-			else:
-				raise ValueError(f"historical_act.type {self.global_cfg.historical_act.type} is not supported")
-		else:
+		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
+			input_dim += action_dim * self.global_cfg.actor_input.history_num
+			assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
+			assert concat == False, "concat must be False when using historical_act"
+		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+			input_dim += action_dim
+			assert rnn_layer_num > 0, "rnn_layer_num must be > 0 when using historical_act"
+			assert concat == False, "concat must be False when using historical_act"
+		elif self.global_cfg.actor_input.history_merge_method == "none":
 			if concat:
 				input_dim += action_dim
+		else:
+			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} is not supported")
 		if rnn_layer_num:
 			self.nn = nn.GRU(
 				input_size=input_dim,
