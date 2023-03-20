@@ -163,17 +163,8 @@ class SACPolicy(DDPGPolicy):
 			self._is_auto_alpha = True
 			self._target_entropy, self._log_alpha, self._alpha_optim = alpha
 			if type(self._target_entropy) == str and self._target_entropy == "neg_act_num":
-				if hasattr(self.actor, "mu"): # get act dim TODO improvement here
-					if hasattr(self.actor.mu, "output_dim"):
-						act_num = self.actor.mu.output_dim
-					elif hasattr(self.actor.mu, "out_features"):
-						act_num = self.actor.mu.out_features
-					else:
-						raise ValueError("Can not get actor output dim.")
-				elif hasattr(self.actor, "output_dim"):
-					act_num = self.actor.output_dim
-				else:
-					raise ValueError("Invalid actor type.")
+				assert hasattr(self.actor, "act_num"), "actor must have act_num attribute"
+				act_num = self.actor.act_num
 				self._target_entropy = - act_num
 			elif type(self._target_entropy) == float:
 				pass
@@ -668,7 +659,6 @@ class CustomSACPolicy(SACPolicy):
 		**kwargs: Any,
 	) -> Batch:
 		###ACTOR_FORWARD note that env.step would call this function automatically
-		obs = batch[input]
 		# if self.global_cfg.historical_act:
 		# 	if self.global_cfg.historical_act.type == "cat_mlp":
 		# 		if hasattr(batch, "is_preprocessed") and batch.is_preprocessed: # offline learn
@@ -808,6 +798,84 @@ class CustomSACPolicy(SACPolicy):
 
 # net
 
+class RNN_MLP_Net(nn.Module):
+	""" RNNS with MLPs as the core network
+	ps. assume input is one dim
+	ps. head_num = 1 for critic
+	"""
+	def __init__(
+		self,
+		input_dim: int,
+		output_dim: int,
+		rnn_layer_num: int,
+		rnn_hidden_layer_size: int,
+		mlp_hidden_sizes: Sequence[int],
+		mlp_softmax: bool,  # TODO add
+		device: str,
+		head_num: int
+	):
+		super().__init__()
+		self.device = device
+		self.input_dim = input_dim
+		self.output_dim = output_dim
+		self.rnn_layer_num = rnn_layer_num
+		self.rnn_hidden_layer_size = rnn_hidden_layer_size
+		self.mlp_hidden_sizes = mlp_hidden_sizes
+		# build rnn
+		if rnn_layer_num:
+			self.nn = nn.GRU(
+				input_size=input_dim,
+				hidden_size=rnn_hidden_layer_size,
+				num_layers=rnn_layer_num,
+				batch_first=True,
+			)
+		else:
+			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
+		# build mlp
+		self.mlps = []
+		for i in range(head_num):
+			self.mlps.append(
+				MLP(
+					rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
+					output_dim,
+					mlp_hidden_sizes,
+					device=self.device
+				)
+			)
+		self.mlp = nn.ModuleList(self.mlps)
+	
+	def forward(
+		self,
+		obs: Union[np.ndarray, torch.Tensor],
+		state: Optional[Dict[str, torch.Tensor]] = None,
+		info: Dict[str, Any] = {},
+		):
+		"""
+		input
+		"""
+		obs = torch.as_tensor(obs, device=self.device, dtype=torch.float32)
+		### forward rnn
+		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
+		# In short, the tensor's shape in training phase is longer than which
+		# in evaluation phase. 
+		if self.rnn_layer_num: 
+			assert len(obs.shape) == 3 or len(obs.shape) == 2
+			if len(obs.shape) == 2: obs = obs.unsqueeze(-2) # make seq_len dim
+			bsz, len, dim = obs.shape
+			self.nn = None
+			self.nn.flatten_parameters()
+			if state is None: after_rnn, hidden = self.nn(obs)
+			else: after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
+		else: # skip rnn
+			after_rnn = obs
+		### forward mlp # ! TODO actor max min clip
+		outputs = []
+		for mlp in self.mlps:
+			outputs.append(self.flatten_foward(mlp, after_rnn))
+		return outputs, {
+			"hidden": hidden.transpose(0, 1).detach(),
+		} if self.rnn_layer_num else None
+
 class Critic(nn.Module):
     """Simple critic network. Will create an actor operated in continuous \
     action space with structure of preprocess_net ---> 1(q value).
@@ -858,6 +926,7 @@ class Critic(nn.Module):
     def forward(
         self,
         obs: Union[np.ndarray, torch.Tensor],
+		state: Optional[Dict[str, torch.Tensor]] = None,
     ) -> torch.Tensor:
         """Mapping: (s, a) -> logits -> Q(s, a)."""
         obs = torch.as_tensor(
@@ -865,140 +934,49 @@ class Critic(nn.Module):
             device=self.device,
             dtype=torch.float32,
         ).flatten(1)
+        if act is not None:
+            act = torch.as_tensor(
+                act,
+                device=self.device,
+                dtype=torch.float32,
+            ).flatten(1)
+            obs = torch.cat([obs, act], dim=1)
         logits, hidden = self.preprocess(obs)
         logits = self.last(logits)
         return logits
 
-class CustomRecurrentCritic(Critic):
+class CustomRecurrentCritic(nn.Module):
 	def __init__(
 		self,
 		state_shape: Sequence[int],
 		action_shape: Sequence[int],
-		rnn_layer_num: int = 0,
-		rnn_hidden_layer_size: int = 128,
-		mlp_hidden_sizes: Sequence[int] = (),
-		mlp_softmax: bool = False,
-		max_action: float = 1.0,
-		device: Union[str, int, torch.device] = "cpu",
-		unbounded: bool = False,
-		conditioned_sigma: bool = False,
-		concat: bool = False,
-		historical_act: str = None,
-		global_cfg: object = None,
+		**kwargs,
 	) -> None:
-		# ! TODO add mlp_softmax ! remove extra cfg
-		# ! TODO add rnn dummy mechinism introduction
 		super().__init__()
-		self.global_cfg = global_cfg # ! TODO customize network structure
-		self.device = device
-		self.rnn_layer_num = rnn_layer_num
-		input_dim = int(np.prod(state_shape))
-		action_dim = int(np.prod(action_shape))
-		if self.global_cfg.historical_act: # e.g. {type: "cat-8"}
-			if self.global_cfg.historical_act.type == "cat_mlp":
-				input_dim += action_dim * self.global_cfg.historical_act.num
-				assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
-				assert concat == False, "concat must be False when using historical_act"
-			elif self.global_cfg.historical_act.type == "stack_rnn":
-				input_dim += action_dim
-				assert rnn_layer_num > 0, "rnn_layer_num must be > 0 when using historical_act"
-				assert concat == False, "concat must be False when using historical_act"
-			else:
-				raise ValueError(f"historical_act.type {self.global_cfg.historical_act.type} is not supported")
+		self.hps = kwargs
+		assert len(state_shape) == 1 and len(action_shape) == 1
+		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
+			input_dim = state_shape[0] + action_shape[0]
+			output_dim = 1
+		elif self.hps["global_cfg"].actor_input.history_merge_method == "stack_rnn":
+			input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
+			output_dim = 1
+		elif self.hps["global_cfg"].actor_input.history_merge_method == "none":
+			input_dim = int(np.prod(state_shape))
+			output_dim = 1
 		else:
-			if concat:
-				input_dim += action_dim
-		if rnn_layer_num:
-			self.nn = nn.GRU(
-				input_size=input_dim,
-				hidden_size=rnn_hidden_layer_size,
-				num_layers=rnn_layer_num,
-				batch_first=True,
-			)
-		else:
-			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
-		output_dim = int(np.prod(action_shape))
-		# self.mu = nn.Linear(hidden_layer_size, output_dim)
-		self.mu = MLP(
-			rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
-			output_dim,
-			mlp_hidden_sizes,
-			device=self.device
-		)
-		self._c_sigma = conditioned_sigma
-		if conditioned_sigma:
-			# self.sigma = nn.Linear(hidden_layer_size, output_dim)
-			self.sigma = MLP(
-				rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
-				output_dim,
-				mlp_hidden_sizes,
-				device=self.device
-			)
-		else:
-			self.sigma_param = nn.Parameter(torch.zeros(output_dim, 1))
-		self._max = max_action
-		self._unbounded = unbounded
-	
+			raise NotImplementedError
+		self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=1)
+
 	def forward(
         self,
         obs: Union[np.ndarray, torch.Tensor],
         act: Optional[Union[np.ndarray, torch.Tensor]] = None,
         info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
-		"""Almost the same as :class:`~tianshou.utils.net.common.Recurrent`."""
-		obs = torch.as_tensor(
-			obs,
-			device=self.device,
-			dtype=torch.float32,
-		)
-		### forward rnn
-		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
-		# In short, the tensor's shape in training phase is longer than which
-		# in evaluation phase. 
-		if self.rnn_layer_num: # use rnn
-			if len(obs.shape) == 2:
-				obs = obs.unsqueeze(-2) # TODO seems not good
-			self.nn.flatten_parameters()
-			if state is None:
-				obs, hidden = self.nn(obs)
-			else:
-				# we store the stack data in [bsz, len, ...] format
-				# but pytorch rnn needs [len, bsz, ...]
-				obs, hidden = self.nn(
-					obs, 
-					state["hidden"].transpose(0, 1).contiguous()
-				)
-			logits = obs
-		else: # skip rnn
-			logits = obs
-		### forward mlp
-		mu = self.flatten_foward(self.mu, logits)
-		if not self._unbounded:
-			mu = self._max * torch.tanh(mu)
-		if self._c_sigma:
-			sigma = self.flatten_foward(self.sigma, logits)
-			sigma = torch.clamp(sigma, min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
-		else:
-			shape = [1] * len(mu.shape)
-			shape[1] = -1
-			sigma = (self.sigma_param.view(shape) + torch.zeros_like(mu)).exp()
-		# please ensure the first dim is batch size: [bsz, len, ...]
-		# hidden and cell are [num_layers, bsz, hidden_size]
-		return (mu, sigma), {
-			"hidden": hidden.transpose(0, 1).detach(),
-			# "cell": cell.transpose(0, 1).detach()
-		} if self.rnn_layer_num else None
-	
-	def flatten_foward(self, model, input):
-		""" flattent the input except the last dim, then forward, then convert back
-			input: [N_0, N_1, ..., N_{n-1}, dim]
-			output: [N_0 * N_1 * ... * N_{n-1}, dim]
-		"""
-		shape = input.shape
-		input = input.reshape(-1, shape[-1])
-		output = model(input)
-		output = output.reshape(*shape[:-1], -1)
-		return output
+		critic_input = torch.cat() # ! TODO
+		output, state_ = self.net(critic_input)
+		return output[0], state_
 
 class CustomRecurrentActorProb(nn.Module):
 	"""Recurrent version of ActorProb.
@@ -1019,69 +997,25 @@ class CustomRecurrentActorProb(nn.Module):
 		self,
 		state_shape: Sequence[int],
 		action_shape: Sequence[int],
-		rnn_layer_num: int = 0,
-		rnn_hidden_layer_size: int = 128,
-		mlp_hidden_sizes: Sequence[int] = (),
-		mlp_softmax: bool = False,
-		max_action: float = 1.0,
-		device: Union[str, int, torch.device] = "cpu",
-		unbounded: bool = False,
-		conditioned_sigma: bool = False,
-		concat: bool = False,
-		historical_act: str = None,
-		global_cfg: object = None,
+		**kwargs,
 	) -> None:
-		# ! TODO add mlp_softmax ! remove extra cfg
-		# ! TODO add rnn dummy mechinism introduction
 		super().__init__()
-		self.global_cfg = global_cfg # ! TODO customize network structure
-		self.device = device
-		self.rnn_layer_num = rnn_layer_num
-		input_dim = int(np.prod(state_shape))
-		action_dim = int(np.prod(action_shape))
-		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			input_dim += action_dim * self.global_cfg.actor_input.history_num
-			assert rnn_layer_num == 0, "rnn_layer_num must be 0 when using historical_act"
-			assert concat == False, "concat must be False when using historical_act"
-		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			input_dim += action_dim
-			assert rnn_layer_num > 0, "rnn_layer_num must be > 0 when using historical_act"
-			assert concat == False, "concat must be False when using historical_act"
-		elif self.global_cfg.actor_input.history_merge_method == "none":
-			if concat:
-				input_dim += action_dim
+		self.hps = kwargs
+		assert len(state_shape) == 1 and len(action_shape) == 1
+		self.state_shape, self.action_shape = state_shape, action_shape
+		self.act_num = action_shape[0]
+		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
+			input_dim = state_shape[0] + action_shape[0]
+			output_dim = int(np.prod(action_shape))
+		elif self.hps["global_cfg"].actor_input.history_merge_method == "stack_rnn":
+			input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
+			output_dim = int(np.prod(action_shape))
+		elif self.hps["global_cfg"].actor_input.history_merge_method == "none":
+			input_dim = int(np.prod(state_shape))
+			output_dim = int(np.prod(action_shape))
 		else:
-			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} is not supported")
-		if rnn_layer_num:
-			self.nn = nn.GRU(
-				input_size=input_dim,
-				hidden_size=rnn_hidden_layer_size,
-				num_layers=rnn_layer_num,
-				batch_first=True,
-			)
-		else:
-			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
-		output_dim = int(np.prod(action_shape))
-		# self.mu = nn.Linear(hidden_layer_size, output_dim)
-		self.mu = MLP(
-			rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
-			output_dim,
-			mlp_hidden_sizes,
-			device=self.device
-		)
-		self._c_sigma = conditioned_sigma
-		if conditioned_sigma:
-			# self.sigma = nn.Linear(hidden_layer_size, output_dim)
-			self.sigma = MLP(
-				rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
-				output_dim,
-				mlp_hidden_sizes,
-				device=self.device
-			)
-		else:
-			self.sigma_param = nn.Parameter(torch.zeros(output_dim, 1))
-		self._max = max_action
-		self._unbounded = unbounded
+			raise NotImplementedError
+		self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=2)
 
 	def forward(
 		self,
@@ -1090,61 +1024,17 @@ class CustomRecurrentActorProb(nn.Module):
 		info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		"""Almost the same as :class:`~tianshou.utils.net.common.Recurrent`."""
-		obs = torch.as_tensor(
-			obs,
-			device=self.device,
-			dtype=torch.float32,
-		)
-		### forward rnn
-		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
-		# In short, the tensor's shape in training phase is longer than which
-		# in evaluation phase. 
-		if self.rnn_layer_num: # use rnn
-			if len(obs.shape) == 2:
-				obs = obs.unsqueeze(-2) # TODO seems not good
-			self.nn.flatten_parameters()
-			if state is None:
-				obs, hidden = self.nn(obs)
-			else:
-				# we store the stack data in [bsz, len, ...] format
-				# but pytorch rnn needs [len, bsz, ...]
-				obs, hidden = self.nn(
-					obs, 
-					state["hidden"].transpose(0, 1).contiguous()
-				)
-			logits = obs
-		else: # skip rnn
-			logits = obs
-		### forward mlp
-		mu = self.flatten_foward(self.mu, logits)
-		if not self._unbounded:
-			mu = self._max * torch.tanh(mu)
-		if self._c_sigma:
-			sigma = self.flatten_foward(self.sigma, logits)
+		### forward
+		output, state_ = self.net(obs, state)
+		mu, sigma = output
+		if not self.hps["unbounded"]:
+			mu = self.hps["max_action"] * torch.tanh(mu)
+		if self.hps["conditioned_sigma"]:
 			sigma = torch.clamp(sigma, min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
 		else:
-			shape = [1] * len(mu.shape)
-			shape[1] = -1
-			sigma = (self.sigma_param.view(shape) + torch.zeros_like(mu)).exp()
-		# please ensure the first dim is batch size: [bsz, len, ...]
-		# hidden and cell are [num_layers, bsz, hidden_size]
-		return (mu, sigma), {
-			"hidden": hidden.transpose(0, 1).detach(),
-			# "cell": cell.transpose(0, 1).detach()
-		} if self.rnn_layer_num else None
+			raise NotImplementedError
+		return (mu, sigma), state_
 	
-	def flatten_foward(self, model, input):
-		""" flattent the input except the last dim, then forward, then convert back
-			input: [N_0, N_1, ..., N_{n-1}, dim]
-			output: [N_0 * N_1 * ... * N_{n-1}, dim]
-		"""
-		shape = input.shape
-		input = input.reshape(-1, shape[-1])
-		output = model(input)
-		output = output.reshape(*shape[:-1], -1)
-		return output
-
-
 
 # utils
 
@@ -1191,11 +1081,9 @@ class SACRunner(DefaultRLRunner):
 		test_envs = self.test_envs
 		actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
 		actor_optim = cfg.actor_optim(actor.parameters())
-		net_c1 = cfg.net_c1(env.observation_space.shape, action_shape=env.action_space.shape)
-		critic1 = cfg.critic1(net_c1).to(cfg.device)
+		critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
 		critic1_optim = cfg.critic1_optim(critic1.parameters())
-		net_c2 = cfg.net_c2(env.observation_space.shape, action_shape=env.action_space.shape)
-		critic2 = cfg.critic2(net_c2).to(cfg.device)
+		critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
 		critic2_optim = cfg.critic2_optim(critic2.parameters())
 		policy = cfg.policy(
 			actor, actor_optim,

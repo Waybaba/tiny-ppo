@@ -49,11 +49,6 @@ runner:
   _partial_: true
 net: null # for rnn
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
-  # historical_act: 
-  #   # type: "cat_mlp" # "stack_rnn" or "cat_mlp".  ps. stack_rnn = stack([{obs_i, a_i}] * num). cat_mlp = cat(obs_i, a_i * num)
-  #   type: "stack_rnn"
-  #   num: 80
-  #   burnin_num: 0
   actor_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "normal" # normal or oracle
@@ -67,32 +62,37 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
-  rnn_layer_num: 1
-  rnn_hidden_layer_size: 256
-  mlp_hidden_sizes: [256,256]
-  mlp_softmax: false
+  device: ${device}
+  global_cfg: ${global_cfg}
+  net: 
+    _target_: src.runner.RNN_MLP_Net
+    _partial_: true
+    rnn_layer_num: 0
+    rnn_hidden_layer_size: 256
+    mlp_hidden_sizes: [256,256]
+    mlp_softmax: false
   unbounded: true
   conditioned_sigma: true
-  global_cfg: ${global_cfg}
-  device: ${device}
 actor_optim:
   _target_: torch.optim.Adam
   _partial_: true
   lr: 1e-3
-net_c1: 
-  concat: true # obs + action as input
 critic1:
-  # _target_: tianshou.utils.net.continuous.Critic
-  _target_: src.runner.Critic
+  _target_: src.runner.CustomRecurrentCritic
   _partial_: true
-  # hidden_sizes: [256]
-  hidden_sizes: []
   device: ${device}
+  global_cfg: ${global_cfg}
+  net: 
+    _target_: src.runner.RNN_MLP_Net
+    _partial_: true
+    rnn_layer_num: 0
+    rnn_hidden_layer_size: 256
+    mlp_hidden_sizes: [256,256]
+    mlp_softmax: false
 critic1_optim:
   _target_: ${actor_optim._target_}
   _partial_: true
   lr: 1e-3
-net_c2: ${net_c1}
 critic2: ${critic1}
 critic2_optim: ${critic1_optim}
 policy:
