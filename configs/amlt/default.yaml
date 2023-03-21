@@ -184,50 +184,65 @@ search:
     name: RL_Delayed_{random_string:s}
     command:
     - python src/entry.py
+      -m
+      hydra/launcher=wsl_pc
+			hydra.launcher.n_jobs=5
+      seed=0,1,2,3,4
       experiment={experiment}
       env.name={env_name}
-      actor.mlp_hidden_sizes={actor_mlp_hidden_sizes}
-      actor.rnn_layer_num={actor_rnn_layer_num}
-      actor.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
       trainer.batch_size={trainer_batch_size}
-      policy.actor_use_oracle_obs={actor_use_oracle_obs}
+      actor.net.mlp_hidden_sizes={actor_mlp_hidden_sizes}
+      actor.net.rnn_layer_num={actor_rnn_layer_num}
+      actor.net.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
+      critic.net.mlp_hidden_sizes={critic_mlp_hidden_sizes}
+      critic.net.rnn_layer_num={critic_rnn_layer_num}
+      critic.net.rnn_hidden_layer_size={critic_rnn_hidden_layer_size}
+      global_cfg.actor_input.history_merge_method={actor_history_merge_method}
+      global_cfg.actor_input.obs_type={actor_obs_type}
+      global_cfg.actor_input.history_num={actor_history_num}
+      global_cfg.actor_input.burnin_num={actor_burnin_num}
+      global_cfg.critic_input.history_merge_method={critic_history_merge_method}
+      global_cfg.critic_input.obs_type=none
       env.delay={env_delay}
-      seed={seed}
       tags=[{tag}]
-      global_cfg.historical_act=null
-      # global_cfg.historical_act.type={historical_act_type}
-      # global_cfg.historical_act.num={historical_act_num}
-      # global_cfg.historical_act.burnin_num={historical_act_burnin_num}
   type: grid
   max_trials: 10000
   params:
-    - name: actor_use_oracle_obs
-      values: [false]
     - name: env_delay
       # values: [0,1,2,4,8,16,32]
-      values: [0,2,4,8,16]
-    - name: seed
-      values: [0,1,2,3,4]
+      values: [0]
     - name: env_name
       values: [HalfCheetah-v4]
       # values: [Ant-v4,Hopper-v4,Walker2d-v4,HalfCheetah-v4]
     - name: experiment
-      values: [sac_cat]
+      values: [sac_rnn]
     - name: tag
-      values: ["NomalInput_vs_CatWithZero"]
-    # - name: historical_act_type
-    #   values: [cat_mlp]
-    # - name: historical_act_num
-    #   values: [0]
-    # - name: historical_act_burnin_num
-    #   values: [0]
-    - name: trainer_batch_size
-      values: [256]
+      values: ["Reconstruct_Code"]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
       values: [0]
     - name: actor_rnn_hidden_layer_size
+      values: [256]
+    - name: critic_mlp_hidden_sizes
+      values: ["[256,256]"]
+    - name: critic_rnn_layer_num
+      values: [0]
+    - name: critic_rnn_hidden_layer_size
+      values: [256]
+    - name: actor_history_merge_method
+      values: ["none"]
+    - name: actor_obs_type
+      values: ["oracle"]
+    - name: actor_history_num
+      values: [7]
+    - name: actor_burnin_num 
+      values: [0]
+    - name: critic_history_merge_method
+      values: ["none"]
+    - name: critic_obs_type
+      values: ["oracle"]
+    - name: trainer_batch_size
       values: [256]
 
     

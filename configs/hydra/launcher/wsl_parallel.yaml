@@ -1,0 +1,4 @@
+defaults: 
+  - wsl_pc.yaml
+
+n_jobs: 2

@@ -265,7 +265,7 @@ class CustomSACPolicy(SACPolicy):
 	) -> None:
 		self.global_cfg = kwargs.pop("global_cfg")
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			assert actor.rnn_layer_num == 0, "cat_mlp should not be used with recurrent actor"
+			assert actor.net.rnn_layer_num == 0, "cat_mlp should not be used with recurrent actor"
 		return super().__init__(
 			actor,
 			actor_optim,
@@ -314,16 +314,17 @@ class CustomSACPolicy(SACPolicy):
 		# 		current_q = critic(batch.info["obs_nodelay"], batch.act).flatten()
 		# 	else:
 		# 		current_q = critic(batch.obs, batch.act).flatten()
-		current_q = critic(batch.critic_input_cur).flatten()
-		target_q = batch.returns.flatten()
-		td = current_q - target_q
-		if self.global_cfg.actor_input.obs_type == "normal":
+		current_q, critic_state = critic(batch.critic_input_cur)
+		target_q = torch.tensor(batch.returns).to(current_q.device)
+		td = current_q.flatten() - target_q.flatten()
+		if self.global_cfg.actor_input.history_merge_method in ["none", "cat_mlp"]:
+			critic_loss = (td.pow(2) * weight).mean()
+		else:
+			raise NotImplementedError
 			critic_loss = (td.pow(2) * weight)
 			# critic_loss = critic_loss.reshape(*bsz_len_shape, -1)
 			critic_loss = critic_loss[:, self.global_cfg.historical_act.burnin_num:] # ! burn in num
 			critic_loss = critic_loss.mean()
-		else:
-			critic_loss = (td.pow(2) * weight).mean()
 		optimizer.zero_grad()
 		critic_loss.backward()
 		optimizer.step()
@@ -391,8 +392,10 @@ class CustomSACPolicy(SACPolicy):
 		# 		current_q1a = self.critic1(batch.obs, act).flatten()
 		# 		current_q2a = self.critic2(batch.obs, act).flatten()
 
-		current_q1a = self.critic1(batch.crictic_input_cur).flatten()
-		current_q2a = self.critic2(batch.crictic_input_cur).flatten()
+		current_q1a, state_ = self.critic1(batch.critic_input_cur)
+		current_q2a, state_ = self.critic2(batch.critic_input_cur)
+		current_q1a = current_q1a.flatten()
+		current_q2a = current_q2a.flatten()
 		# if not self.actor_rnn:
 		# 	if self.critic_use_oracle_obs:
 		# 		current_q1a = self.critic1(batch.info["obs_nodelay"], act).flatten()
@@ -407,17 +410,19 @@ class CustomSACPolicy(SACPolicy):
 		# 	else:
 		# 		current_q1a = self.critic1(batch.obs[:,-1], act).flatten()
 		# 		current_q2a = self.critic2(batch.obs[:,-1], act).flatten()
-		if self.global_cfg.historical_act and self.global_cfg.historical_act.type == "stack_rnn": # ! TODO change condition
+		if self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			actor_loss = self._alpha * obs_result.log_prob.flatten() - \
 				torch.min(current_q1a, current_q2a)
 			actor_loss = actor_loss.reshape(*bsz_len_shape, -1)
 			actor_loss = actor_loss[:, self.global_cfg.historical_act.burnin_num:]
 			actor_loss = actor_loss.mean()
-		else:
+		elif self.global_cfg.actor_input.history_merge_method in ["cat_mlp", "none"]:
 			actor_loss = (
 				self._alpha * obs_result.log_prob.flatten() -
 				torch.min(current_q1a, current_q2a)
 			).mean()
+		else:
+			raise NotImplementedError
 		self.actor_optim.zero_grad()
 		actor_loss.backward()
 		self.actor_optim.step()
@@ -537,10 +542,11 @@ class CustomSACPolicy(SACPolicy):
 
 		return target_q
 
+	@torch.no_grad()
 	def process_fn(
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
 	) -> Batch:
-		# add basic keys ! TODO remove
+		# add basic keys # ! TODO remove
 		# if self.critic_use_oracle_obs or self.actor_use_oracle_obs:
 		# 	prev_batch = buffer[buffer.prev(indices)]
 		# 	batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"]
@@ -579,23 +585,84 @@ class CustomSACPolicy(SACPolicy):
 		# 					break
 		# 		batch.is_another_episode = start
 		# ! TODO
-		if self.global_cfg.actor_input_cur.history_merge_method == "none":
-			batch.actor_input_cur = batch.obs
-			batch.actor_input_next = batch.obs_next
-			batch.critic_input_cur = batch.obs
-			batch.critic_input_next = batch.obs_next
+		batch.is_preprocessed = True # for distinguishing whether the batch is from env
+		torch.no_grad()
+		### oracle or normal obs
+		if self.global_cfg.actor_input.obs_type == "normal":
+			batch.obs_cur_used_actor = batch.obs
+			batch.obs_next_used_actor = batch.obs_next
+		elif self.global_cfg.actor_input.obs_type == "oracle":
+			prev_batch = buffer[buffer.prev(indices)]
+			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
+			batch.obs_cur_used_actor = batch.info["obs_nodelay"]
+			batch.obs_next_used_actor = batch.info["obs_next_nodelay"]
 		else:
-			raise NotImplementedError("Not implemented yet")
+			raise ValueError
+		if self.global_cfg.critic_input.obs_type == "normal":
+			batch.obs_cur_used_critic = batch.obs
+			batch.obs_next_used_critic = batch.obs_next
+		elif self.global_cfg.critic_input.obs_type == "oracle":
+			prev_batch = buffer[buffer.prev(indices)]
+			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
+			batch.obs_cur_used_critic = batch.info["obs_nodelay"]
+			batch.obs_next_used_critic = batch.info["obs_next_nodelay"]
+		else:
+			raise ValueError
+		batch.pop("obs")
+		batch.pop("obs_next")
+		batch["info"].pop("obs_nodelay")
+		batch["info"].pop("obs_next_nodelay")
+		### actor input
+		if self.global_cfg.actor_input.history_merge_method == "none":
+			batch.actor_input_cur = batch.obs_cur_used_actor
+			batch.actor_input_next = batch.obs_next_used_actor
+		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
+			act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num) # ! TODO check consistency with buffer
+			if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
+			act_prev = act_prev.reshape(act_prev.shape[0], -1) # flatten (batch, history_num * act_dim)
+			batch.actor_input_cur = np.concatenate([batch.obs_cur_used_actor, act_prev], axis=-1)
+			act_cur = buffer.get(indices, "act", stack_num=self.global_cfg.actor_input.history_num)
+			if self.global_cfg.actor_input.history_num == 1: act_cur = np.expand_dims(act_cur, axis=-2)
+			act_cur = act_cur.reshape(act_cur.shape[0], -1) # flatten (batch, history_num * act_dim)
+			batch.actor_input_next = np.concatenate([batch.obs_next_used_actor, act_cur], axis=-1)
+		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+			raise NotImplementedError
+		else:
+			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
+		# critic input
+		if self.global_cfg.critic_input.history_merge_method == "none":
+			batch.critic_input_cur = np.concatenate([batch.obs_cur_used_critic, batch.act], axis=-1)
+			actor_next_result = self.forward(batch, input="actor_input_next")
+			batch.pred_act = actor_next_result.act.cpu().detach().numpy()
+			batch.pred_act_log_prob = actor_next_result.log_prob
+			batch.critic_input_next_pred_act = np.concatenate([batch.obs_next_used_critic, batch.pred_act], axis=-1)
+		elif self.global_cfg.critic_input.history_merge_method == "cat_mlp":
+			raise NotImplementedError
+		elif self.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			raise NotImplementedError
+		else:
+			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
+		
 
-		batch.return_ = self.compute_return_custom(batch)
+		batch.returns = self.compute_return_custom(batch)
 		# end flag
 		batch.is_preprocessed = True
 		return batch
 	
 	def compute_return_custom(self, batch):
-		# ! TODO
-		return batch.rew
-
+		""" custom defined calculation of returns (only one step)
+		equations:
+			1. returns = rewards + gamma * (1 - done) * next_value
+		"""
+		with torch.no_grad():
+			# get next value
+			value_next = torch.min(
+				self.critic1_old(batch.critic_input_next_pred_act)[0],
+				self.critic2_old(batch.critic_input_next_pred_act)[0],
+			) - self._alpha * batch.pred_act_log_prob
+			# compute returns
+			returns = batch.rew + self._gamma * (1 - batch.done) * value_next.flatten().cpu().numpy()
+			return returns
 
 	@staticmethod
 	def compute_nstep_return(
@@ -692,12 +759,36 @@ class CustomSACPolicy(SACPolicy):
 		# 	obs = batch[input]
 		# 	logits, hidden = self.actor(obs, state=state, info=batch.info)
 
-		if self.global_cfg.actor_input.history_merge_method != "none":
-			# only when hitorical act is used, we should not input the obs key
-			raise NotImplementedError(f"actor_input.history_merge {self.global_cfg.actor_input.history_merge} not implemented")
-			actor_input = None
-		else:
+
+
+		if not hasattr(batch, "is_preprocessed") or not batch.is_preprocessed: # online learn
+			obs = batch[input]
+			if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
+				if len(batch.act.shape) == 0: # first step (zero cat) # TODO check stack rnn and cat mlp
+					obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
+				else: # normal step
+					# every element of obs and obs_next should be the same
+					assert (batch["obs"] == batch["obs_next"]).all() # TODO DEBUG ONLY remove later
+					obs = np.concatenate([
+						# ! TODO add another obs preprocessed in env. then use it
+						# todo should we use next here?
+						batch.info["obs_next_nodelay"] if self.global_cfg.actor_input.obs_type == "oracle" \
+							else batch.obs_next,
+						batch.info["historical_act"]
+					], axis=-1)
+			elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+				raise NotImplementedError(f"stack_rnn not implemented")
+			elif self.global_cfg.actor_input.history_merge_method == "none":
+				pass
+			batch.online_input = obs
+			input = "online_input"
+
+		if self.global_cfg.actor_input.history_merge_method in ["none", "cat_mlp"]:
 			actor_input = batch[input]
+		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+			raise NotImplementedError(f"stack_rnn not implemented")
+		else:
+			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")
 		logits, hidden = self.actor(actor_input, state=state, info=batch.info)
 
 		# if not self.actor_input_act: # ! TODO check
@@ -876,6 +967,25 @@ class RNN_MLP_Net(nn.Module):
 			"hidden": hidden.transpose(0, 1).detach(),
 		} if self.rnn_layer_num else None
 
+	def flatten_foward(self, net, input):
+		"""Flatten input for mlp forward, then reshape output to original shape.
+		input: 
+			mlp: a mlp module
+			after_rnn: tensor [N1, N2, ..., Nk, D_in]
+		output:
+			tensor [N1, N2, ..., Nk, D_out]
+		"""
+		# flatten
+		shape = input.shape
+		input = input.reshape(-1, shape[-1])
+		# forward
+		output = net(input)
+		# reshape
+		shape = list(shape)
+		shape[-1] = output.shape[-1]
+		output = output.reshape(*shape)
+		return output
+
 class Critic(nn.Module):
     """Simple critic network. Will create an actor operated in continuous \
     action space with structure of preprocess_net ---> 1(q value).
@@ -954,15 +1064,15 @@ class CustomRecurrentCritic(nn.Module):
 	) -> None:
 		super().__init__()
 		self.hps = kwargs
-		assert len(state_shape) == 1 and len(action_shape) == 1
-		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
-			input_dim = state_shape[0] + action_shape[0]
-			output_dim = 1
-		elif self.hps["global_cfg"].actor_input.history_merge_method == "stack_rnn":
+		assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
+		if self.hps["global_cfg"].critic_input.history_merge_method == "cat_mlp":
 			input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
 			output_dim = 1
-		elif self.hps["global_cfg"].actor_input.history_merge_method == "none":
-			input_dim = int(np.prod(state_shape))
+		elif self.hps["global_cfg"].critic_input.history_merge_method == "stack_rnn":
+			input_dim = state_shape[0] + action_shape[0]
+			output_dim = 1
+		elif self.hps["global_cfg"].critic_input.history_merge_method == "none":
+			input_dim = state_shape[0] + action_shape[0]
 			output_dim = 1
 		else:
 			raise NotImplementedError
@@ -970,13 +1080,13 @@ class CustomRecurrentCritic(nn.Module):
 
 	def forward(
         self,
-        obs: Union[np.ndarray, torch.Tensor],
-        act: Optional[Union[np.ndarray, torch.Tensor]] = None,
+        critic_input: Union[np.ndarray, torch.Tensor],
         info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
-		critic_input = torch.cat() # ! TODO
+		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
 		output, state_ = self.net(critic_input)
-		return output[0], state_
+		value = output[0]
+		return value, state_
 
 class CustomRecurrentActorProb(nn.Module):
 	"""Recurrent version of ActorProb.
@@ -1005,10 +1115,10 @@ class CustomRecurrentActorProb(nn.Module):
 		self.state_shape, self.action_shape = state_shape, action_shape
 		self.act_num = action_shape[0]
 		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
-			input_dim = state_shape[0] + action_shape[0]
+			input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
 			output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "stack_rnn":
-			input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
+			input_dim = state_shape[0] + action_shape[0]
 			output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "none":
 			input_dim = int(np.prod(state_shape))
@@ -1019,13 +1129,14 @@ class CustomRecurrentActorProb(nn.Module):
 
 	def forward(
 		self,
-		obs: Union[np.ndarray, torch.Tensor],
+		actor_input: Union[np.ndarray, torch.Tensor],
 		state: Optional[Dict[str, torch.Tensor]] = None,
 		info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		"""Almost the same as :class:`~tianshou.utils.net.common.Recurrent`."""
 		### forward
-		output, state_ = self.net(obs, state)
+		output, state_ = self.net(actor_input, state)
+		assert len(output) == 2, "output should be a tuple of (mu, sigma), as there are two heads for actor network"
 		mu, sigma = output
 		if not self.hps["unbounded"]:
 			mu = self.hps["max_action"] * torch.tanh(mu)

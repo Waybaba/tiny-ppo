@@ -79,6 +79,25 @@
 				"start_timesteps=1",
 			],
 		},
+		// paralelle
+		{
+			"name": "paralelle",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/entry.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				"-m", "hydra/launcher=wsl_pc",
+				"hydra.launcher.n_jobs=2",
+				"experiment=sac_rnn",
+				"hydra.launcher.verbose=true",
+				"env.name=HalfCheetah-v4",
+				// "env.name=DummyNum-v0",
+				"env.delay=4,2",
+				"start_timesteps=1",
+			],
+		},
 		// entry.py sac_rnn
 		{
 			"name": "sac_cat",
