@@ -186,7 +186,7 @@ search:
     - python src/entry.py
       -m
       hydra/launcher=wsl_pc
-			hydra.launcher.n_jobs=5
+      hydra.launcher.n_jobs=5
       seed=0,1,2,3,4
       experiment={experiment}
       env.name={env_name}
@@ -194,15 +194,15 @@ search:
       actor.net.mlp_hidden_sizes={actor_mlp_hidden_sizes}
       actor.net.rnn_layer_num={actor_rnn_layer_num}
       actor.net.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
-      critic.net.mlp_hidden_sizes={critic_mlp_hidden_sizes}
-      critic.net.rnn_layer_num={critic_rnn_layer_num}
-      critic.net.rnn_hidden_layer_size={critic_rnn_hidden_layer_size}
+      critic1.net.mlp_hidden_sizes={critic_mlp_hidden_sizes}
+      critic1.net.rnn_layer_num={critic_rnn_layer_num}
+      critic1.net.rnn_hidden_layer_size={critic_rnn_hidden_layer_size}
       global_cfg.actor_input.history_merge_method={actor_history_merge_method}
       global_cfg.actor_input.obs_type={actor_obs_type}
       global_cfg.actor_input.history_num={actor_history_num}
       global_cfg.actor_input.burnin_num={actor_burnin_num}
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
-      global_cfg.critic_input.obs_type=none
+      global_cfg.critic_input.obs_type={critic_obs_type}
       env.delay={env_delay}
       tags=[{tag}]
   type: grid
