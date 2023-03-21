@@ -314,15 +314,17 @@ class CustomSACPolicy(SACPolicy):
 		batch.weight = (td1 + td2) / 2.0  # prio-buffer # TODO check complibility with burn in mask
 
 		# actor ###ACTOR_FORWARD
-		obs_result = self(batch, input="actor_input_cur")
-		act = obs_result.act
-
-		current_q1a, state_ = self.critic1(batch.critic_input_cur)
-		current_q2a, state_ = self.critic2(batch.critic_input_cur)
+		# obs_result = self(batch, input="actor_input_cur")
+		# act = obs_result.act
+		
+		### CRITIC_FORWARD
+		current_q1a, state_ = self.critic1(batch.critic_input_cur_pred)
+		current_q2a, state_ = self.critic2(batch.critic_input_cur_pred)
 		current_q1a = current_q1a.flatten()
 		current_q2a = current_q2a.flatten()
 
 		if self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+			raise NotImplementedError("check the code below to use the method in critic")
 			actor_loss = self._alpha * obs_result.log_prob.flatten() - \
 				torch.min(current_q1a, current_q2a)
 			actor_loss = actor_loss.reshape(*bsz_len_shape, -1)
@@ -330,7 +332,7 @@ class CustomSACPolicy(SACPolicy):
 			actor_loss = actor_loss.mean()
 		elif self.global_cfg.actor_input.history_merge_method in ["cat_mlp", "none"]:
 			actor_loss = (
-				self._alpha * obs_result.log_prob.flatten() -
+				self._alpha * batch.pred_act_log_prob_cur.flatten() -
 				torch.min(current_q1a, current_q2a)
 			).mean()
 		else:
@@ -340,7 +342,7 @@ class CustomSACPolicy(SACPolicy):
 		self.actor_optim.step()
 
 		if self._is_auto_alpha:
-			log_prob = obs_result.log_prob.detach() + self._target_entropy
+			log_prob = batch.pred_act_log_prob_cur.detach() + self._target_entropy
 			# please take a look at issue #258 if you'd like to change this line
 			alpha_loss = -(self._log_alpha * log_prob).mean()
 			self._alpha_optim.zero_grad()
@@ -363,12 +365,10 @@ class CustomSACPolicy(SACPolicy):
 
 		return result
 	
-	@torch.no_grad()
 	def process_fn(
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
 	) -> Batch:
 		batch.is_preprocessed = True # for distinguishing whether the batch is from env
-		torch.no_grad()
 		### oracle or normal obs
 		if self.global_cfg.actor_input.obs_type == "normal":
 			batch.obs_cur_used_actor = batch.obs
@@ -392,8 +392,8 @@ class CustomSACPolicy(SACPolicy):
 			raise ValueError
 		batch.pop("obs")
 		batch.pop("obs_next")
-		batch["info"].pop("obs_nodelay")
-		batch["info"].pop("obs_next_nodelay")
+		if "obs_nodelay" in batch["info"]: batch["info"].pop("obs_nodelay")
+		if "obs_next_nodelay" in batch["info"]: batch["info"].pop("obs_next_nodelay")
 		### actor input
 		if self.global_cfg.actor_input.history_merge_method == "none":
 			batch.actor_input_cur = batch.obs_cur_used_actor
@@ -413,11 +413,16 @@ class CustomSACPolicy(SACPolicy):
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
 		# critic input
 		if self.global_cfg.critic_input.history_merge_method == "none":
-			batch.critic_input_cur = np.concatenate([batch.obs_cur_used_critic, batch.act], axis=-1)
 			actor_next_result = self.forward(batch, input="actor_input_next")
-			batch.pred_act = actor_next_result.act.cpu().detach().numpy()
+			batch.pred_act = actor_next_result.act
 			batch.pred_act_log_prob = actor_next_result.log_prob
-			batch.critic_input_next_pred_act = np.concatenate([batch.obs_next_used_critic, batch.pred_act], axis=-1)
+			batch.critic_input_next_pred_act = torch.cat([torch.tensor(batch.obs_cur_used_critic).to(batch.pred_act.device), batch.pred_act], dim=-1)
+			# cur
+			actor_result = self.forward(batch, input="actor_input_cur")
+			batch.pred_act_cur = actor_result.act
+			batch.pred_act_log_prob_cur = actor_result.log_prob
+			batch.critic_input_cur_pred = torch.cat([torch.tensor(batch.obs_cur_used_critic).to(batch.pred_act_cur.device), batch.pred_act_cur], dim=-1) # TODO move t
+			batch.critic_input_cur = np.concatenate([batch.obs_cur_used_critic, batch.act], axis=-1)
 		elif self.global_cfg.critic_input.history_merge_method == "cat_mlp":
 			raise NotImplementedError
 		elif self.global_cfg.critic_input.history_merge_method == "stack_rnn":
@@ -426,11 +431,27 @@ class CustomSACPolicy(SACPolicy):
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
 		
 
-		batch.returns = self.compute_return_custom(batch)
+		# batch.returns = self.compute_return_custom(batch)
+		if "from_target_q" not in batch:
+			batch = self.compute_nstep_return( # ! TODO
+				batch, buffer, indices, self._target_q, self._gamma, self._n_step,
+				self._rew_norm
+			)
 		# end flag
 		batch.is_preprocessed = True
 		return batch
-	
+
+	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
+		# ! check is normal
+		batch = buffer[indices]  # batch.obs: s_{t+n}
+		batch.from_target_q = True
+		batch = self.process_fn(batch, buffer, indices)
+		target_q = torch.min(
+			self.critic1_old(batch.critic_input_next_pred_act)[0],
+			self.critic2_old(batch.critic_input_next_pred_act)[0],
+		) - self._alpha * batch.pred_act_log_prob
+		return target_q
+
 	def process_online_batch(
 		self, batch: Batch
 		):
@@ -512,42 +533,6 @@ class CustomSACPolicy(SACPolicy):
 			dist=dist,
 			log_prob=log_prob
 		)
-
-	def get_critic_obs(self, batch: Batch, cur_or_next):
-		"""Get obs for critic.
-
-		Args:
-			batch (Batch): batch data
-			cur_or_next (str): "cur" or "next"
-
-		Returns:
-			np.ndarray: obs for critic
-		"""
-		if cur_or_next == "cur":
-			if self.actor_use_oracle_obs: obs = batch.info["obs_nodelay"]
-			else: obs = batch.obs
-		elif cur_or_next == "next":
-			if self.actor_use_oracle_obs: obs = batch.info["obs_next_nodelay"]
-			else: obs = batch.obs_next
-		return obs
-	
-	def get_actor_obs(self, batch: Batch, cur_or_next):
-		"""Get obs for actor.
-
-		Args:
-			batch (Batch): batch data
-			cur_or_next (str): "cur" or "next"
-
-		Returns:
-			np.ndarray: obs for actor
-		"""
-		if cur_or_next == "cur":
-			if self.actor_use_oracle_obs: obs = batch.info["obs_nodelay"]
-			else: obs = batch.obs
-		elif cur_or_next == "next":
-			if self.actor_use_oracle_obs: obs = batch.info["obs_next_nodelay"]
-			else: obs = batch.obs_next
-		return obs
 
 # net
 
@@ -649,73 +634,73 @@ class RNN_MLP_Net(nn.Module):
 		return output
 
 class Critic(nn.Module):
-    """Simple critic network. Will create an actor operated in continuous \
-    action space with structure of preprocess_net ---> 1(q value).
+	"""Simple critic network. Will create an actor operated in continuous \
+	action space with structure of preprocess_net ---> 1(q value).
 
-    :param preprocess_net: a self-defined preprocess_net which output a
-        flattened hidden state.
-    :param hidden_sizes: a sequence of int for constructing the MLP after
-        preprocess_net. Default to empty sequence (where the MLP now contains
-        only a single linear layer).
-    :param int preprocess_net_output_dim: the output dimension of
-        preprocess_net.
-    :param linear_layer: use this module as linear layer. Default to nn.Linear.
-    :param bool flatten_input: whether to flatten input data for the last layer.
-        Default to True.
+	:param preprocess_net: a self-defined preprocess_net which output a
+		flattened hidden state.
+	:param hidden_sizes: a sequence of int for constructing the MLP after
+		preprocess_net. Default to empty sequence (where the MLP now contains
+		only a single linear layer).
+	:param int preprocess_net_output_dim: the output dimension of
+		preprocess_net.
+	:param linear_layer: use this module as linear layer. Default to nn.Linear.
+	:param bool flatten_input: whether to flatten input data for the last layer.
+		Default to True.
 
-    For advanced usage (how to customize the network), please refer to
-    :ref:`build_the_network`.
+	For advanced usage (how to customize the network), please refer to
+	:ref:`build_the_network`.
 
-    .. seealso::
+	.. seealso::
 
-        Please refer to :class:`~tianshou.utils.net.common.Net` as an instance
-        of how preprocess_net is suggested to be defined.
-    """
+		Please refer to :class:`~tianshou.utils.net.common.Net` as an instance
+		of how preprocess_net is suggested to be defined.
+	"""
 
-    def __init__(
-        self,
-        preprocess_net: nn.Module,
-        hidden_sizes: Sequence[int] = (),
-        device: Union[str, int, torch.device] = "cpu",
-        preprocess_net_output_dim: Optional[int] = None,
-        linear_layer: Type[nn.Linear] = nn.Linear,
-        flatten_input: bool = True,
-    ) -> None:
-        super().__init__()
-        self.device = device
-        self.preprocess = preprocess_net
-        self.output_dim = 1
-        input_dim = getattr(preprocess_net, "output_dim", preprocess_net_output_dim)
-        self.last = MLP(
-            input_dim,  # type: ignore
-            1,
-            hidden_sizes,
-            device=self.device,
-            linear_layer=linear_layer,
-            flatten_input=flatten_input,
-        )
+	def __init__(
+		self,
+		preprocess_net: nn.Module,
+		hidden_sizes: Sequence[int] = (),
+		device: Union[str, int, torch.device] = "cpu",
+		preprocess_net_output_dim: Optional[int] = None,
+		linear_layer: Type[nn.Linear] = nn.Linear,
+		flatten_input: bool = True,
+	) -> None:
+		super().__init__()
+		self.device = device
+		self.preprocess = preprocess_net
+		self.output_dim = 1
+		input_dim = getattr(preprocess_net, "output_dim", preprocess_net_output_dim)
+		self.last = MLP(
+			input_dim,  # type: ignore
+			1,
+			hidden_sizes,
+			device=self.device,
+			linear_layer=linear_layer,
+			flatten_input=flatten_input,
+		)
 
-    def forward(
-        self,
-        obs: Union[np.ndarray, torch.Tensor],
+	def forward(
+		self,
+		obs: Union[np.ndarray, torch.Tensor],
 		state: Optional[Dict[str, torch.Tensor]] = None,
-    ) -> torch.Tensor:
-        """Mapping: (s, a) -> logits -> Q(s, a)."""
-        obs = torch.as_tensor(
-            obs,
-            device=self.device,
-            dtype=torch.float32,
-        ).flatten(1)
-        if act is not None:
-            act = torch.as_tensor(
-                act,
-                device=self.device,
-                dtype=torch.float32,
-            ).flatten(1)
-            obs = torch.cat([obs, act], dim=1)
-        logits, hidden = self.preprocess(obs)
-        logits = self.last(logits)
-        return logits
+	) -> torch.Tensor:
+		"""Mapping: (s, a) -> logits -> Q(s, a)."""
+		obs = torch.as_tensor(
+			obs,
+			device=self.device,
+			dtype=torch.float32,
+		).flatten(1)
+		if act is not None:
+			act = torch.as_tensor(
+				act,
+				device=self.device,
+				dtype=torch.float32,
+			).flatten(1)
+			obs = torch.cat([obs, act], dim=1)
+		logits, hidden = self.preprocess(obs)
+		logits = self.last(logits)
+		return logits
 
 class CustomRecurrentCritic(nn.Module):
 	def __init__(
@@ -741,9 +726,9 @@ class CustomRecurrentCritic(nn.Module):
 		self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=1)
 
 	def forward(
-        self,
-        critic_input: Union[np.ndarray, torch.Tensor],
-        info: Dict[str, Any] = {},
+		self,
+		critic_input: Union[np.ndarray, torch.Tensor],
+		info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
 		output, state_ = self.net(critic_input)
