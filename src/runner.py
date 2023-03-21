@@ -61,7 +61,6 @@ class AsyncACDDPGPolicy(DDPGPolicy):
 		td, critic_loss = self._mse_optimizer(batch, self.critic, self.critic_optim)
 		batch.weight = td  # prio-buffer
 		# actor
-		# actor_loss = -self.critic(batch.obs, self(batch).act).mean()
 		actor_loss = -self.critic(batch.info["obs_nodelay"], self(batch).act).mean()
 		self.actor_optim.zero_grad()
 		actor_loss.backward()
@@ -432,12 +431,42 @@ class CustomSACPolicy(SACPolicy):
 		batch.is_preprocessed = True
 		return batch
 	
+	def process_online_batch(
+		self, batch: Batch
+		):
+		obs = batch.obs
+		# if first step when act is none
+		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
+			if len(batch.act.shape) == 0: # first step (zero cat) # TODO check stack rnn and cat mlp
+				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
+			else: # normal step
+				# every element of obs and obs_next should be the same
+				assert (batch["obs"] == batch["obs_next"]).all() # TODO DEBUG ONLY remove later
+				obs = np.concatenate([
+					# ! TODO add another obs preprocessed in env. then use it
+					# todo should we use next here?
+					batch.info["obs_next_nodelay"] if self.global_cfg.actor_input.obs_type == "oracle" \
+						else batch.obs_next,
+					batch.info["historical_act"]
+				], axis=-1)
+		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+			raise NotImplementedError(f"stack_rnn not implemented")
+		elif self.global_cfg.actor_input.history_merge_method == "none":
+			if len(batch.act.shape) == 0: # first step (zero cat)
+				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
+			else: # normal step
+				obs = batch.info["obs_next_nodelay"] if self.global_cfg.actor_input.obs_type == "oracle" \
+					else batch.obs_next
+		else:
+			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")
+		batch.online_input = obs
+		return batch
+
 	def compute_return_custom(self, batch):
 		""" custom defined calculation of returns (only one step)
 		equations:
 			1. returns = rewards + gamma * (1 - done) * next_value
 		"""
-		return batch.rew # TODO
 		with torch.no_grad():
 			# get next value
 			value_next = torch.min(
@@ -447,7 +476,7 @@ class CustomSACPolicy(SACPolicy):
 			# compute returns
 			returns = batch.rew + self._gamma * (1 - batch.done) * value_next.flatten().cpu().numpy()
 			return returns
-	
+
 	def forward(  # type: ignore
 		self,
 		batch: Batch,
@@ -457,33 +486,11 @@ class CustomSACPolicy(SACPolicy):
 	) -> Batch:
 		###ACTOR_FORWARD note that env.step would call this function automatically
 		if not hasattr(batch, "is_preprocessed") or not batch.is_preprocessed: # online learn
-			obs = batch[input]
-			if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-				if len(batch.act.shape) == 0: # first step (zero cat) # TODO check stack rnn and cat mlp
-					obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
-				else: # normal step
-					# every element of obs and obs_next should be the same
-					assert (batch["obs"] == batch["obs_next"]).all() # TODO DEBUG ONLY remove later
-					obs = np.concatenate([
-						# ! TODO add another obs preprocessed in env. then use it
-						# todo should we use next here?
-						batch.info["obs_next_nodelay"] if self.global_cfg.actor_input.obs_type == "oracle" \
-							else batch.obs_next,
-						batch.info["historical_act"]
-					], axis=-1)
-			elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-				raise NotImplementedError(f"stack_rnn not implemented")
-			elif self.global_cfg.actor_input.history_merge_method == "none":
-				pass
-			batch.online_input = obs
+			### process the input from env (online learn).
 			input = "online_input"
+			batch = self.process_online_batch(batch)
 
-		if self.global_cfg.actor_input.history_merge_method in ["none", "cat_mlp"]:
-			actor_input = batch[input]
-		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			raise NotImplementedError(f"stack_rnn not implemented")
-		else:
-			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")
+		actor_input = batch[input]
 		logits, hidden = self.actor(actor_input, state=state, info=batch.info)
 		assert isinstance(logits, tuple)
 		dist = Independent(Normal(*logits), 1)

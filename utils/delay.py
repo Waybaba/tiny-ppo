@@ -4,7 +4,7 @@ from queue import Queue
 from copy import deepcopy
 
 class DelayedRoboticEnv(gym.Wrapper):
-    def __init__(self, env0: gym.Env, delay_steps=2, global_config=None): # ! TODO remove all extra cfg
+    def __init__(self, env0: gym.Env, delay_steps=2, global_config=None):
         super().__init__(env0)
         self.env = env0
         self.delay_steps = delay_steps
