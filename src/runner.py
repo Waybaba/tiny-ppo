@@ -367,9 +367,9 @@ class CustomSACPolicy(SACPolicy):
 		### log - learn
 		if not hasattr(self, "learn_step"): self.learn_step = 1
 		if not hasattr(self, "start_time"): self.start_time = time()
-		minutes = (time() - self.start_time) / 60
 		self.learn_step += 1
 		if self.learn_step % self.global_cfg.log_interval == 0:
+			minutes = (time() - self.start_time) / 60
 			to_logs = {
 				"learn/loss_actor": actor_loss.item(),
 				"learn/loss_critic1": critic1_loss.item(),
@@ -381,7 +381,7 @@ class CustomSACPolicy(SACPolicy):
 				to_logs["learn/_log_alpha"] = self._log_alpha.item()
 				to_logs["learn/alpha"] = self._alpha.item()
 			wandb.log(to_logs, step=self.learn_step)
-			wandb.log({"time/learn_step": self.train_env_infer_step}, step=int(minutes))
+			wandb.log({"time_related/learn_step": self.train_env_infer_step}, step=int(minutes))
 		return result
 	
 	def process_fn(
@@ -543,11 +543,12 @@ class CustomSACPolicy(SACPolicy):
 			if (self.train_env_infer_step % self.global_cfg.log_interval) == 0:
 				minutes = (time() - self.start_time) / 60
 				to_logs = {
-					"train_env_infer/expected_time_1mStep": minutes / self.train_env_infer_step * 1e6,
+					"train_env_infer/expectedT_1mStep_min": minutes / self.train_env_infer_step * 1e6,
+					"train_env_infer/expectedT_1mStep_hr": minutes / self.train_env_infer_step * 1e6 / 60,
 					"train_env_infer/time_minutes": minutes,
 				}
 				wandb.log(to_logs, step=self.train_env_infer_step)
-				wandb.log({"time/train_env_infer_step": self.train_env_infer_step}, step=int(minutes))
+				wandb.log({"time_related/train_env_infer_step": self.train_env_infer_step}, step=int(minutes))
 		return Batch(
 			logits=logits,
 			act=squashed_action,
@@ -557,7 +558,8 @@ class CustomSACPolicy(SACPolicy):
 		)
 	
 	def init_wandb_summary(self):
-		wandb.define_metric("train_env_infer/expected_time_1mStep", summary="last")
+		wandb.define_metric("train_env_infer/expectedT_1mStep_min", summary="last")
+		wandb.define_metric("train_env_infer/expectedT_1mStep_hr", summary="last")
 		wandb.define_metric("key/reward", summary="last")
 
 
