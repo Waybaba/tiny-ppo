@@ -377,33 +377,7 @@ class CustomSACPolicy(SACPolicy):
 		# init
 		prev_batch = buffer[buffer.prev(indices)]
 		batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
-		# move all to self.device
-		batch.to_torch(device=self.actor.device)
-		### oracle or normal obs
-		# if self.global_cfg.actor_input.obs_type == "normal":
-		# 	batch.obs_cur_used_actor = batch.obs
-		# 	batch.obs_next_used_actor = batch.obs_next
-		# elif self.global_cfg.actor_input.obs_type == "oracle":
-		# 	prev_batch = buffer[buffer.prev(indices)]
-		# 	batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
-		# 	batch.obs_cur_used_actor = batch.info["obs_nodelay"]
-		# 	batch.obs_next_used_actor = batch.info["obs_next_nodelay"]
-		# else:
-		# 	raise ValueError
-		# if self.global_cfg.critic_input.obs_type == "normal":
-		# 	batch.obs_cur_used_critic = batch.obs
-		# 	batch.obs_next_used_critic = batch.obs_next
-		# elif self.global_cfg.critic_input.obs_type == "oracle":
-		# 	prev_batch = buffer[buffer.prev(indices)]
-		# 	batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
-		# 	batch.obs_cur_used_critic = batch.info["obs_nodelay"]
-		# 	batch.obs_next_used_critic = batch.info["obs_next_nodelay"]
-		# else:
-		# 	raise ValueError
-		# batch.pop("obs")
-		# batch.pop("obs_next")
-		# if "obs_nodelay" in batch["info"]: batch["info"].pop("obs_nodelay")
-		# if "obs_next_nodelay" in batch["info"]: batch["info"].pop("obs_next_nodelay")
+		batch.to_torch(device=self.actor.device) # move all to self.device
 		### actor input
 		if self.global_cfg.actor_input.history_merge_method == "none":
 			batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
@@ -423,8 +397,8 @@ class CustomSACPolicy(SACPolicy):
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
 		# critic input
 		if self.global_cfg.critic_input.history_merge_method == "none":
-			actor_result_next = self.forward(batch, input="actor_input_next")
 			actor_result_cur = self.forward(batch, input="actor_input_cur")
+			actor_result_next = self.forward(batch, input="actor_input_next")
 			batch.critic_input_cur_offline = torch.cat([
 				self.get_obs_base(batch, "critic", "cur"),
 				batch.act], dim=-1)
@@ -433,7 +407,7 @@ class CustomSACPolicy(SACPolicy):
 				actor_result_cur.act], dim=-1)
 			batch.critic_input_next_online = torch.cat([
 				self.get_obs_base(batch, "critic", "next"),
-				actor_result_next.act], dim=-1)
+				actor_result_next.act], dim=-1).detach()
 			batch.log_prob_cur = actor_result_cur.log_prob
 			batch.log_prob_next = actor_result_next.log_prob # TODO remove log_prob
 		elif self.global_cfg.critic_input.history_merge_method == "cat_mlp":
@@ -443,13 +417,12 @@ class CustomSACPolicy(SACPolicy):
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
 		
-
-		batch.returns = self.compute_return_custom(batch)
-		# if "from_target_q" not in batch:
-		# 	batch = self.compute_nstep_return( # ! TODO
-		# 		batch, buffer, indices, self._target_q, self._gamma, self._n_step,
-		# 		self._rew_norm
-		# 	)
+		# batch.returns = self.compute_return_custom(batch)
+		if "from_target_q" not in batch:
+			batch = self.compute_nstep_return( # ! TODO
+				batch, buffer, indices, self._target_q, self._gamma, self._n_step,
+				self._rew_norm
+			)
 		# end flag
 		batch.is_preprocessed = True
 		return batch
@@ -459,9 +432,9 @@ class CustomSACPolicy(SACPolicy):
 		batch.from_target_q = True
 		batch = self.process_fn(batch, buffer, indices)
 		target_q = torch.min(
-			self.critic1_old(batch.critic_input_next_pred_act)[0],
-			self.critic2_old(batch.critic_input_next_pred_act)[0],
-		) - self._alpha * batch.pred_act_log_prob
+			self.critic1_old(batch.critic_input_next_online)[0],
+			self.critic2_old(batch.critic_input_next_online)[0],
+		) - self._alpha * batch.log_prob_next
 		return target_q
 
 	def process_online_batch(
