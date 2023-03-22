@@ -264,6 +264,7 @@ class CustomSACPolicy(SACPolicy):
 		**kwargs: Any,
 	) -> None:
 		self.global_cfg = kwargs.pop("global_cfg")
+		self.init_wandb_summary()
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			assert actor.net.rnn_layer_num == 0, "cat_mlp should not be used with recurrent actor"
 		return super().__init__(
@@ -364,7 +365,9 @@ class CustomSACPolicy(SACPolicy):
 			result["learn/_log_alpha"] = self._log_alpha.item()
 			result["learn/alpha"] = self._alpha.item()  # type: ignore
 		### log - learn
-		if not hasattr(self, "learn_step"): self.learn_step = 0
+		if not hasattr(self, "learn_step"): self.learn_step = 1
+		if not hasattr(self, "start_time"): self.start_time = time()
+		minutes = (time() - self.start_time) / 60
 		self.learn_step += 1
 		if self.learn_step % self.global_cfg.log_interval == 0:
 			to_logs = {
@@ -378,6 +381,7 @@ class CustomSACPolicy(SACPolicy):
 				to_logs["learn/_log_alpha"] = self._log_alpha.item()
 				to_logs["learn/alpha"] = self._alpha.item()
 			wandb.log(to_logs, step=self.learn_step)
+			wandb.log({"time/learn_step": self.train_env_infer_step}, step=int(minutes))
 		return result
 	
 	def process_fn(
@@ -534,17 +538,16 @@ class CustomSACPolicy(SACPolicy):
 		### log - train_env_infer
 		if not hasattr(self, "train_env_infer_step"): self.train_env_infer_step = 0
 		if not hasattr(self, "start_time"): self.start_time = time()
-		self.train_env_infer_step += 1
-		if input=="online_input" and (self.train_env_infer_step % \
-			self.global_cfg.log_interval) == 0 and self.training:
-			minutes = (time() - self.start_time) / 60
-			to_logs = {
-				"train_env_infer/time_minutes": minutes,
-				"train_env_infer/expected_time_1mStep": minutes / self.train_env_infer_step * 1e6,
-			}
-			to_logs["train_env_infer/learn_step"] = self.train_env_infer_step if \
-				hasattr(self, "train_env_infer_step") else 0
-			wandb.log(to_logs, step=self.train_env_infer_step)
+		if input == "online_input" and self.training: 
+			self.train_env_infer_step += 1
+			if (self.train_env_infer_step % self.global_cfg.log_interval) == 0:
+				minutes = (time() - self.start_time) / 60
+				to_logs = {
+					"train_env_infer/expected_time_1mStep": minutes / self.train_env_infer_step * 1e6,
+					"train_env_infer/time_minutes": minutes,
+				}
+				wandb.log(to_logs, step=self.train_env_infer_step)
+				wandb.log({"time/train_env_infer_step": self.train_env_infer_step}, step=int(minutes))
 		return Batch(
 			logits=logits,
 			act=squashed_action,
@@ -552,6 +555,10 @@ class CustomSACPolicy(SACPolicy):
 			dist=dist,
 			log_prob=log_prob
 		)
+	
+	def init_wandb_summary(self):
+		wandb.define_metric("train_env_infer/expected_time_1mStep", summary="last")
+		wandb.define_metric("key/reward", summary="last")
 
 
 	def get_obs_base(self, batch, a_or_c, stage):
