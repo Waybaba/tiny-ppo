@@ -8,11 +8,83 @@ defaults:
   - /actor: null
   - _self_
 
-# common - for all tasks (task_name, tags, output_dir, device)
-task_name: "RL"
-tags: ["debug"]
+# SAC specific
 
-# common - for algorithm
+global_cfg: # would be passed to actor, critic1, critic2, policy, env
+  actor_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "oracle" # normal or oracle
+    history_num: 7 # ! TODO for case 0 and 1
+    burnin_num: 0
+  critic_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "oracle" # normal or oracle
+    history_num: ${global_cfg.actor_input.history_num}
+    burnin_num: ${global_cfg.actor_input.burnin_num}
+actor:
+  _target_: src.runner.CustomRecurrentActorProb
+  _partial_: true
+  device: ${device}
+  global_cfg: ${global_cfg}
+  net: 
+    _target_: src.runner.RNN_MLP_Net
+    _partial_: true
+    rnn_layer_num: 0
+    rnn_hidden_layer_size: 256
+    mlp_hidden_sizes: [256,256]
+    mlp_softmax: false
+  unbounded: true
+  conditioned_sigma: true
+critic1:
+  _target_: src.runner.CustomRecurrentCritic
+  _partial_: true
+  device: ${device}
+  global_cfg: ${global_cfg}
+  net: 
+    _target_: src.runner.RNN_MLP_Net
+    _partial_: true
+    rnn_layer_num: 0
+    rnn_hidden_layer_size: 256
+    mlp_hidden_sizes: [256,256]
+    mlp_softmax: false
+
+critic2: ${critic1}
+policy:
+  _target_: src.runner.CustomSACPolicy
+  _partial_: true
+  tau: 0.005
+  gamma: 0.99
+  global_cfg: ${global_cfg}
+  estimation_step: 1
+  alpha:
+    _target_: builtins.tuple
+    _args_:
+      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
+        - _target_: torch.zeros
+          size: 
+            _target_: builtins.tuple
+            _args_:
+              - - 1
+          requires_grad: true
+          device: ${device}
+        - _target_: torch.optim.Adam
+          _partial_: true
+          lr: 3e-4
+runner:
+  _target_: src.runner.SACRunner
+  _partial_: true
+critic1_optim:
+  _target_: ${actor_optim._target_}
+  _partial_: true
+  lr: 1e-3
+critic2_optim: ${critic1_optim}
+actor_optim:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 1e-3
+
+
+# common - for all algorithms
 env:
   name: HalfCheetah-v4
   train_num: 1
@@ -40,79 +112,10 @@ trainer:
   step_per_collect: 1
   update_per_step: 1
   episode_per_test: 10
-  batch_size: 32
+  batch_size: 256
   test_in_train: false
 start_timesteps: 10000
-# SAC specific
-runner:
-  _target_: src.runner.SACRunner
-  _partial_: true
-net: null # for rnn
-global_cfg: # would be passed to actor, critic1, critic2, policy, env
-  actor_input:
-    history_merge_method: "none" # cat_mlp or stack_rnn or none
-    obs_type: "oracle" # normal or oracle
-    history_num: 7 # ! TODO for case 0 and 1
-    burnin_num: 0
-  critic_input:
-    history_merge_method: "none" # cat_mlp or stack_rnn or none
-    obs_type: "oracle" # normal or oracle
-    history_num: ${global_cfg.actor_input.history_num}
-    burnin_num: ${global_cfg.actor_input.burnin_num}
-actor:
-  _target_: src.runner.CustomRecurrentActorProb
-  _partial_: true
-  device: ${device}
-  global_cfg: ${global_cfg}
-  net: 
-    _target_: src.runner.RNN_MLP_Net
-    _partial_: true
-    rnn_layer_num: 0
-    rnn_hidden_layer_size: 256
-    mlp_hidden_sizes: [256,256]
-    mlp_softmax: false
-  unbounded: true
-  conditioned_sigma: true
-actor_optim:
-  _target_: torch.optim.Adam
-  _partial_: true
-  lr: 1e-3
-critic1:
-  _target_: src.runner.CustomRecurrentCritic
-  _partial_: true
-  device: ${device}
-  global_cfg: ${global_cfg}
-  net: 
-    _target_: src.runner.RNN_MLP_Net
-    _partial_: true
-    rnn_layer_num: 0
-    rnn_hidden_layer_size: 256
-    mlp_hidden_sizes: [256,256]
-    mlp_softmax: false
-critic1_optim:
-  _target_: ${actor_optim._target_}
-  _partial_: true
-  lr: 1e-3
-critic2: ${critic1}
-critic2_optim: ${critic1_optim}
-policy:
-  _target_: src.runner.CustomSACPolicy
-  _partial_: true
-  tau: 0.005
-  gamma: 0.99
-  global_cfg: ${global_cfg}
-  estimation_step: 1
-  alpha:
-    _target_: builtins.tuple
-    _args_:
-      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
-        - _target_: torch.zeros
-          size: 
-            _target_: builtins.tuple
-            _args_:
-              - - 1
-          requires_grad: true
-          device: ${device}
-        - _target_: torch.optim.Adam
-          _partial_: true
-          lr: 3e-4
+
+# common - for all tasks (task_name, tags, output_dir, device)
+task_name: "RL"
+tags: ["debug"]

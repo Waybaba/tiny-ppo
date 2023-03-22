@@ -74,6 +74,7 @@
 			"args": [
 				"experiment=sac_rnn",
 				"env.name=HalfCheetah-v4",
+				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
 				"env.delay=0",
 				"start_timesteps=1",

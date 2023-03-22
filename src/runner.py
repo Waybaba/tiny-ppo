@@ -287,7 +287,7 @@ class CustomSACPolicy(SACPolicy):
 	) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""A simple wrapper script for updating critic network."""
 		weight = getattr(batch, "weight", 1.0)
-		current_q, critic_state = critic(batch.critic_input_cur)
+		current_q, critic_state = critic(batch.critic_input_cur_offline)
 		target_q = torch.tensor(batch.returns).to(current_q.device)
 		td = current_q.flatten() - target_q.flatten()
 		if self.global_cfg.actor_input.history_merge_method in ["none", "cat_mlp"]:
@@ -318,8 +318,8 @@ class CustomSACPolicy(SACPolicy):
 		# act = obs_result.act
 		
 		### CRITIC_FORWARD
-		current_q1a, state_ = self.critic1(batch.critic_input_cur_pred)
-		current_q2a, state_ = self.critic2(batch.critic_input_cur_pred)
+		current_q1a, state_ = self.critic1(batch.critic_input_cur_online)
+		current_q2a, state_ = self.critic2(batch.critic_input_cur_online)
 		current_q1a = current_q1a.flatten()
 		current_q2a = current_q2a.flatten()
 
@@ -332,7 +332,7 @@ class CustomSACPolicy(SACPolicy):
 			actor_loss = actor_loss.mean()
 		elif self.global_cfg.actor_input.history_merge_method in ["cat_mlp", "none"]:
 			actor_loss = (
-				self._alpha * batch.pred_act_log_prob_cur.flatten() -
+				self._alpha * batch.log_prob_cur.flatten() -
 				torch.min(current_q1a, current_q2a)
 			).mean()
 		else:
@@ -342,7 +342,7 @@ class CustomSACPolicy(SACPolicy):
 		self.actor_optim.step()
 
 		if self._is_auto_alpha:
-			log_prob = batch.pred_act_log_prob_cur.detach() + self._target_entropy
+			log_prob = batch.log_prob_cur.detach() + self._target_entropy
 			# please take a look at issue #258 if you'd like to change this line
 			alpha_loss = -(self._log_alpha * log_prob).mean()
 			self._alpha_optim.zero_grad()
@@ -353,51 +353,61 @@ class CustomSACPolicy(SACPolicy):
 		self.sync_weight()
 
 		result = {
-			"loss/actor": actor_loss.item(),
-			"loss/critic1": critic1_loss.item(),
-			"loss/critic2": critic2_loss.item(),
+			"learn/loss_actor": actor_loss.item(),
+			"learn/loss_critic1": critic1_loss.item(),
+			"learn/loss_critic2": critic2_loss.item(),
 		}
 		if self._is_auto_alpha:
-			result["target_entropy"] = self._target_entropy
-			result["loss/alpha"] = alpha_loss.item()
-			result["_log_alpha"] = self._log_alpha.item()
-			result["alpha"] = self._alpha.item()  # type: ignore
+			result["learn/target_entropy"] = self._target_entropy
+			result["learn/loss_alpha"] = alpha_loss.item()
+			result["learn/_log_alpha"] = self._log_alpha.item()
+			result["learn/alpha"] = self._alpha.item()  # type: ignore
 
 		return result
 	
 	def process_fn(
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
 	) -> Batch:
+		"""
+		ps. ensure that all process is after the process_fn. The reason is that the we 
+		use to_torch to move all the data to the device. So the following operations 
+		should be consistent
+		"""
 		batch.is_preprocessed = True # for distinguishing whether the batch is from env
+		# init
+		prev_batch = buffer[buffer.prev(indices)]
+		batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
+		# move all to self.device
+		batch.to_torch(device=self.actor.device)
 		### oracle or normal obs
-		if self.global_cfg.actor_input.obs_type == "normal":
-			batch.obs_cur_used_actor = batch.obs
-			batch.obs_next_used_actor = batch.obs_next
-		elif self.global_cfg.actor_input.obs_type == "oracle":
-			prev_batch = buffer[buffer.prev(indices)]
-			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
-			batch.obs_cur_used_actor = batch.info["obs_nodelay"]
-			batch.obs_next_used_actor = batch.info["obs_next_nodelay"]
-		else:
-			raise ValueError
-		if self.global_cfg.critic_input.obs_type == "normal":
-			batch.obs_cur_used_critic = batch.obs
-			batch.obs_next_used_critic = batch.obs_next
-		elif self.global_cfg.critic_input.obs_type == "oracle":
-			prev_batch = buffer[buffer.prev(indices)]
-			batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
-			batch.obs_cur_used_critic = batch.info["obs_nodelay"]
-			batch.obs_next_used_critic = batch.info["obs_next_nodelay"]
-		else:
-			raise ValueError
-		batch.pop("obs")
-		batch.pop("obs_next")
-		if "obs_nodelay" in batch["info"]: batch["info"].pop("obs_nodelay")
-		if "obs_next_nodelay" in batch["info"]: batch["info"].pop("obs_next_nodelay")
+		# if self.global_cfg.actor_input.obs_type == "normal":
+		# 	batch.obs_cur_used_actor = batch.obs
+		# 	batch.obs_next_used_actor = batch.obs_next
+		# elif self.global_cfg.actor_input.obs_type == "oracle":
+		# 	prev_batch = buffer[buffer.prev(indices)]
+		# 	batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
+		# 	batch.obs_cur_used_actor = batch.info["obs_nodelay"]
+		# 	batch.obs_next_used_actor = batch.info["obs_next_nodelay"]
+		# else:
+		# 	raise ValueError
+		# if self.global_cfg.critic_input.obs_type == "normal":
+		# 	batch.obs_cur_used_critic = batch.obs
+		# 	batch.obs_next_used_critic = batch.obs_next
+		# elif self.global_cfg.critic_input.obs_type == "oracle":
+		# 	prev_batch = buffer[buffer.prev(indices)]
+		# 	batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
+		# 	batch.obs_cur_used_critic = batch.info["obs_nodelay"]
+		# 	batch.obs_next_used_critic = batch.info["obs_next_nodelay"]
+		# else:
+		# 	raise ValueError
+		# batch.pop("obs")
+		# batch.pop("obs_next")
+		# if "obs_nodelay" in batch["info"]: batch["info"].pop("obs_nodelay")
+		# if "obs_next_nodelay" in batch["info"]: batch["info"].pop("obs_next_nodelay")
 		### actor input
 		if self.global_cfg.actor_input.history_merge_method == "none":
-			batch.actor_input_cur = batch.obs_cur_used_actor
-			batch.actor_input_next = batch.obs_next_used_actor
+			batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
+			batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num) # ! TODO check consistency with buffer
 			if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
@@ -413,16 +423,19 @@ class CustomSACPolicy(SACPolicy):
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
 		# critic input
 		if self.global_cfg.critic_input.history_merge_method == "none":
-			actor_next_result = self.forward(batch, input="actor_input_next")
-			batch.pred_act = actor_next_result.act
-			batch.pred_act_log_prob = actor_next_result.log_prob
-			batch.critic_input_next_pred_act = torch.cat([torch.tensor(batch.obs_cur_used_critic).to(batch.pred_act.device), batch.pred_act], dim=-1)
-			# cur
-			actor_result = self.forward(batch, input="actor_input_cur")
-			batch.pred_act_cur = actor_result.act
-			batch.pred_act_log_prob_cur = actor_result.log_prob
-			batch.critic_input_cur_pred = torch.cat([torch.tensor(batch.obs_cur_used_critic).to(batch.pred_act_cur.device), batch.pred_act_cur], dim=-1) # TODO move t
-			batch.critic_input_cur = np.concatenate([batch.obs_cur_used_critic, batch.act], axis=-1)
+			actor_result_next = self.forward(batch, input="actor_input_next")
+			actor_result_cur = self.forward(batch, input="actor_input_cur")
+			batch.critic_input_cur_offline = torch.cat([
+				self.get_obs_base(batch, "critic", "cur"),
+				batch.act], dim=-1)
+			batch.critic_input_cur_online = torch.cat([
+				self.get_obs_base(batch, "critic", "cur"),
+				actor_result_cur.act], dim=-1)
+			batch.critic_input_next_online = torch.cat([
+				self.get_obs_base(batch, "critic", "next"),
+				actor_result_next.act], dim=-1)
+			batch.log_prob_cur = actor_result_cur.log_prob
+			batch.log_prob_next = actor_result_next.log_prob # TODO remove log_prob
 		elif self.global_cfg.critic_input.history_merge_method == "cat_mlp":
 			raise NotImplementedError
 		elif self.global_cfg.critic_input.history_merge_method == "stack_rnn":
@@ -431,18 +444,17 @@ class CustomSACPolicy(SACPolicy):
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
 		
 
-		# batch.returns = self.compute_return_custom(batch)
-		if "from_target_q" not in batch:
-			batch = self.compute_nstep_return( # ! TODO
-				batch, buffer, indices, self._target_q, self._gamma, self._n_step,
-				self._rew_norm
-			)
+		batch.returns = self.compute_return_custom(batch)
+		# if "from_target_q" not in batch:
+		# 	batch = self.compute_nstep_return( # ! TODO
+		# 		batch, buffer, indices, self._target_q, self._gamma, self._n_step,
+		# 		self._rew_norm
+		# 	)
 		# end flag
 		batch.is_preprocessed = True
 		return batch
 
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
-		# ! check is normal
 		batch = buffer[indices]  # batch.obs: s_{t+n}
 		batch.from_target_q = True
 		batch = self.process_fn(batch, buffer, indices)
@@ -491,11 +503,11 @@ class CustomSACPolicy(SACPolicy):
 		with torch.no_grad():
 			# get next value
 			value_next = torch.min(
-				self.critic1_old(batch.critic_input_next_pred_act)[0],
-				self.critic2_old(batch.critic_input_next_pred_act)[0],
-			) - self._alpha * batch.pred_act_log_prob
+				self.critic1_old(batch.critic_input_next_online)[0],
+				self.critic2_old(batch.critic_input_next_online)[0],
+			) - self._alpha * batch.log_prob_next
 			# compute returns
-			returns = batch.rew + self._gamma * (1 - batch.done) * value_next.flatten().cpu().numpy()
+			returns = batch.rew + self._gamma * (1 - batch.done.int()) * value_next.flatten()
 			return returns
 
 	def forward(  # type: ignore
@@ -534,6 +546,34 @@ class CustomSACPolicy(SACPolicy):
 			log_prob=log_prob
 		)
 
+
+	def get_obs_base(self, batch, a_or_c, stage):
+		""" return the obs base for actor and critic
+		the return is depends on self.global_cfg.actor_input.obs_type and \
+			self.global_cfg.critic_input.obs_type
+		:param batch: batch
+		:param a_or_c: "actor" or "critic"
+		:param stage: "cur" or "next"
+		ps. only called in process stage
+		"""
+		assert stage in ["cur", "next"]
+		assert a_or_c in ["actor", "critic"]
+		assert self.global_cfg.actor_input.obs_type in ["normal", "oracle"]
+		if a_or_c == "actor":
+			if self.global_cfg.actor_input.obs_type == "normal":
+				if stage == "cur": return batch.obs
+				elif stage == "next": return batch.obs_next
+			elif self.global_cfg.actor_input.obs_type == "oracle":
+				if stage == "cur": return batch.info["obs_nodelay"]
+				elif stage == "next": return batch.info["obs_next_nodelay"]
+		elif a_or_c == "critic":
+			if self.global_cfg.critic_input.obs_type == "normal":
+				if stage == "cur": return batch.obs
+				elif stage == "next": return batch.obs_next
+			elif self.global_cfg.critic_input.obs_type == "oracle":
+				if stage == "cur": return batch.info["obs_nodelay"]
+				elif stage == "next": return batch.info["obs_next_nodelay"]
+		
 # net
 
 class RNN_MLP_Net(nn.Module):
@@ -759,6 +799,7 @@ class CustomRecurrentActorProb(nn.Module):
 		super().__init__()
 		self.hps = kwargs
 		assert len(state_shape) == 1 and len(action_shape) == 1
+		self.device = self.hps["device"]
 		self.state_shape, self.action_shape = state_shape, action_shape
 		self.act_num = action_shape[0]
 		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
