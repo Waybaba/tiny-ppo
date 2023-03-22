@@ -381,7 +381,7 @@ class CustomSACPolicy(SACPolicy):
 				to_logs["learn/_log_alpha"] = self._log_alpha.item()
 				to_logs["learn/alpha"] = self._alpha.item()
 			wandb.log(to_logs, step=self.learn_step)
-			wandb.log({"time_related/learn_step": self.train_env_infer_step}, step=int(minutes))
+			# wandb.log({"time_related/learn_step": self.train_env_infer_step}, step=int(minutes))
 		return result
 	
 	def process_fn(
@@ -548,7 +548,7 @@ class CustomSACPolicy(SACPolicy):
 					"train_env_infer/time_minutes": minutes,
 				}
 				wandb.log(to_logs, step=self.train_env_infer_step)
-				wandb.log({"time_related/train_env_infer_step": self.train_env_infer_step}, step=int(minutes))
+				# wandb.log({"time_related/train_env_infer_step": self.train_env_infer_step}, step=int(time() - self.start_time))
 		return Batch(
 			logits=logits,
 			act=squashed_action,
