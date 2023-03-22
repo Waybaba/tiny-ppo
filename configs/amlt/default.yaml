@@ -220,7 +220,7 @@ search:
     - name: experiment
       values: [sac_rnn]
     - name: tag
-      values: ["ReCode_test_4x4Parallel"]
+      values: ["ReCode_test_4x4Parallel_1"]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
