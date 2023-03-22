@@ -186,7 +186,7 @@ search:
     - python src/entry.py
       -m
       hydra/launcher=wsl_pc
-      hydra.launcher.n_jobs=20
+      hydra.launcher.n_jobs=10
       seed=0,1,2,3,4
       experiment={experiment}
       env.name={env_name}
