@@ -3,6 +3,7 @@ root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
 from typing import Callable, Any, Dict, List, Optional, Type, Union, Tuple
 from tianshou.data import Batch, ReplayBuffer, to_numpy, to_torch_as
 import numpy as np
+from time import time
 import torch
 import hydra
 from pprint import pprint
@@ -383,14 +384,18 @@ class CustomSACPolicy(SACPolicy):
 			batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
 			batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num) # ! TODO check consistency with buffer
+			act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num)
 			if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
 			act_prev = act_prev.reshape(act_prev.shape[0], -1) # flatten (batch, history_num * act_dim)
-			batch.actor_input_cur = np.concatenate([batch.obs_cur_used_actor, act_prev], axis=-1)
+			batch.actor_input_cur = np.concatenate([
+				self.get_obs_base(batch, "actor", "cur"),
+				act_prev], axis=-1)
 			act_cur = buffer.get(indices, "act", stack_num=self.global_cfg.actor_input.history_num)
 			if self.global_cfg.actor_input.history_num == 1: act_cur = np.expand_dims(act_cur, axis=-2)
 			act_cur = act_cur.reshape(act_cur.shape[0], -1) # flatten (batch, history_num * act_dim)
-			batch.actor_input_next = np.concatenate([batch.obs_next_used_actor, act_cur], axis=-1)
+			batch.actor_input_next = np.concatenate([
+				self.get_obs_base(batch, "actor", "next"),
+				act_cur], axis=-1)
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			raise NotImplementedError
 		else:
@@ -461,8 +466,9 @@ class CustomSACPolicy(SACPolicy):
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
 			else: # normal step
-				obs = batch.info["obs_next_nodelay"] if self.global_cfg.actor_input.obs_type == "oracle" \
-					else batch.obs_next
+				# obs = batch.info["obs_next_nodelay"] if self.global_cfg.actor_input.obs_type == "oracle" \
+				# 	else batch.obs_next
+				obs = self.get_obs_base(batch, "actor", "next")
 		else:
 			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")
 		batch.online_input = obs
@@ -838,7 +844,8 @@ class DefaultRLRunner:
 		self.cfg = cfg
 		self.env = cfg.env
 		# init
-		utils.seed_everything(cfg.seed) # TODO add env seed
+		if cfg.seed is None: seed = int(time())
+		utils.seed_everything(seed) # TODO add env seed
 		self.train_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.train_num)])
 		self.test_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.test_num)])
 		self.env = utils.make_env(cfg.env) # to get obs_space and act_space
