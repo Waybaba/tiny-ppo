@@ -210,14 +210,15 @@ search:
   params:
     - name: env_delay
       # values: [0,1,2,4,8,16,32]
-      values: [0,1,2,4,8,16,32]
+      # values: [0,1,2,4,8,16,32]
+      values: [0]
     - name: env_name
-      values: [HalfCheetah-v4]
-      # values: [Ant-v4,Hopper-v4,Walker2d-v4,HalfCheetah-v4]
+      # values: [HalfCheetah-v4]
+      values: [Ant-v4,Hopper-v4,Walker2d-v4,HalfCheetah-v4]
     - name: experiment
       values: [sac_rnn]
     - name: tag
-      values: ["Reconstruct_Code"]
+      values: ["Reconstruct_Code_BugFix_TestDiffEnvs"]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
