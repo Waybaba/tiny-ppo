@@ -844,7 +844,7 @@ class DefaultRLRunner:
 		self.cfg = cfg
 		self.env = cfg.env
 		# init
-		if cfg.seed is None: seed = int(time())
+		seed = int(time()) if cfg.seed is None else cfg.seed
 		utils.seed_everything(seed) # TODO add env seed
 		self.train_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.train_num)])
 		self.test_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.test_num)])
