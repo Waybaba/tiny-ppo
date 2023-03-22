@@ -210,14 +210,14 @@ search:
   params:
     - name: env_delay
       # values: [0,1,2,4,8,16,32]
-      values: [0,1,2,4,8,16,32]
+      values: ["0,2,4,8"]
     - name: env_name
       # values: [HalfCheetah-v4]
-      values: [HalfCheetah-v4]
+      values: [HalfCheetah-v4, Ant-v4, Hopper-v4, Walker2d-v4]
     - name: experiment
       values: [sac_rnn]
     - name: tag
-      values: ["ReCode_oracleCritic"]
+      values: ["ReCode_test_4x4Parallel"]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
@@ -233,7 +233,7 @@ search:
     - name: actor_history_merge_method
       values: ["none"]
     - name: actor_obs_type
-      values: ["normal"]
+      values: ["oracle"]
     - name: actor_history_num
       values: [7]
     - name: actor_burnin_num 
