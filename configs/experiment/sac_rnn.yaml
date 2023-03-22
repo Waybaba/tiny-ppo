@@ -21,6 +21,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_type: "oracle" # normal or oracle
     history_num: ${global_cfg.actor_input.history_num}
     burnin_num: ${global_cfg.actor_input.burnin_num}
+  log_interval: 100
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true

@@ -363,7 +363,21 @@ class CustomSACPolicy(SACPolicy):
 			result["learn/loss_alpha"] = alpha_loss.item()
 			result["learn/_log_alpha"] = self._log_alpha.item()
 			result["learn/alpha"] = self._alpha.item()  # type: ignore
-
+		### log - learn
+		if not hasattr(self, "learn_step"): self.learn_step = 0
+		self.learn_step += 1
+		if self.learn_step % self.global_cfg.log_interval == 0:
+			to_logs = {
+				"learn/loss_actor": actor_loss.item(),
+				"learn/loss_critic1": critic1_loss.item(),
+				"learn/loss_critic2": critic2_loss.item(),
+			}
+			if self._is_auto_alpha:
+				to_logs["learn/target_entropy"] = self._target_entropy
+				to_logs["learn/loss_alpha"] = alpha_loss.item()
+				to_logs["learn/_log_alpha"] = self._log_alpha.item()
+				to_logs["learn/alpha"] = self._alpha.item()
+			wandb.log(to_logs, step=self.learn_step)
 		return result
 	
 	def process_fn(
@@ -501,7 +515,6 @@ class CustomSACPolicy(SACPolicy):
 			### process the input from env (online learn).
 			input = "online_input"
 			batch = self.process_online_batch(batch)
-
 		actor_input = batch[input]
 		logits, hidden = self.actor(actor_input, state=state, info=batch.info)
 		assert isinstance(logits, tuple)
@@ -517,6 +530,21 @@ class CustomSACPolicy(SACPolicy):
 		squashed_action = torch.tanh(act)
 		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
 										np.finfo(np.float32).eps.item()).sum(-1, keepdim=True)
+		
+		### log - train_env_infer
+		if not hasattr(self, "train_env_infer_step"): self.train_env_infer_step = 0
+		if not hasattr(self, "start_time"): self.start_time = time()
+		self.train_env_infer_step += 1
+		if input=="online_input" and (self.train_env_infer_step % \
+			self.global_cfg.log_interval) == 0 and self.training:
+			minutes = (time() - self.start_time) / 60
+			to_logs = {
+				"train_env_infer/time_minutes": minutes,
+				"train_env_infer/expected_time_1mStep": minutes / self.train_env_infer_step * 1e6,
+			}
+			to_logs["train_env_infer/learn_step"] = self.train_env_infer_step if \
+				hasattr(self, "train_env_infer_step") else 0
+			wandb.log(to_logs, step=self.train_env_infer_step)
 		return Batch(
 			logits=logits,
 			act=squashed_action,
