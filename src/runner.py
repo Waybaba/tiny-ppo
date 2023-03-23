@@ -403,17 +403,19 @@ class CustomSACPolicy(SACPolicy):
 			batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num)
+			act_prev = torch.from_numpy(act_prev).to(self.actor.device)
 			if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
 			act_prev = act_prev.reshape(act_prev.shape[0], -1) # flatten (batch, history_num * act_dim)
-			batch.actor_input_cur = np.concatenate([
+			batch.actor_input_cur = torch.cat([
 				self.get_obs_base(batch, "actor", "cur"),
-				act_prev], axis=-1)
+				act_prev], dim=-1)
 			act_cur = buffer.get(indices, "act", stack_num=self.global_cfg.actor_input.history_num)
+			act_cur = torch.from_numpy(act_cur).to(self.actor.device)
 			if self.global_cfg.actor_input.history_num == 1: act_cur = np.expand_dims(act_cur, axis=-2)
 			act_cur = act_cur.reshape(act_cur.shape[0], -1) # flatten (batch, history_num * act_dim)
-			batch.actor_input_next = np.concatenate([
+			batch.actor_input_next = torch.cat([
 				self.get_obs_base(batch, "actor", "next"),
-				act_cur], axis=-1)
+				act_cur], dim=-1)
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			raise NotImplementedError
 		else:
@@ -472,10 +474,7 @@ class CustomSACPolicy(SACPolicy):
 				# every element of obs and obs_next should be the same
 				assert (batch["obs"] == batch["obs_next"]).all() # TODO DEBUG ONLY remove later
 				obs = np.concatenate([
-					# ! TODO add another obs preprocessed in env. then use it
-					# todo should we use next here?
-					batch.info["obs_next_nodelay"] if self.global_cfg.actor_input.obs_type == "oracle" \
-						else batch.obs_next,
+					self.get_obs_base(batch, "actor", "next"),
 					batch.info["historical_act"]
 				], axis=-1)
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
@@ -561,7 +560,6 @@ class CustomSACPolicy(SACPolicy):
 		wandb.define_metric("train_env_infer/expectedT_1mStep_min", summary="last")
 		wandb.define_metric("train_env_infer/expectedT_1mStep_hr", summary="last")
 		wandb.define_metric("key/reward", summary="last")
-
 
 	def get_obs_base(self, batch, a_or_c, stage):
 		""" return the obs base for actor and critic
