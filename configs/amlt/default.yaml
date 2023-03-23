@@ -219,7 +219,7 @@ search:
     - name: experiment
       values: [sac_rnn]
     - name: tag
-      values: ["ReCode_oracleCritic_1"]
+      values: ["ReCode_dummy"]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
@@ -243,7 +243,7 @@ search:
     - name: critic_history_merge_method
       values: ["none"]
     - name: critic_obs_type
-      values: ["oracle"]
+      values: ["normal"]
     - name: trainer_batch_size
       values: [256]
 
