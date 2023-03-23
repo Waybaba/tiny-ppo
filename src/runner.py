@@ -405,16 +405,36 @@ class CustomSACPolicy(SACPolicy):
 			assert self.global_cfg.actor_input.history_num >= 0
 			# ! TODO when met start, it should be the same with the first step instead of zero in the env
 			if self.global_cfg.actor_input.history_num > 0:
+				# set start as zero
+				indices_buf = []
+				last_indices = indices
+				for _ in range(self.global_cfg.actor_input.history_num):
+					last_indices = buffer.prev(last_indices)
+					indices_buf.insert(0, last_indices)
+				indices_buf = np.stack(indices_buf, axis=-1)
+				act_prev_2 = buffer[indices_buf].act # ! assert == 
+				start_indices = indices_buf == buffer.prev(indices_buf)
 				act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num)
-				act_prev = torch.from_numpy(act_prev).to(self.actor.device)
 				if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
+				act_prev[start_indices] = 0
+				act_prev = torch.from_numpy(act_prev).to(self.actor.device)
 				act_prev = act_prev.reshape(act_prev.shape[0], -1) # flatten (batch, history_num * act_dim)
+				# DEBUG
+				# assert act_prev[0] == batch.info["historical_act"][0]
 				batch.actor_input_cur = torch.cat([
 					self.get_obs_base(batch, "actor", "cur"),
 					act_prev], dim=-1)
+				indices_buf = []
+				last_indices = indices
+				for _ in range(self.global_cfg.actor_input.history_num):
+					indices_buf.insert(0, last_indices)
+					last_indices = buffer.prev(last_indices)
+				indices_buf = np.stack(indices_buf, axis=-1)
+				start_indices = indices_buf == buffer.prev(indices_buf)
 				act_cur = buffer.get(indices, "act", stack_num=self.global_cfg.actor_input.history_num)
-				act_cur = torch.from_numpy(act_cur).to(self.actor.device)
 				if self.global_cfg.actor_input.history_num == 1: act_cur = np.expand_dims(act_cur, axis=-2)
+				act_cur[start_indices] = 0
+				act_cur = torch.from_numpy(act_cur).to(self.actor.device)
 				act_cur = act_cur.reshape(act_cur.shape[0], -1) # flatten (batch, history_num * act_dim)
 				batch.actor_input_next = torch.cat([
 					self.get_obs_base(batch, "actor", "next"),
