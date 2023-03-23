@@ -403,6 +403,7 @@ class CustomSACPolicy(SACPolicy):
 			batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			assert self.global_cfg.actor_input.history_num >= 0
+			# ! TODO when met start, it should be the same with the first step instead of zero in the env
 			if self.global_cfg.actor_input.history_num > 0:
 				act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num)
 				act_prev = torch.from_numpy(act_prev).to(self.actor.device)
@@ -476,11 +477,19 @@ class CustomSACPolicy(SACPolicy):
 			if len(batch.act.shape) == 0: # first step (zero cat) # TODO check stack rnn and cat mlp
 				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
 			else: # normal step
-				assert len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1
-				obs = np.concatenate([
-					self.get_obs_base(batch, "actor", "next"),
-				] + (batch.info["historical_act"] if batch.info["historical_act"][0] else [])
-				, axis=-1)
+				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1):
+					# ps. historical_act == None when no error
+					assert batch.info["historical_act"][0] is None
+					obs = np.concatenate([
+						self.get_obs_base(batch, "actor", "cur"),
+						batch.act,
+					], axis=-1)
+				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
+					obs = np.concatenate([
+						self.get_obs_base(batch, "actor", "next"),
+						batch.info["historical_act"]
+					], axis=-1)
+				else: raise ValueError("historical_act shape not implemented")
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			
 			raise NotImplementedError(f"stack_rnn not implemented")
