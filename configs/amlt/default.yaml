@@ -186,7 +186,7 @@ search:
     - python src/entry.py
       -m
       hydra/launcher=wsl_parallel
-      n_jobs={n_jobs}
+      n_jobs=5
       seed=0,1,2,3,4
       experiment={experiment}
       env.name={env_name}
@@ -210,19 +210,17 @@ search:
   max_trials: 10000
   params:
     - name: env_delay
-      values: [0]
-      # values: [0,1,2,4,8,16,32]
+      # values: [0]
+      values: [0,1,2,4,8,16,32]
       # values: ["0,2","4,8","16,32"]
-      values: ["0,2,4,8,16,32"]
-    - name: n_jobs
-      values: [1,2,5,10,15,20]
+      # values: ["0,2,4,8,16,32"]
     - name: env_name
-      values: [HalfCheetah-v4]
-      # values: [HalfCheetah-v4, Ant-v4, Hopper-v4, Walker2d-v4]
+      # values: [HalfCheetah-v4]
+      values: [HalfCheetah-v4, Ant-v4, Hopper-v4, Walker2d-v4]
     - name: experiment
       values: [sac_rnn]
     - name: tag
-      values: ["ReCode_Test_ParallelJobsOne2Twenty"]
+      values: ["ReCode_oracleCritic_1"]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
@@ -238,7 +236,7 @@ search:
     - name: actor_history_merge_method
       values: ["none"]
     - name: actor_obs_type
-      values: ["oracle"]
+      values: ["normal"]
     - name: actor_history_num
       values: [7]
     - name: actor_burnin_num 
