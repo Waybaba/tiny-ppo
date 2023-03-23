@@ -499,10 +499,9 @@ class CustomSACPolicy(SACPolicy):
 			else: # normal step
 				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1):
 					# ps. historical_act == None when no error
-					assert batch.info["historical_act"][0] is None
+					assert batch.info["historical_act"][0] == False
 					obs = np.concatenate([
-						self.get_obs_base(batch, "actor", "cur"),
-						batch.act,
+						self.get_obs_base(batch, "actor", "next"),
 					], axis=-1)
 				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
 					obs = np.concatenate([
