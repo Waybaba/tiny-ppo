@@ -204,7 +204,6 @@ search:
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
       global_cfg.critic_input.obs_type={critic_obs_type}
       env.delay={env_delay}
-      trainer.max_epoch={trainer_max_epoch}
       tags=[{tag}]
   type: grid
   max_trials: 10000
@@ -247,7 +246,5 @@ search:
       values: ["oracle"]
     - name: trainer_batch_size
       values: [256]
-    - name: trainer_max_epoch
-      values: [1]
 
     
