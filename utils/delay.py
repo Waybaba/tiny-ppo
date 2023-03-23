@@ -17,8 +17,6 @@ class DelayedRoboticEnv(gym.Wrapper):
         # history merge
         if self.global_cfg.actor_input.history_merge_method != "none" or \
             self.global_cfg.critic_input.history_merge_method != "none":
-            assert self.global_cfg.actor_input.history_num and \
-                self.global_cfg.actor_input.history_num > 0
             self.history_num = self.global_cfg.actor_input.history_num # short flag
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
         else:
@@ -55,6 +53,8 @@ class DelayedRoboticEnv(gym.Wrapper):
             info["historical_act"] = np.concatenate(self.act_buf, axis=0)
             self.act_buf.append(action)
             self.act_buf.pop(0)
+        elif self.history_num == 0:
+            info["historical_act"] = False
         return (deepcopy(obs_next_delayed), deepcopy(reward), deepcopy(done or truncated), deepcopy(info))
 
     def step(self, action):

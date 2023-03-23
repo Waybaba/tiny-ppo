@@ -402,20 +402,25 @@ class CustomSACPolicy(SACPolicy):
 			batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
 			batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num)
-			act_prev = torch.from_numpy(act_prev).to(self.actor.device)
-			if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
-			act_prev = act_prev.reshape(act_prev.shape[0], -1) # flatten (batch, history_num * act_dim)
-			batch.actor_input_cur = torch.cat([
-				self.get_obs_base(batch, "actor", "cur"),
-				act_prev], dim=-1)
-			act_cur = buffer.get(indices, "act", stack_num=self.global_cfg.actor_input.history_num)
-			act_cur = torch.from_numpy(act_cur).to(self.actor.device)
-			if self.global_cfg.actor_input.history_num == 1: act_cur = np.expand_dims(act_cur, axis=-2)
-			act_cur = act_cur.reshape(act_cur.shape[0], -1) # flatten (batch, history_num * act_dim)
-			batch.actor_input_next = torch.cat([
-				self.get_obs_base(batch, "actor", "next"),
-				act_cur], dim=-1)
+			assert self.global_cfg.actor_input.history_num >= 0
+			if self.global_cfg.actor_input.history_num > 0:
+				act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num)
+				act_prev = torch.from_numpy(act_prev).to(self.actor.device)
+				if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
+				act_prev = act_prev.reshape(act_prev.shape[0], -1) # flatten (batch, history_num * act_dim)
+				batch.actor_input_cur = torch.cat([
+					self.get_obs_base(batch, "actor", "cur"),
+					act_prev], dim=-1)
+				act_cur = buffer.get(indices, "act", stack_num=self.global_cfg.actor_input.history_num)
+				act_cur = torch.from_numpy(act_cur).to(self.actor.device)
+				if self.global_cfg.actor_input.history_num == 1: act_cur = np.expand_dims(act_cur, axis=-2)
+				act_cur = act_cur.reshape(act_cur.shape[0], -1) # flatten (batch, history_num * act_dim)
+				batch.actor_input_next = torch.cat([
+					self.get_obs_base(batch, "actor", "next"),
+					act_cur], dim=-1)
+			else:
+				batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
+				batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			raise NotImplementedError
 		else:
@@ -471,13 +476,13 @@ class CustomSACPolicy(SACPolicy):
 			if len(batch.act.shape) == 0: # first step (zero cat) # TODO check stack rnn and cat mlp
 				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
 			else: # normal step
-				# every element of obs and obs_next should be the same
-				assert (batch["obs"] == batch["obs_next"]).all() # TODO DEBUG ONLY remove later
+				assert len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1
 				obs = np.concatenate([
 					self.get_obs_base(batch, "actor", "next"),
-					batch.info["historical_act"]
-				], axis=-1)
+				] + (batch.info["historical_act"] if batch.info["historical_act"][0] else [])
+				, axis=-1)
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+			
 			raise NotImplementedError(f"stack_rnn not implemented")
 		elif self.global_cfg.actor_input.history_merge_method == "none":
 			if len(batch.act.shape) == 0: # first step (zero cat)

@@ -50,14 +50,14 @@
 		},
 		// entry.py sac
 		{
-			"name": "sac",
+			"name": "sac_cat",
 			"type": "python",
 			"request": "launch",
 			"program": "${workspaceFolder}/src/entry.py",
 			"console": "integratedTerminal",
 			"justMyCode": true,
 			"args": [
-				"experiment=sac",
+				"experiment=sac_cat",
 				"env.name=HalfCheetah-v4",
 				"env.delay=0",
 				"start_timesteps=1",

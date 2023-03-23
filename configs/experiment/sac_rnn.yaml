@@ -4,119 +4,16 @@
 # python train.py experiment=example
 
 defaults:
-  - /net@net_c1: default.yaml
-  - /actor: null
+  - sac_cat.yaml
   - _self_
 
-# SAC specific
-
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
-  actor_input:
-    history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
-    obs_type: "normal" # normal or oracle
-    history_num: 7 # ! TODO for case 0 and 1
-    burnin_num: 0
-  critic_input:
-    history_merge_method: "none" # cat_mlp or stack_rnn or none
-    obs_type: "oracle" # normal or oracle
-    history_num: ${global_cfg.actor_input.history_num}
-    burnin_num: ${global_cfg.actor_input.burnin_num}
-  log_interval: 100
+  historical_act: 
+    # type: "cat_mlp" # "stack_rnn" or "cat_mlp".  ps. stack_rnn = stack([{obs_i, a_i}] * num). cat_mlp = cat(obs_i, a_i * num)
+    type: "stack_rnn"
+    num: 1 # [obs_i, {a_i} * num] 0 means no historical act ps. note that stack would start from 1
 actor:
-  _target_: src.runner.CustomRecurrentActorProb
-  _partial_: true
-  device: ${device}
-  global_cfg: ${global_cfg}
   net: 
-    _target_: src.runner.RNN_MLP_Net
-    _partial_: true
-    rnn_layer_num: 0
     rnn_hidden_layer_size: 256
-    mlp_hidden_sizes: [256,256]
-    mlp_softmax: false
-  unbounded: true
-  conditioned_sigma: true
-critic1:
-  _target_: src.runner.CustomRecurrentCritic
-  _partial_: true
-  device: ${device}
-  global_cfg: ${global_cfg}
-  net: 
-    _target_: src.runner.RNN_MLP_Net
-    _partial_: true
-    rnn_layer_num: 0
-    rnn_hidden_layer_size: 256
-    mlp_hidden_sizes: [256,256]
-    mlp_softmax: false
+    mlp_hidden_sizes: [256]
 
-critic2: ${critic1}
-policy:
-  _target_: src.runner.CustomSACPolicy
-  _partial_: true
-  tau: 0.005
-  gamma: 0.99
-  global_cfg: ${global_cfg}
-  estimation_step: 1
-  alpha:
-    _target_: builtins.tuple
-    _args_:
-      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
-        - _target_: torch.zeros
-          size: 
-            _target_: builtins.tuple
-            _args_:
-              - - 1
-          requires_grad: true
-          device: ${device}
-        - _target_: torch.optim.Adam
-          _partial_: true
-          lr: 3e-4
-runner:
-  _target_: src.runner.SACRunner
-  _partial_: true
-critic1_optim:
-  _target_: ${actor_optim._target_}
-  _partial_: true
-  lr: 1e-3
-critic2_optim: ${critic1_optim}
-actor_optim:
-  _target_: torch.optim.Adam
-  _partial_: true
-  lr: 1e-3
-
-
-# common - for all algorithms
-env:
-  name: HalfCheetah-v4
-  train_num: 1
-  test_num: 1
-  delay: 0
-  global_cfg: ${global_cfg}
-collector:
-  train_collector:
-    _target_: tianshou.data.Collector
-    _partial_: true
-    buffer: 
-      _target_: tianshou.data.ReplayBuffer
-      size: 1000000
-      # stack_num: 8
-      # buffer_num: 2
-    exploration_noise: true
-  test_collector:
-    _target_: tianshou.data.Collector
-    _partial_: true
-trainer:
-  _target_: tianshou.trainer.OffpolicyTrainer
-  _partial_: true
-  max_epoch: 200
-  step_per_epoch: 5000
-  step_per_collect: 1
-  update_per_step: 1
-  episode_per_test: 10
-  batch_size: 256
-  test_in_train: false
-start_timesteps: 10000
-
-# common - for all tasks (task_name, tags, output_dir, device)
-task_name: "RL"
-tags: ["debug"]
