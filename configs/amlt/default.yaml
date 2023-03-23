@@ -185,8 +185,8 @@ search:
     command:
     - python src/entry.py
       -m
-      hydra/launcher=wsl_pc
-      hydra.launcher.n_jobs={n_jobs}
+      hydra/launcher=wsl_parallel
+      n_jobs={n_jobs}
       seed=0,1,2,3,4
       experiment={experiment}
       env.name={env_name}

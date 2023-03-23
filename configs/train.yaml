@@ -44,8 +44,8 @@ ckpt_path: null
 # seed for random number generators in pytorch, numpy and python.random
 seed: null
 
-
 output_dir: "${paths.output_dir}"
 
 device: "cuda"
 
+n_jobs: 1

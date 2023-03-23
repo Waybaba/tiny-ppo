@@ -89,8 +89,9 @@
 			"console": "integratedTerminal",
 			"justMyCode": true,
 			"args": [
-				"-m", "hydra/launcher=wsl_pc",
-				"hydra.launcher.n_jobs=2",
+				"-m", "hydra/launcher=wsl_parallel",
+				// "hydra.launcher.n_jobs=2",
+				"n_jobs=3",
 				"experiment=sac_rnn",
 				"hydra.launcher.verbose=true",
 				"env.name=HalfCheetah-v4",

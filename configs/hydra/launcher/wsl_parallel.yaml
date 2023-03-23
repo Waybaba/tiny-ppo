@@ -1,4 +1,4 @@
 defaults: 
   - wsl_pc.yaml
 
-n_jobs: 2
+n_jobs: ${n_jobs}
