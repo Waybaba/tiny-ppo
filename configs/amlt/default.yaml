@@ -219,7 +219,7 @@ search:
     - name: experiment
       values: [sac_cat]
     - name: tag
-      values: ["ReCode_oracleCritic_ActorCat_HalfCh_History0To8"] 
+      values: ["ReCode_oracleCritic_ActorCat_HalfCh_History0To8_1"] 
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
@@ -237,8 +237,8 @@ search:
     - name: actor_obs_type
       values: ["normal"]
     - name: actor_history_num
-      # values: [0,1,2,4,8]
-      values: [0]
+      values: [0,1,2,4,8]
+      # values: [0]
     - name: actor_burnin_num 
       values: [0]
     - name: critic_history_merge_method
