@@ -233,12 +233,11 @@ search:
     - name: critic_rnn_hidden_layer_size
       values: [256]
     - name: actor_history_merge_method
-      values: ["none"]
-    - name: actor_obs_type
       values: ["cat_mlp"]
+    - name: actor_obs_type
+      values: ["normal"]
     - name: actor_history_num
-      # values: [0,1,2,4,8]
-      values: [0]
+      values: [0,1,2,4,8]
     - name: actor_burnin_num 
       values: [0]
     - name: critic_history_merge_method
