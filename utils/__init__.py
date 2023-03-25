@@ -233,3 +233,46 @@ gym.envs.registration.register(
     id='DummyNum-v0',
     entry_point='utils.__init__:DummyNumEnv',
 )
+
+
+def idx_stack(indices, buffer, step, direction="prev"):
+    """
+    input: 
+        indices: [idx_0, idx_1, ..., idx_n] # shape: (batch_size,)
+        buffer: ReplayBuffer
+        step: int
+        direction: str
+    output:
+        indices_res: shape: (batch_size, step)
+        if direction == "prev":
+            [
+                [idx_0-T+1, idx_0-T+2, ..., idx_0],
+                ...
+            ]
+        if direction == "next":
+            [
+                [idx_0, idx_0+1, ..., idx_0+T-1],
+                ...
+            ]
+        ps. would keep the same if meet the next episode
+    """
+    assert direction in ["prev", "next"], "direction must be prev or next"
+    indices_buf = []
+    last_indices = indices
+    for _ in range(step):
+        indices_buf.insert(0, last_indices) if direction == "prev" else indices_buf.append(last_indices)
+        last_indices = buffer.prev(last_indices) if direction == "prev" else buffer.next(last_indices)
+    indices_res = np.stack(indices_buf, axis=-1)
+    return indices_res
+
+def idx_prev_stack(indices, buffer, num):
+    return idx_stack(indices, buffer, num, direction="prev")
+
+def idx_next_stack(indices, buffer, num):
+    return idx_stack(indices, buffer, num, direction="next")
+
+def idx_is_start(indices, buffer):
+    return buffer.prev(indices) == indices
+
+def idx_is_end(indices, buffer):
+    return buffer.next(indices) == indices

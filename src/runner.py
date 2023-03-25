@@ -293,7 +293,9 @@ class CustomSACPolicy(SACPolicy):
 		target_q = torch.tensor(batch.returns).to(current_q.device)
 		td = current_q.flatten() - target_q.flatten()
 		if self.global_cfg.actor_input.history_merge_method in ["none", "cat_mlp"]:
-			critic_loss = (td.pow(2) * weight).mean()
+			critic_loss = (
+				(td.pow(2) * weight) * (1 - batch.is_early_end)
+			).mean()
 		else:
 			raise NotImplementedError
 			critic_loss = (td.pow(2) * weight)
@@ -325,6 +327,7 @@ class CustomSACPolicy(SACPolicy):
 		current_q1a = current_q1a.flatten()
 		current_q2a = current_q2a.flatten()
 
+		### actor loss
 		if self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			raise NotImplementedError("check the code below to use the method in critic")
 			actor_loss = self._alpha * obs_result.log_prob.flatten() - \
@@ -333,20 +336,24 @@ class CustomSACPolicy(SACPolicy):
 			actor_loss = actor_loss[:, self.global_cfg.historical_act.burnin_num:]
 			actor_loss = actor_loss.mean()
 		elif self.global_cfg.actor_input.history_merge_method in ["cat_mlp", "none"]:
-			actor_loss = (
-				self._alpha * batch.log_prob_cur.flatten() -
-				torch.min(current_q1a, current_q2a)
+			actor_loss = ((
+				self._alpha * batch.log_prob_cur.flatten() 
+				- torch.min(current_q1a, current_q2a)
+			) * (1 - batch.is_early_end)
 			).mean()
 		else:
 			raise NotImplementedError
 		self.actor_optim.zero_grad()
 		actor_loss.backward()
 		self.actor_optim.step()
-
+		
+		### alpha loss
 		if self._is_auto_alpha:
 			log_prob = batch.log_prob_cur.detach() + self._target_entropy
 			# please take a look at issue #258 if you'd like to change this line
-			alpha_loss = -(self._log_alpha * log_prob).mean()
+			alpha_loss = (
+				-(self._log_alpha * log_prob) * (1 - batch.is_early_end)
+				).mean()
 			self._alpha_optim.zero_grad()
 			alpha_loss.backward()
 			self._alpha_optim.step()
@@ -394,8 +401,7 @@ class CustomSACPolicy(SACPolicy):
 		"""
 		batch.is_preprocessed = True # for distinguishing whether the batch is from env
 		# init
-		prev_batch = buffer[buffer.prev(indices)]
-		batch.info["obs_nodelay"] = prev_batch.info["obs_next_nodelay"] # for first step, the obs is not delayed
+		batch.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
 		batch.to_torch(device=self.actor.device) # move all to self.device
 		### actor input
 		if self.global_cfg.actor_input.history_merge_method == "none":
@@ -405,41 +411,31 @@ class CustomSACPolicy(SACPolicy):
 			assert self.global_cfg.actor_input.history_num >= 0
 			# ! TODO when met start, it should be the same with the first step instead of zero in the env
 			if self.global_cfg.actor_input.history_num > 0:
-				# set start as zero
-				indices_buf = []
-				last_indices = indices
-				for _ in range(self.global_cfg.actor_input.history_num):
-					last_indices = buffer.prev(last_indices)
-					indices_buf.insert(0, last_indices)
-				indices_buf = np.stack(indices_buf, axis=-1)
-				act_prev_2 = buffer[indices_buf].act
-				
-				start_indices = indices_buf == buffer.prev(indices_buf)
-				act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num)
-				if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
-				act_prev[start_indices] = 0
-				act_prev = torch.from_numpy(act_prev).to(self.actor.device)
-				act_prev = act_prev.reshape(act_prev.shape[0], -1) # flatten (batch, history_num * act_dim)
+				# [t-T+1, ..., t-1, t] the last one is id_end
+				# TODO note that when the start target q
+				idx_next_stack = utils.idx_next_stack(indices, buffer, self.global_cfg.actor_input.history_num) # (B, T)
+				idx_end = idx_next_stack[:,-1] # (B, )
+				batch_end = buffer[idx_end] # (B, *)
+				stacked_batch_prev = buffer[idx_next_stack] # (B, T, *)
+				stacked_batch_cur = buffer[buffer.next(idx_next_stack)] # (B, T, *)
+				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
+				# batch_end.to_torch(device=self.actor.device)
+				# stacked_batch_prev.to_torch(device=self.actor.device)
+				# stacked_batch_cur.to_torch(device=self.actor.device)
+				batch.actor_input_cur = torch.cat([
+					torch.tensor(self.get_obs_base(batch_end, "actor", "cur"),device=self.actor.device), # (B, T, *)
+					torch.tensor(stacked_batch_prev["act"].reshape(len(batch_end),-1),device=self.actor.device), # (B, T, *)
+				], dim=-1)
+				batch.actor_input_next = torch.cat([
+					torch.tensor(self.get_obs_base(batch_end, "actor", "next"),device=self.actor.device), # (B, T, *)
+					torch.tensor(stacked_batch_cur["act"].reshape(len(batch_end),-1),device=self.actor.device), # (B, T, *)
+				], dim=-1) # (B, T, *)
+				batch.is_early_end = torch.tensor(idx_next_stack[:, -1] == idx_next_stack[:, -2], device=self.actor.device).int() # (B, )
+				# TODO no first step problem
 				# DEBUG
 				# assert act_prev[0] == batch.info["historical_act"][0]
-				batch.actor_input_cur = torch.cat([
-					self.get_obs_base(batch, "actor", "cur"),
-					act_prev], dim=-1)
-				indices_buf = []
-				last_indices = indices
-				for _ in range(self.global_cfg.actor_input.history_num):
-					indices_buf.insert(0, last_indices)
-					last_indices = buffer.prev(last_indices)
-				indices_buf = np.stack(indices_buf, axis=-1)
-				start_indices = indices_buf == buffer.prev(indices_buf)
-				act_cur = buffer.get(indices, "act", stack_num=self.global_cfg.actor_input.history_num)
-				if self.global_cfg.actor_input.history_num == 1: act_cur = np.expand_dims(act_cur, axis=-2)
-				act_cur[start_indices] = 0
-				act_cur = torch.from_numpy(act_cur).to(self.actor.device)
-				act_cur = act_cur.reshape(act_cur.shape[0], -1) # flatten (batch, history_num * act_dim)
-				batch.actor_input_next = torch.cat([
-					self.get_obs_base(batch, "actor", "next"),
-					act_cur], dim=-1)
+				# ! not good
+				indices = idx_end
 			else:
 				batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
 				batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
@@ -517,7 +513,8 @@ class CustomSACPolicy(SACPolicy):
 				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1):
 					assert batch.info["historical_act"][0] == False
 					obs = np.concatenate([
-						self.get_obs_base(batch, "actor", "next"),
+						self.get_obs_base(batch, "actor", "next"), # (B, obs_dim)
+						np.zeros([obs.shape[0], self.actor_net.act_num]) # (B, act_num)
 					], axis=-1)
 				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
 					obs = np.stack([
