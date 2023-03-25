@@ -412,7 +412,8 @@ class CustomSACPolicy(SACPolicy):
 					last_indices = buffer.prev(last_indices)
 					indices_buf.insert(0, last_indices)
 				indices_buf = np.stack(indices_buf, axis=-1)
-				act_prev_2 = buffer[indices_buf].act # ! assert == 
+				act_prev_2 = buffer[indices_buf].act
+				
 				start_indices = indices_buf == buffer.prev(indices_buf)
 				act_prev = buffer.get(buffer.prev(indices), "act", stack_num=self.global_cfg.actor_input.history_num)
 				if self.global_cfg.actor_input.history_num == 1: act_prev = np.expand_dims(act_prev, axis=-2)
@@ -494,7 +495,7 @@ class CustomSACPolicy(SACPolicy):
 		obs = batch.obs
 		# if first step when act is none
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			if len(batch.act.shape) == 0: # first step (zero cat) # TODO check stack rnn and cat mlp
+			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
 			else: # normal step
 				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1):
@@ -510,7 +511,21 @@ class CustomSACPolicy(SACPolicy):
 					], axis=-1)
 				else: raise ValueError("historical_act shape not implemented")
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			raise NotImplementedError(f"stack_rnn not implemented")
+			if len(batch.act.shape) == 0: # first step (zero cat)
+				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
+			else: # normal step
+				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1):
+					assert batch.info["historical_act"][0] == False
+					obs = np.concatenate([
+						self.get_obs_base(batch, "actor", "next"),
+					], axis=-1)
+				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
+					obs = np.stack([
+						self.get_obs_base(batch, "actor", "next"),
+						batch.info["historical_act"]
+					])
+				else: raise ValueError("historical_act shape not implemented")
+
 		elif self.global_cfg.actor_input.history_merge_method == "none":
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
@@ -919,6 +934,7 @@ class DefaultRLRunner:
 class SACRunner(DefaultRLRunner):
 	def start(self, cfg):
 		print("SACRunner init start ...")
+		# TODO add cfg check here e.g. global_cfg == rnn, rnn_layer > 0
 		super().start(cfg)
 		env = self.env
 		train_envs = self.train_envs

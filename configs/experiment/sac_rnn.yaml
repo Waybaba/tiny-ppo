@@ -8,10 +8,15 @@ defaults:
   - _self_
 
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
-  historical_act: 
-    # type: "cat_mlp" # "stack_rnn" or "cat_mlp".  ps. stack_rnn = stack([{obs_i, a_i}] * num). cat_mlp = cat(obs_i, a_i * num)
-    type: "stack_rnn"
-    num: 1 # [obs_i, {a_i} * num] 0 means no historical act ps. note that stack would start from 1
+  actor_input:
+    history_merge_method: "stack_rnn" # cat_mlp or stack_rnn or none
+    obs_type: "oracle" # normal or oracle
+    history_num: 0 # ! TODO for case 0 and 1
+    burnin_num: 0 # only works for stack_rnn
+  critic_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "oracle" # normal or oracle
+  log_interval: 100
 actor:
   net: 
     rnn_hidden_layer_size: 256
