@@ -510,14 +510,11 @@ class CustomSACPolicy(SACPolicy):
 					], axis=-1)
 				else: raise ValueError("historical_act shape not implemented")
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			
 			raise NotImplementedError(f"stack_rnn not implemented")
 		elif self.global_cfg.actor_input.history_merge_method == "none":
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
 			else: # normal step
-				# obs = batch.info["obs_next_nodelay"] if self.global_cfg.actor_input.obs_type == "oracle" \
-				# 	else batch.obs_next
 				obs = self.get_obs_base(batch, "actor", "next")
 		else:
 			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")

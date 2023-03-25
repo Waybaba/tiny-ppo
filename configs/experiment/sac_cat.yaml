@@ -13,8 +13,8 @@ defaults:
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
     history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
-    obs_type: "normal" # normal or oracle
-    history_num: 1 # ! TODO for case 0 and 1
+    obs_type: "oracle" # normal or oracle
+    history_num: 0 # ! TODO for case 0 and 1
     burnin_num: 0 # only works for stack_rnn
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
