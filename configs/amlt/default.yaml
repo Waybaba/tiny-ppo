@@ -219,7 +219,7 @@ search:
     - name: experiment
       values: [sac_cat]
     - name: tag
-      values: ["ReCode_oracleCritic_ActorCat_HalfCh_History0To8_4"] 
+      values: ["ReCode_oracleCritic_ActorCat_HalfCh_History0To8_5"] 
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
