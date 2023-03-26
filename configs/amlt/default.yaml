@@ -203,7 +203,7 @@ search:
       global_cfg.actor_input.burnin_num={actor_burnin_num}
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
       global_cfg.critic_input.obs_type={critic_obs_type}
-      collector.buffer.size={buffer_size}
+      collector.train_collector.buffer.size={buffer_size}
       env.delay={env_delay}
       tags=[{tag}]
   type: grid
