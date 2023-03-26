@@ -294,7 +294,7 @@ class CustomSACPolicy(SACPolicy):
 		td = current_q.flatten() - target_q.flatten()
 		if self.global_cfg.actor_input.history_merge_method in ["none", "cat_mlp"]:
 			critic_loss = (
-				(td.pow(2) * weight) * (1 - batch.is_early_end)
+				(td.pow(2) * weight) * batch.valid_mask
 			).mean()
 		else:
 			raise NotImplementedError
@@ -339,7 +339,7 @@ class CustomSACPolicy(SACPolicy):
 			actor_loss = ((
 				self._alpha * batch.log_prob_cur.flatten() 
 				- torch.min(current_q1a, current_q2a)
-			) * (1 - batch.is_early_end)
+			) * batch.valid_mask
 			).mean()
 		else:
 			raise NotImplementedError
@@ -352,7 +352,7 @@ class CustomSACPolicy(SACPolicy):
 			log_prob = batch.log_prob_cur.detach() + self._target_entropy
 			# please take a look at issue #258 if you'd like to change this line
 			alpha_loss = (
-				-(self._log_alpha * log_prob) * (1 - batch.is_early_end)
+				-(self._log_alpha * log_prob) * batch.valid_mask
 				).mean()
 			self._alpha_optim.zero_grad()
 			alpha_loss.backward()
@@ -402,6 +402,7 @@ class CustomSACPolicy(SACPolicy):
 		batch.is_preprocessed = True # for distinguishing whether the batch is from env
 		# init
 		batch.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
+		batch.valid_mask = buffer.next(indices) != indices
 		batch.to_torch(device=self.actor.device) # move all to self.device
 		### actor input
 		if self.global_cfg.actor_input.history_merge_method == "none":
@@ -430,7 +431,7 @@ class CustomSACPolicy(SACPolicy):
 					torch.tensor(self.get_obs_base(batch_end, "actor", "next"),device=self.actor.device), # (B, T, *)
 					torch.tensor(stacked_batch_cur["act"].reshape(len(batch_end),-1),device=self.actor.device), # (B, T, *)
 				], dim=-1) # (B, T, *)
-				batch.is_early_end = torch.tensor(idx_next_stack[:, -1] == idx_next_stack[:, -2], device=self.actor.device).int() # (B, )
+				batch.valid_mask = torch.tensor(idx_end != buffer.next(idx_end), device=self.actor.device).int() # (B, )
 				# TODO no first step problem
 				# DEBUG
 				# assert act_prev[0] == batch.info["historical_act"][0]
