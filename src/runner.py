@@ -292,16 +292,11 @@ class CustomSACPolicy(SACPolicy):
 		current_q, critic_state = critic(batch.critic_input_cur_offline)
 		target_q = torch.tensor(batch.returns).to(current_q.device)
 		td = current_q.flatten() - target_q.flatten()
-		if self.global_cfg.actor_input.history_merge_method in ["none", "cat_mlp"]:
-			critic_loss = (
-				(td.pow(2) * weight) * batch.valid_mask
-			).mean()
-		else:
-			raise NotImplementedError
-			critic_loss = (td.pow(2) * weight)
-			# critic_loss = critic_loss.reshape(*bsz_len_shape, -1)
-			critic_loss = critic_loss[:, self.global_cfg.historical_act.burnin_num:] # ! burn in num
-			critic_loss = critic_loss.mean()
+		critic_loss = (
+			(td.pow(2) * weight) * batch.valid_mask
+		).mean()
+		critic_loss = (td.pow(2) * weight)
+		critic_loss = critic_loss.mean()
 		optimizer.zero_grad()
 		critic_loss.backward()
 		optimizer.step()
@@ -328,21 +323,11 @@ class CustomSACPolicy(SACPolicy):
 		current_q2a = current_q2a.flatten()
 
 		### actor loss
-		if self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			raise NotImplementedError("check the code below to use the method in critic")
-			actor_loss = self._alpha * obs_result.log_prob.flatten() - \
-				torch.min(current_q1a, current_q2a)
-			actor_loss = actor_loss.reshape(*bsz_len_shape, -1)
-			actor_loss = actor_loss[:, self.global_cfg.historical_act.burnin_num:]
-			actor_loss = actor_loss.mean()
-		elif self.global_cfg.actor_input.history_merge_method in ["cat_mlp", "none"]:
-			actor_loss = ((
-				self._alpha * batch.log_prob_cur.flatten() 
-				- torch.min(current_q1a, current_q2a)
-			) * batch.valid_mask
-			).mean()
-		else:
-			raise NotImplementedError
+		actor_loss = ((
+			self._alpha * batch.log_prob_cur.flatten() 
+			- torch.min(current_q1a, current_q2a)
+		) * batch.valid_mask
+		).mean()
 		self.actor_optim.zero_grad()
 		actor_loss.backward()
 		self.actor_optim.step()
@@ -399,6 +384,7 @@ class CustomSACPolicy(SACPolicy):
 		use to_torch to move all the data to the device. So the following operations 
 		should be consistent
 		"""
+		bsz = len(indices)
 		batch.is_preprocessed = True # for distinguishing whether the batch is from env
 		# init
 		batch.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
@@ -420,9 +406,6 @@ class CustomSACPolicy(SACPolicy):
 				stacked_batch_prev = buffer[idx_next_stack] # (B, T, *)
 				stacked_batch_cur = buffer[buffer.next(idx_next_stack)] # (B, T, *)
 				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
-				# batch_end.to_torch(device=self.actor.device)
-				# stacked_batch_prev.to_torch(device=self.actor.device)
-				# stacked_batch_cur.to_torch(device=self.actor.device)
 				batch.actor_input_cur = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "cur"),device=self.actor.device), # (B, T, *)
 					torch.tensor(stacked_batch_prev["act"].reshape(len(batch_end),-1),device=self.actor.device), # (B, T, *)
@@ -435,30 +418,78 @@ class CustomSACPolicy(SACPolicy):
 				# TODO no first step problem
 				# DEBUG
 				# assert act_prev[0] == batch.info["historical_act"][0]
-				# ! not good
 				indices = idx_end
 			else:
 				batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
 				batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			raise NotImplementedError
+			assert self.global_cfg.actor_input.history_num > 1, "stack_rnn requires history_num > 1, ususally, it would be 20,40,... since we process long history when running online."
+			assert self.global_cfg.actor_input.history_num > self.global_cfg.actor_input.burnin_num, "stack_rnn requires history_num > burnin_num, ususally, it could be a little larger than burnin_num"
+			# [t-T+1, ..., t-1, t] the last one is id_end
+			# TODO note that when the start target q
+			idx_next_stack = utils.idx_next_stack(indices, buffer, self.global_cfg.actor_input.history_num) # (B, T)
+			idx_end = idx_next_stack[:,-1] # (B, )
+			batch_end = buffer[idx_end] # (B, *)
+			stacked_batch_prev = buffer[idx_next_stack] # (B, T, *)
+			stacked_batch_cur = buffer[buffer.next(idx_next_stack)] # (B, T, *)
+			indices_bak = indices
+			indices = idx_next_stack.flatten()
+			batch_ = buffer[indices]
+			batch_.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
+			batch_.valid_mask = buffer.next(indices) != indices
+			batch_.to_torch(device=self.actor.device) # move all to self.device
+			# stacked_batch_prev.info["obs_nodelay"] = buffer[buffer.prev(idx_next_stack)].info["obs_next_nodelay"] # (B, T, *)
+			stacked_batch_cur.info["obs_nodelay"] = buffer[idx_next_stack].info["obs_next_nodelay"] # (B, T, *)
+			batch_.actor_input_cur = torch.cat([
+				torch.tensor(self.get_obs_base(stacked_batch_cur, "actor", "cur"),device=self.actor.device), # (B, T, *)
+				torch.tensor(stacked_batch_prev["act"],device=self.actor.device), # (B, T, *)
+			], dim=-1) # (B*T, *)
+			batch_.actor_input_next = torch.cat([
+				torch.tensor(self.get_obs_base(stacked_batch_cur, "actor", "next"),device=self.actor.device), # (B, T, *)
+				torch.tensor(stacked_batch_cur["act"],device=self.actor.device), # (B, T, *)
+			], dim=-1) # (B*T, *)
+			batch_.valid_mask = torch.tensor(indices != buffer.next(indices), device=self.actor.device).int() # (B, )
+			# apply burn in mask
+			burn_in_mask = torch.ones(idx_next_stack.shape, device=self.actor.device).float()
+			if type(self.global_cfg.actor_input.burnin_num) == float:
+				burn_in_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num)
+			else:
+				burn_in_num = self.global_cfg.actor_input.burnin_num
+			burn_in_mask[:,:burn_in_num] = 0
+			batch_.valid_mask = burn_in_mask.flatten() * batch_.valid_mask
+			# TODO no first step problem
+			# DEBUG
+			# assert act_prev[0] == batch.info["historical_act"][0]
+			batch_.is_preprocessed = True
+			if hasattr(batch, "from_target_q"):
+				batch_.from_target_q = batch.from_target_q
+			batch = batch_
+			indices = indices_bak
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
 		# critic input
 		if self.global_cfg.critic_input.history_merge_method == "none":
 			actor_result_cur = self.forward(batch, input="actor_input_cur")
 			actor_result_next = self.forward(batch, input="actor_input_next")
+			if self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+				assert actor_result_cur.act.shape == (bsz, self.global_cfg.actor_input.history_num, self.actor.action_shape[0])
+				actor_result_cur.act = actor_result_cur.act.reshape(-1,self.actor.action_shape[0])
+				actor_result_cur.log_prob = actor_result_cur.log_prob.reshape(-1,1)
+				actor_result_next.act = actor_result_next.act.reshape(-1,self.actor.action_shape[0])
+				actor_result_next.log_prob = actor_result_next.log_prob.reshape(-1,1)
 			batch.critic_input_cur_offline = torch.cat([
 				self.get_obs_base(batch, "critic", "cur"),
 				batch.act], dim=-1)
 			batch.critic_input_cur_online = torch.cat([
 				self.get_obs_base(batch, "critic", "cur"),
-				actor_result_cur.act], dim=-1)
+				actor_result_cur.act if len(actor_result_cur.act.shape) == 2 else actor_result_cur.act.reshape(-1,self.actor.action_shape[0]),
+				], dim=-1)
 			batch.critic_input_next_online = torch.cat([
 				self.get_obs_base(batch, "critic", "next"),
-				actor_result_next.act], dim=-1).detach()
+				actor_result_next.act if len(actor_result_cur.act.shape) == 2 else actor_result_cur.act.reshape(-1,self.actor.action_shape[0]),
+				], dim=-1).detach()
 			batch.log_prob_cur = actor_result_cur.log_prob
-			batch.log_prob_next = actor_result_next.log_prob # TODO remove log_prob
+			batch.log_prob_next = actor_result_next.log_prob
 		elif self.global_cfg.critic_input.history_merge_method == "cat_mlp":
 			raise NotImplementedError
 		elif self.global_cfg.critic_input.history_merge_method == "stack_rnn":
@@ -481,9 +512,9 @@ class CustomSACPolicy(SACPolicy):
 		batch.from_target_q = True
 		batch = self.process_fn(batch, buffer, indices)
 		target_q = torch.min(
-			self.critic1_old(batch.critic_input_next_online)[0],
+			self.critic1_old(batch.critic_input_next_online)[0], # (B, 1)
 			self.critic2_old(batch.critic_input_next_online)[0],
-		) - self._alpha * batch.log_prob_next
+		) - self._alpha * batch.log_prob_next # (B, a_dim, 1)
 		return target_q
 
 	def process_online_batch(
@@ -491,11 +522,12 @@ class CustomSACPolicy(SACPolicy):
 		):
 		obs = batch.obs
 		# if first step when act is none
+		assert batch.obs.shape[0] == 1, "for online batch, batch size must be 1"
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
 			else: # normal step
-				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1):
+				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1): # when historical_num == 0, would return False as historical_act
 					# ps. historical_act == None when no error
 					assert batch.info["historical_act"][0] == False
 					obs = np.concatenate([
@@ -509,19 +541,19 @@ class CustomSACPolicy(SACPolicy):
 				else: raise ValueError("historical_act shape not implemented")
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if len(batch.act.shape) == 0: # first step (zero cat)
-				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
+				obs = np.zeros([1, self.actor.net.input_dim]) # TODO should be obs+zero_act
 			else: # normal step
-				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1):
+				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1): # when historical_num == 0, would return False as historical_act
 					assert batch.info["historical_act"][0] == False
 					obs = np.concatenate([
-						self.get_obs_base(batch, "actor", "next"), # (B, obs_dim)
-						np.zeros([obs.shape[0], self.actor_net.act_num]) # (B, act_num)
+						self.get_obs_base(batch, "actor", "next"), # (B, obs_dim) # TODO change network init
 					], axis=-1)
 				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
-					obs = np.stack([
-						self.get_obs_base(batch, "actor", "next"),
-						batch.info["historical_act"]
-					])
+					latest_act = batch.info["historical_act"][:, -self.actor.act_num:]
+					obs = np.concatenate([
+						self.get_obs_base(batch, "actor", "next"), # (B, obs_dim)
+						latest_act # (B, act_num)
+					], axis=-1)
 				else: raise ValueError("historical_act shape not implemented")
 
 		elif self.global_cfg.actor_input.history_merge_method == "none":
@@ -694,16 +726,25 @@ class RNN_MLP_Net(nn.Module):
 		# In short, the tensor's shape in training phase is longer than which
 		# in evaluation phase. 
 		if self.rnn_layer_num: 
-			assert len(obs.shape) == 3 or len(obs.shape) == 2
-			if len(obs.shape) == 2: obs = obs.unsqueeze(-2) # make seq_len dim
-			bsz, len, dim = obs.shape
-			self.nn = None
+			assert len(obs.shape) == 3 or len(obs.shape) == 2, "obs.shape: {}".format(obs.shape)
+			to_unsqueeze = False
+			if len(obs.shape) == 2: 
+				to_unsqueeze = True
+				obs = obs.unsqueeze(-2) # make seq_len dim
+			B, L, D = obs.shape
 			self.nn.flatten_parameters()
-			if state is None: after_rnn, hidden = self.nn(obs)
-			else: after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
+			if state is None: 
+				# first step of online or offline
+				hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
+				after_rnn, hidden = self.nn(obs, hidden)
+			else: 
+				# normal step of online
+				after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
+			if to_unsqueeze: 
+				after_rnn = after_rnn.squeeze(-2)
 		else: # skip rnn
 			after_rnn = obs
-		### forward mlp # ! TODO actor max min clip
+		### forward mlp
 		outputs = []
 		for mlp in self.mlps:
 			outputs.append(self.flatten_foward(mlp, after_rnn))

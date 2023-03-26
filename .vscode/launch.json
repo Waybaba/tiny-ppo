@@ -78,6 +78,7 @@
 				// "env.name=DummyNum-v0",
 				"env.delay=0",
 				"start_timesteps=1",
+				"trainer.batch_size=32"
 			],
 		},
 		// paralelle
