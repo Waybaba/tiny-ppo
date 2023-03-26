@@ -203,6 +203,7 @@ search:
       global_cfg.actor_input.burnin_num={actor_burnin_num}
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
       global_cfg.critic_input.obs_type={critic_obs_type}
+      collector.buffer.size={buffer_size}
       env.delay={env_delay}
       tags=[{tag}]
   type: grid
@@ -210,16 +211,17 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      values: [0,1,2,4,8,16,32]
+      # values: [0,1,2,4,8,16,32]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
+      values: [0,2,4]
     - name: env_name
       # values: [HalfCheetah-v4]
       values: [HalfCheetah-v4]
     - name: experiment
       values: [sac_cat]
     - name: tag
-      values: ["ReCode_oracleCritic_ActorCat_HalfCh_History0To8_6"] 
+      values: ["action_shift_bufferSizeE3ToE6"] 
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
@@ -237,7 +239,8 @@ search:
     - name: actor_obs_type
       values: ["normal"]
     - name: actor_history_num
-      values: [0,1,2,4,8]
+      # values: [0,1,2,4,8]
+      values:[0,1,2,4]
       # values: [0]
     - name: actor_burnin_num 
       values: [0]
@@ -247,5 +250,7 @@ search:
       values: ["oracle"]
     - name: trainer_batch_size
       values: [256]
+    - name: buffer_size
+      values: [1000000,100000,10000,1000]
 
     
