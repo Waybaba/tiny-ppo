@@ -211,21 +211,21 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      # values: [0,1,2,4,8,16,32]
+      values: [0,1,2,4,8,16,32]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
-      values: [0,2,4]
+      # values: [0,2,4]
     - name: env_name
       # values: [HalfCheetah-v4]
       values: [HalfCheetah-v4]
     - name: experiment
       values: [sac_cat]
     - name: tag
-      values: ["action_shift_bufferSizeE3ToE6"] 
+      values: ["oracleCritic_ActorCat"] 
     - name: actor_mlp_hidden_sizes
-      values: ["[256,256]"]
+      values: ["[256]"]
     - name: actor_rnn_layer_num
-      values: [0]
+      values: [1]
     - name: actor_rnn_hidden_layer_size
       values: [256]
     - name: critic_mlp_hidden_sizes
@@ -235,15 +235,15 @@ search:
     - name: critic_rnn_hidden_layer_size
       values: [256]
     - name: actor_history_merge_method
-      values: ["cat_mlp"]
+      values: ["stack_rnn"]
     - name: actor_obs_type
       values: ["normal"]
     - name: actor_history_num
-      values: [0,1,2,4]
+      values: [20,40,80]
       # values: [0,1,2,4,8]
       # values: [0]
     - name: actor_burnin_num 
-      values: [0]
+      values: [0.25]
     - name: critic_history_merge_method
       values: ["none"]
     - name: critic_obs_type
@@ -251,6 +251,6 @@ search:
     - name: trainer_batch_size
       values: [256]
     - name: buffer_size
-      values: [1000000,100000,10000,1000]
+      values: [1000000]
 
     
