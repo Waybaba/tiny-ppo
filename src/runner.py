@@ -408,11 +408,15 @@ class CustomSACPolicy(SACPolicy):
 				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
 				batch.actor_input_cur = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "cur"),device=self.actor.device), # (B, T, *)
-					torch.tensor(stacked_batch_prev["act"].reshape(len(batch_end),-1),device=self.actor.device), # (B, T, *)
+					torch.tensor(stacked_batch_prev["act"].reshape(len(batch_end),-1),device=self.actor.device) \
+					if not self.global_cfg.actor_input.noise_act_debug else \
+					torch.normal(size=stacked_batch_prev["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device),
 				], dim=-1)
 				batch.actor_input_next = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "next"),device=self.actor.device), # (B, T, *)
-					torch.tensor(stacked_batch_cur["act"].reshape(len(batch_end),-1),device=self.actor.device), # (B, T, *)
+					torch.tensor(stacked_batch_cur["act"].reshape(len(batch_end),-1),device=self.actor.device) \
+					if not self.global_cfg.actor_input.noise_act_debug else \
+					torch.normal(size=stacked_batch_cur["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device),
 				], dim=-1) # (B, T, *)
 				batch.valid_mask = torch.tensor(idx_end != buffer.next(idx_end), device=self.actor.device).int() # (B, )
 				# TODO no first step problem
@@ -536,7 +540,9 @@ class CustomSACPolicy(SACPolicy):
 				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
 					obs = np.concatenate([
 						self.get_obs_base(batch, "actor", "next"),
-						batch.info["historical_act"]
+						batch.info["historical_act"] \
+						if not self.global_cfg.actor_input.noise_act_debug else \
+						np.random.normal(size=batch.info["historical_act"].shape, loc=0, scale=1),
 					], axis=-1)
 				else: raise ValueError("historical_act shape not implemented")
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
@@ -662,7 +668,7 @@ class CustomSACPolicy(SACPolicy):
 			elif self.global_cfg.critic_input.obs_type == "oracle":
 				if stage == "cur": return batch.info["obs_nodelay"]
 				elif stage == "next": return batch.info["obs_next_nodelay"]
-		
+
 # net
 
 class RNN_MLP_Net(nn.Module):
