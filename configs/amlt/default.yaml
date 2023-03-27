@@ -246,7 +246,7 @@ search:
       values: ["none"]
     - name: critic_obs_type
       values: ["oracle"]
-    ### cluster related
+      ### cluster related
     - name: trainer_batch_size
       values: [32]
     - name: buffer_size
