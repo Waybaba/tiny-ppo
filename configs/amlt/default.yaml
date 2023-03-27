@@ -186,8 +186,8 @@ search:
     - python src/entry.py
       -m
       hydra/launcher=wsl_parallel
-      n_jobs=5
-      seed=0,1,2,3,4
+      n_jobs={n_jobs}
+      seed={seed}
       experiment={experiment}
       env.name={env_name}
       trainer.batch_size={trainer_batch_size}
@@ -211,21 +211,19 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      values: [0,1,2,4,8,16,32]
+      # values: [0,1,2,4,8,16,32]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
-      # values: [0,2,4]
+      values: [0,2,4]
     - name: env_name
       # values: [HalfCheetah-v4]
       values: [HalfCheetah-v4]
     - name: experiment
       values: [sac_cat]
-    - name: tag
-      values: ["oracleCritic_ActorRnnStack"] 
     - name: actor_mlp_hidden_sizes
-      values: ["[256]"]
+      values: ["[256,256]"]
     - name: actor_rnn_layer_num
-      values: [1]
+      values: [0]
     - name: actor_rnn_hidden_layer_size
       values: [256]
     - name: critic_mlp_hidden_sizes
@@ -235,12 +233,12 @@ search:
     - name: critic_rnn_hidden_layer_size
       values: [256]
     - name: actor_history_merge_method
-      values: ["stack_rnn"]
+      values: ["cat_mlp"]
     - name: actor_obs_type
-      values: ["normal"]
+      values: ["normal","oracle"]
     - name: actor_history_num
-      values: [20,40,80]
-      # values: [0,1,2,4,8]
+      # values: [20,40,80]
+      values: [0,1,2,4,8]
       # values: [0]
     - name: actor_burnin_num 
       values: [0.25]
@@ -248,9 +246,15 @@ search:
       values: ["none"]
     - name: critic_obs_type
       values: ["oracle"]
+    ### cluster related
     - name: trainer_batch_size
       values: [32]
     - name: buffer_size
-      values: [1000000]
-
+      values: [1000000,100000,10000,1000]
+    - name: seed
+      values: ["0,1,2,3,4"]
+    - name: n_jobs
+      values: [5]
+    - name: tag
+      values: ["action_shift_bufferSizeE3ToE6"] 
     
