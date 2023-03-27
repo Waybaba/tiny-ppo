@@ -221,7 +221,7 @@ search:
     - name: experiment
       values: [sac_cat]
     - name: tag
-      values: ["oracleCritic_ActorCat"] 
+      values: ["oracleCritic_ActorRnnStack"] 
     - name: actor_mlp_hidden_sizes
       values: ["[256]"]
     - name: actor_rnn_layer_num
