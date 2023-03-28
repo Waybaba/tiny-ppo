@@ -264,10 +264,11 @@ class CustomSACPolicy(SACPolicy):
 		**kwargs: Any,
 	) -> None:
 		self.global_cfg = kwargs.pop("global_cfg")
+		self.state_space = kwargs.pop("state_space")
 		self.init_wandb_summary()
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			assert actor.net.rnn_layer_num == 0, "cat_mlp should not be used with recurrent actor"
-		return super().__init__(
+		super().__init__(
 			actor,
 			actor_optim,
 			critic1,
@@ -283,6 +284,15 @@ class CustomSACPolicy(SACPolicy):
 			deterministic_eval=deterministic_eval,
 			**kwargs
 		)
+		if self.global_cfg.actor_input.obs_pred:
+			self.pred_net = self.global_cfg.actor_input.obs_pred.net(
+				state_shape=self.state_space.shape,
+				action_shape=kwargs["action_space"].shape,
+				global_cfg=self.global_cfg,
+			)
+			self._pred_optim = self.global_cfg.actor_input.obs_pred.optim(
+				self.pred_net.parameters(),
+			)
 	
 	def _mse_optimizer(self,
 		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
@@ -328,10 +338,27 @@ class CustomSACPolicy(SACPolicy):
 			- torch.min(current_q1a, current_q2a)
 		) * batch.valid_mask
 		).mean()
-		self.actor_optim.zero_grad()
-		actor_loss.backward()
-		self.actor_optim.step()
-		
+		# self.actor_optim.zero_grad()
+		# actor_loss.backward()
+		# self.actor_optim.step()
+
+		### pred loss
+		if self.global_cfg.actor_input.obs_pred:
+			pred_loss = (batch.actor_input_cur - batch.info["obs_nodelay"]) ** 2
+			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
+			pred_loss = pred_loss.mean()
+			combined_loss = actor_loss + pred_loss
+			self.actor_optim.zero_grad()
+			self._pred_optim.zero_grad()
+			combined_loss.backward()
+			self.actor_optim.step()
+			self._pred_optim.step()
+		else:
+			self.actor_optim.zero_grad()
+			actor_loss.backward()
+			self.actor_optim.step()
+			
+			
 		### alpha loss
 		if self._is_auto_alpha:
 			log_prob = batch.log_prob_cur.detach() + self._target_entropy
@@ -343,6 +370,7 @@ class CustomSACPolicy(SACPolicy):
 			alpha_loss.backward()
 			self._alpha_optim.step()
 			self._alpha = self._log_alpha.detach().exp()
+
 
 		self.sync_weight()
 
@@ -396,7 +424,6 @@ class CustomSACPolicy(SACPolicy):
 			batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			assert self.global_cfg.actor_input.history_num >= 0
-			# ! TODO when met start, it should be the same with the first step instead of zero in the env
 			if self.global_cfg.actor_input.history_num > 0:
 				# stacked_batch_prev [t-T+1, ..., t-1, t  ] the last one is id_end
 				# stacked_batch_cur  [t-T+2, ..., t  , t+1]
@@ -426,7 +453,12 @@ class CustomSACPolicy(SACPolicy):
 				# DEBUG
 				# assert act_prev[0] == batch.info["historical_act"][0]
 				indices = idx_end
-				
+				###
+				if self.global_cfg.actor_input.obs_pred:
+					batch.pred_input_cur = batch.actor_input_cur
+					batch.pred_input_next = batch.actor_input_next
+					batch.actor_input_cur = self.pred_net(batch.pred_input_cur)[0]
+					batch.actor_input_next = self.pred_net(batch.pred_input_next)[0]
 			else:
 				batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
 				batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
@@ -533,7 +565,11 @@ class CustomSACPolicy(SACPolicy):
 		assert batch.obs.shape[0] == 1, "for online batch, batch size must be 1"
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			if len(batch.act.shape) == 0: # first step (zero cat)
-				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
+				obs = np.zeros([
+					obs.shape[0], 
+					self.pred_net.input_dim if self.global_cfg.actor_input.obs_pred else self.actor.net.input_dim
+				])
+				obs = self.pred_net(obs)[0].cpu() if self.global_cfg.actor_input.obs_pred else obs
 			else: # normal step
 				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1): # when historical_num == 0, would return False as historical_act
 					# ps. historical_act == None when no error
@@ -541,6 +577,7 @@ class CustomSACPolicy(SACPolicy):
 					obs = np.concatenate([
 						self.get_obs_base(batch, "actor", "next"),
 					], axis=-1)
+					obs = self.pred_net(obs)[0].cpu() if self.global_cfg.actor_input.obs_pred else obs
 				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
 					obs = np.concatenate([
 						self.get_obs_base(batch, "actor", "next"),
@@ -548,6 +585,7 @@ class CustomSACPolicy(SACPolicy):
 						if not self.global_cfg.actor_input.noise_act_debug else \
 						np.random.normal(size=batch.info["historical_act"].shape, loc=0, scale=1),
 					], axis=-1)
+					obs = self.pred_net(obs)[0].cpu() if self.global_cfg.actor_input.obs_pred else obs
 				else: raise ValueError("historical_act shape not implemented")
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if len(batch.act.shape) == 0: # first step (zero cat)
@@ -565,7 +603,6 @@ class CustomSACPolicy(SACPolicy):
 						latest_act # (B, act_num)
 					], axis=-1)
 				else: raise ValueError("historical_act shape not implemented")
-
 		elif self.global_cfg.actor_input.history_merge_method == "none":
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([obs.shape[0], self.actor.net.input_dim])
@@ -911,7 +948,10 @@ class CustomRecurrentActorProb(nn.Module):
 		self.state_shape, self.action_shape = state_shape, action_shape
 		self.act_num = action_shape[0]
 		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
-			input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
+			if self.hps["global_cfg"].actor_input.obs_pred:
+				input_dim = state_shape[0]
+			else:
+				input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
 			output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "stack_rnn":
 			input_dim = state_shape[0] + action_shape[0]
@@ -942,6 +982,36 @@ class CustomRecurrentActorProb(nn.Module):
 			raise NotImplementedError
 		return (mu, sigma), state_
 	
+class ObsPredNet(nn.Module):
+	"""
+	input delayed state and action, output the non-delayed state
+	"""
+	def __init__(
+		self,
+		state_shape: Sequence[int],
+		action_shape: Sequence[int],
+		global_cfg: Dict[str, Any],
+		**kwargs,
+	) -> None:
+		super().__init__()
+		self.global_cfg = global_cfg
+		self.hps = kwargs
+		input_dim = state_shape[0] + action_shape[0] * global_cfg.actor_input.history_num
+		output_dim = state_shape[0]
+		self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=1)
+		self.net = self.net.to(self.hps["device"])
+		self.input_dim = input_dim
+		self.output_dim = output_dim
+		
+	def forward(
+		self,
+		input: Union[np.ndarray, torch.Tensor],
+		info: Dict[str, Any] = {},
+	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
+		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
+		output, state_ = self.net(input)
+		value = output[0]
+		return value, state_
 
 # utils
 
@@ -999,6 +1069,7 @@ class SACRunner(DefaultRLRunner):
 			critic1, critic1_optim,
 			critic2, critic2_optim,
 			action_space=env.action_space,
+			state_space=env.observation_space,
 		)
 		# collector
 		train_collector = cfg.collector.train_collector(policy, train_envs)
