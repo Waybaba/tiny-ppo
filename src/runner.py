@@ -398,13 +398,14 @@ class CustomSACPolicy(SACPolicy):
 			assert self.global_cfg.actor_input.history_num >= 0
 			# ! TODO when met start, it should be the same with the first step instead of zero in the env
 			if self.global_cfg.actor_input.history_num > 0:
-				# [t-T+1, ..., t-1, t] the last one is id_end
+				# stacked_batch_prev [t-T+1, ..., t-1, t  ] the last one is id_end
+				# stacked_batch_cur  [t-T+2, ..., t  , t+1]
 				# TODO note that when the start target q
 				idx_next_stack = utils.idx_next_stack(indices, buffer, self.global_cfg.actor_input.history_num) # (B, T)
 				idx_end = idx_next_stack[:,-1] # (B, )
 				batch_end = buffer[idx_end] # (B, *)
-				stacked_batch_prev = buffer[idx_next_stack] # (B, T, *)
-				stacked_batch_cur = buffer[buffer.next(idx_next_stack)] # (B, T, *)
+				stacked_batch_prev = buffer[buffer.prev(idx_next_stack)] # (B, T, *)
+				stacked_batch_cur = buffer[idx_next_stack] # (B, T, *)
 				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
 				batch.actor_input_cur = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "cur"),device=self.actor.device), # (B, T, *)
@@ -412,6 +413,8 @@ class CustomSACPolicy(SACPolicy):
 					if not self.global_cfg.actor_input.noise_act_debug else \
 					torch.normal(size=stacked_batch_prev["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device),
 				], dim=-1)
+				# buffer_a = torch.tensor(stacked_batch_prev["act"].reshape(len(batch_end),-1),device=self.actor.device)
+				# dict_a = torch.tensor(batch_end.info["historical_act"]).to(device=self.actor.device)
 				batch.actor_input_next = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "next"),device=self.actor.device), # (B, T, *)
 					torch.tensor(stacked_batch_cur["act"].reshape(len(batch_end),-1),device=self.actor.device) \

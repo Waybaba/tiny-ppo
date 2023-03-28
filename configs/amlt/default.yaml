@@ -181,7 +181,7 @@ storage:
 
 search:
   job_template:
-    name: RL_Delayed_{random_string:s}
+    name: RL_Delayed_{experiment_name:s}_{auto:5s}
     command:
     - python src/entry.py
       -m
@@ -212,10 +212,10 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      # values: [0,1,2,4,8,16,32]
+      values: [0,1,2,4,8,16]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
-      values: [0,2,4]
+      # values: [0,2,4]
     - name: env_name
       # values: [HalfCheetah-v4]
       values: [HalfCheetah-v4]
@@ -236,13 +236,13 @@ search:
     - name: actor_history_merge_method
       values: ["cat_mlp"]
     - name: actor_obs_type
-      values: ["oracle"]
+      values: ["normal"]
     - name: actor_history_num
       values: [0,1,2,4,8]
     - name: actor_burnin_num 
       values: [0.25]
     - name: noise_act_debug
-      values: [false,true]
+      values: [false]
     - name: critic_history_merge_method
       values: ["none"]
     - name: critic_obs_type
@@ -257,5 +257,5 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["actor_with_randomActionCat"] 
+      values: ["ReCode_oracleCritic_ActorCat_HalfCh_History0To8_7"] 
     
