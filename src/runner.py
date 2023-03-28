@@ -426,6 +426,7 @@ class CustomSACPolicy(SACPolicy):
 				# DEBUG
 				# assert act_prev[0] == batch.info["historical_act"][0]
 				indices = idx_end
+				
 			else:
 				batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
 				batch.actor_input_next = self.get_obs_base(batch, "actor", "next")
