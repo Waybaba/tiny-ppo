@@ -384,6 +384,8 @@ class CustomSACPolicy(SACPolicy):
 			result["learn/loss_alpha"] = alpha_loss.item()
 			result["learn/_log_alpha"] = self._log_alpha.item()
 			result["learn/alpha"] = self._alpha.item()  # type: ignore
+		if self.global_cfg.actor_input.obs_pred:
+			result["learn/loss_pred"] = pred_loss.item()
 		### log - learn
 		if not hasattr(self, "learn_step"): self.learn_step = 1
 		if not hasattr(self, "start_time"): self.start_time = time()
@@ -400,6 +402,8 @@ class CustomSACPolicy(SACPolicy):
 				to_logs["learn/loss_alpha"] = alpha_loss.item()
 				to_logs["learn/_log_alpha"] = self._log_alpha.item()
 				to_logs["learn/alpha"] = self._alpha.item()
+			if self.global_cfg.actor_input.obs_pred:
+				to_logs["learn/loss_pred"] = pred_loss.item()
 			wandb.log(to_logs, step=self.learn_step)
 			# wandb.log({"time_related/learn_step": self.train_env_infer_step}, step=int(minutes))
 		return result
@@ -413,11 +417,11 @@ class CustomSACPolicy(SACPolicy):
 		should be consistent
 		"""
 		bsz = len(indices)
-		batch.is_preprocessed = True # for distinguishing whether the batch is from env
 		# init
 		batch.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
 		batch.valid_mask = buffer.next(indices) != indices
 		batch.to_torch(device=self.actor.device) # move all to self.device
+		batch.is_preprocessed = True
 		### actor input
 		if self.global_cfg.actor_input.history_merge_method == "none":
 			batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
@@ -434,31 +438,45 @@ class CustomSACPolicy(SACPolicy):
 				stacked_batch_prev = buffer[buffer.prev(idx_next_stack)] # (B, T, *)
 				stacked_batch_cur = buffer[idx_next_stack] # (B, T, *)
 				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
-				batch.actor_input_cur = torch.cat([
+				batch_end.actor_input_cur = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "cur"),device=self.actor.device), # (B, T, *)
 					torch.tensor(stacked_batch_prev["act"].reshape(len(batch_end),-1),device=self.actor.device) \
 					if not self.global_cfg.actor_input.noise_act_debug else \
-					torch.normal(size=stacked_batch_prev["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device),
+					torch.normal(size=stacked_batch_prev["act"].reshape(batch_end.obs.shape[0],-1).shape, mean=0., std=1.,device=self.actor.device),
 				], dim=-1)
 				# buffer_a = torch.tensor(stacked_batch_prev["act"].reshape(len(batch_end),-1),device=self.actor.device)
 				# dict_a = torch.tensor(batch_end.info["historical_act"]).to(device=self.actor.device)
-				batch.actor_input_next = torch.cat([
+				batch_end.actor_input_next = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "next"),device=self.actor.device), # (B, T, *)
 					torch.tensor(stacked_batch_cur["act"].reshape(len(batch_end),-1),device=self.actor.device) \
 					if not self.global_cfg.actor_input.noise_act_debug else \
 					torch.normal(size=stacked_batch_cur["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device),
 				], dim=-1) # (B, T, *)
-				batch.valid_mask = torch.tensor(idx_end != buffer.next(idx_end), device=self.actor.device).int() # (B, )
+				batch_end.valid_mask = torch.tensor(idx_end != buffer.next(idx_end), device=self.actor.device).int() # (B, )
 				# TODO no first step problem
 				# DEBUG
 				# assert act_prev[0] == batch.info["historical_act"][0]
 				indices = idx_end
 				###
 				if self.global_cfg.actor_input.obs_pred:
-					batch.pred_input_cur = batch.actor_input_cur
-					batch.pred_input_next = batch.actor_input_next
-					batch.actor_input_cur = self.pred_net(batch.pred_input_cur)[0]
-					batch.actor_input_next = self.pred_net(batch.pred_input_next)[0]
+					batch_end.pred_input_cur = batch_end.actor_input_cur
+					batch_end.pred_input_next = batch_end.actor_input_next
+					batch_end.pred_output_cur = self.pred_net(batch_end.pred_input_cur)[0]
+					batch_end.pred_output_next = self.pred_net(batch_end.pred_input_next)[0]
+					if self.global_cfg.actor_input.obs_pred.middle_detach: 
+						batch_end.actor_input_cur = batch_end.pred_output_cur.detach()
+						batch_end.actor_input_next = batch_end.pred_output_next.detach()
+					else:
+						batch_end.actor_input_cur = batch_end.pred_output_cur
+						batch_end.actor_input_next = batch_end.pred_output_next
+				## pop all keys except for the ones mentioned above
+				# for k in batch_end.keys():
+				# 	if k not in ["actor_input_cur", "actor_input_next", "valid_mask", "info"]:
+				# 		batch_end.pop(k)
+				if "from_target_q" in batch: batch_end.from_target_q = batch.from_target_q
+				if "is_preprocessed" in batch: batch_end.is_preprocessed = batch.is_preprocessed
+				batch = batch_end
+				batch.to_torch(device=self.actor.device)
 			else:
 				batch.actor_input_cur = self.get_obs_base(batch, "actor", "cur")
 				batch.actor_input_next = self.get_obs_base(batch, "actor", "next")

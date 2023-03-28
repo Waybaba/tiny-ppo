@@ -27,12 +27,13 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           _partial_: true
           rnn_layer_num: 0
           rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [256,256]
+          mlp_hidden_sizes: [128,128,128,128]
           mlp_softmax: false
       optim:
         _target_: torch.optim.Adam
         _partial_: true
         lr: 1e-3
+      middle_detach: true
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
