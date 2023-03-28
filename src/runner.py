@@ -474,7 +474,7 @@ class CustomSACPolicy(SACPolicy):
 			indices = indices_bak
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
-		# critic input
+		# critic input 
 		if self.global_cfg.critic_input.history_merge_method == "none":
 			actor_result_cur = self.forward(batch, input="actor_input_cur")
 			actor_result_next = self.forward(batch, input="actor_input_next")
