@@ -220,7 +220,8 @@ search:
       # values: [0,2,4]
     - name: env_name
       # values: [HalfCheetah-v4]
-      values: [HalfCheetah-v4]
+      # values: [HalfCheetah-v4]
+      values: [Ant-v4,Hopper-v4,Walker2d-v4]
     - name: experiment
       values: [sac_cat]
     - name: actor_mlp_hidden_sizes
@@ -236,9 +237,9 @@ search:
     - name: critic_rnn_hidden_layer_size
       values: [256]
     - name: obs_pred_mlp_hidden_sizes
-      values: ["[256,256]","[128,128,128]","[128,128,128,128]"]
+      values: ["[256,256,256]"]
     - name: middle_detach
-      values: [true,false]
+      values: [true]
     - name: actor_history_merge_method
       values: ["cat_mlp"]
     - name: actor_obs_type

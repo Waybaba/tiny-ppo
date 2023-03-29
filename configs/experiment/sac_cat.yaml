@@ -27,12 +27,12 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           _partial_: true
           rnn_layer_num: 0
           rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [128,128,128,128]
+          mlp_hidden_sizes: [512,512,512]
           mlp_softmax: false
       optim:
         _target_: torch.optim.Adam
         _partial_: true
-        lr: 1e-3
+        lr: 3e-4
       middle_detach: true
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
@@ -95,12 +95,12 @@ runner:
 critic1_optim:
   _target_: ${actor_optim._target_}
   _partial_: true
-  lr: 1e-3
+  lr: 3e-4
 critic2_optim: ${critic1_optim}
 actor_optim:
   _target_: torch.optim.Adam
   _partial_: true
-  lr: 1e-3
+  lr: 3e-4
 
 
 # common - for all algorithms
