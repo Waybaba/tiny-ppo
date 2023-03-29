@@ -463,11 +463,11 @@ class CustomSACPolicy(SACPolicy):
 					batch_end.pred_input_next = batch_end.actor_input_next
 					pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
 					pred_output_next, pred_info_next = self.pred_net(batch_end.pred_input_next)
-					batch_end.pred_output_cur = pred_output_cur[0]
-					batch_end.pred_output_next = pred_output_next[0]
+					batch_end.pred_output_cur = pred_output_cur
+					batch_end.pred_output_next = pred_output_next
 					if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-						batch_end.actor_input_cur = pred_output_cur[0]
-						batch_end.actor_input_next = pred_output_next[0]
+						batch_end.actor_input_cur = pred_output_cur
+						batch_end.actor_input_next = pred_output_next
 					elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 						batch_end.actor_input_cur = pred_info_cur["feats"]
 						batch_end.actor_input_next = pred_info_next["feats"]
@@ -613,7 +613,7 @@ class CustomSACPolicy(SACPolicy):
 			if self.global_cfg.actor_input.obs_pred:
 				pred_output, pred_info = self.pred_net(obs)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-					obs = pred_output[0].cpu()
+					obs = pred_output.cpu()
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 					obs = pred_info["feats"].cpu()
 				else:

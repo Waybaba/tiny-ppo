@@ -205,7 +205,10 @@ search:
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
       global_cfg.critic_input.obs_type={critic_obs_type}
       global_cfg.actor_input.obs_pred.middle_detach={middle_detach}
-      global_cfg.actor_input.obs_pred.net.net.mlp_hidden_sizes={obs_pred_mlp_hidden_sizes}
+      global_cfg.actor_input.obs_pred.net.encoder_net.mlp_hidden_sizes={obs_pred_encoder_mlp_hidden_sizes}
+      global_cfg.actor_input.obs_pred.net.decoder_net.mlp_hidden_sizes={obs_pred_decoder_mlp_hidden_sizes}
+      global_cfg.actor_input.obs_pred.input_type={obs_pred_input_type}
+      # TODO input type
       collector.train_collector.buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
       +trainer.show_progress=false
@@ -216,7 +219,7 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      values: [0,1,2,4]
+      values: [0,1,2,4,8]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
@@ -238,16 +241,20 @@ search:
       values: [0]
     - name: critic_rnn_hidden_layer_size
       values: [256]
-    - name: obs_pred_mlp_hidden_sizes
-      values: ["[256,256,256]"]
     - name: middle_detach
       values: [true]
+    - name: obs_pred_encoder_mlp_hidden_sizes
+      values: ["[256]"]
+    - name: obs_pred_decoder_mlp_hidden_sizes
+      values: ["[256]"]
+    - name: obs_pred_input_type
+      values: ["obs","feat"]
     - name: actor_history_merge_method
       values: ["cat_mlp"]
     - name: actor_obs_type
       values: ["normal"]
     - name: actor_history_num
-      values: [1,2,4,8]
+      values: [4,8]
     - name: actor_burnin_num 
       values: [0.25]
     - name: noise_act_debug
@@ -266,5 +273,5 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_predOuputBugFix"] 
+      values: ["pred_obs_pred_featureAsActorInput"] 
     
