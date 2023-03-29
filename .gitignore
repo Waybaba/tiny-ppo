@@ -28,3 +28,5 @@ __pycache__/
 /.env
 /tmp
 a.out
+
+.devcontainer/mujoco/*

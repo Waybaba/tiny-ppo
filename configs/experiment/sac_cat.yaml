@@ -16,7 +16,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_type: "oracle" # normal or oracle
     history_num: 10 # ! TODO for case 0 and 1
     burnin_num: 0 # only works for stack_rnn
-    noise_act_debug: true 
+    noise_act_debug: false 
     obs_pred: 
       net:
         _target_: src.runner.ObsPredNet
@@ -32,7 +32,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       optim:
         _target_: torch.optim.Adam
         _partial_: true
-        lr: 3e-4
+        lr: 1e-2
       middle_detach: true
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none

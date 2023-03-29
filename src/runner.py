@@ -344,7 +344,7 @@ class CustomSACPolicy(SACPolicy):
 
 		### pred loss
 		if self.global_cfg.actor_input.obs_pred:
-			pred_loss = (batch.actor_input_cur - batch.info["obs_nodelay"]) ** 2
+			pred_loss = (batch.pred_output_cur - batch.info["obs_nodelay"]) ** 2
 			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
 			pred_loss = pred_loss.mean()
 			combined_loss = actor_loss + pred_loss
