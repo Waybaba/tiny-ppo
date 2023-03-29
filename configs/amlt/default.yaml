@@ -208,7 +208,6 @@ search:
       global_cfg.actor_input.obs_pred.net.encoder_net.mlp_hidden_sizes={obs_pred_encoder_mlp_hidden_sizes}
       global_cfg.actor_input.obs_pred.net.decoder_net.mlp_hidden_sizes={obs_pred_decoder_mlp_hidden_sizes}
       global_cfg.actor_input.obs_pred.input_type={obs_pred_input_type}
-      # TODO input type
       collector.train_collector.buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
       +trainer.show_progress=false
