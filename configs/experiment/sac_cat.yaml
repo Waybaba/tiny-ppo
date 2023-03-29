@@ -18,25 +18,32 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     burnin_num: 0 # only works for stack_rnn
     noise_act_debug: false 
     obs_pred: 
-      net:
-        _target_: src.runner.ObsPredNet
-        _partial_: true
-        device: ${device}
-        net: 
-          _target_: src.runner.RNN_MLP_Net
-          _partial_: true
-          rnn_layer_num: 0
-          rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [512,512,512]
-          mlp_softmax: false
-        
+      middle_detach: true
+      input_type: "feat" # obs or feat
+      feat_dim: 256
       optim:
         _target_: torch.optim.Adam
         _partial_: true
         lr: 3e-4
-      middle_detach: true
-      input_type: "feat" # obs or feat
-      feat_idx: -1
+      net:
+        _target_: src.runner.ObsPredNet
+        _partial_: true
+        device: ${device}
+        feat_dim: ${global_cfg.actor_input.obs_pred.feat_dim}
+        encoder_net: 
+          _target_: src.runner.RNN_MLP_Net
+          _partial_: true
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [256]
+          mlp_softmax: false
+        decoder_net:
+          _target_: src.runner.RNN_MLP_Net
+          _partial_: true
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [256]
+          mlp_softmax: false
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle

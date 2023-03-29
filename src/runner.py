@@ -461,14 +461,22 @@ class CustomSACPolicy(SACPolicy):
 				if self.global_cfg.actor_input.obs_pred:
 					batch_end.pred_input_cur = batch_end.actor_input_cur
 					batch_end.pred_input_next = batch_end.actor_input_next
-					batch_end.pred_output_cur = self.pred_net(batch_end.pred_input_cur)[0]
-					batch_end.pred_output_next = self.pred_net(batch_end.pred_input_next)[0]
-					if self.global_cfg.actor_input.obs_pred.middle_detach: 
-						batch_end.actor_input_cur = batch_end.pred_output_cur.detach()
-						batch_end.actor_input_next = batch_end.pred_output_next.detach()
+					pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
+					pred_output_next, pred_info_next = self.pred_net(batch_end.pred_input_next)
+					batch_end.pred_output_cur = pred_output_cur[0]
+					batch_end.pred_output_next = pred_output_next[0]
+					if self.global_cfg.actor_input.obs_pred.input_type == "obs":
+						batch_end.actor_input_cur = pred_output_cur[0]
+						batch_end.actor_input_next = pred_output_next[0]
+					elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
+						batch_end.actor_input_cur = pred_info_cur["feats"]
+						batch_end.actor_input_next = pred_info_next["feats"]
 					else:
-						batch_end.actor_input_cur = batch_end.pred_output_cur
-						batch_end.actor_input_next = batch_end.pred_output_next
+						raise NotImplementedError
+					# detach
+					if self.global_cfg.actor_input.obs_pred.middle_detach: 
+						batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
+						batch_end.actor_input_next = batch_end.actor_input_next.detach()
 				## pop all keys except for the ones mentioned above
 				# for k in batch_end.keys():
 				# 	if k not in ["actor_input_cur", "actor_input_next", "valid_mask", "info"]:
@@ -587,7 +595,6 @@ class CustomSACPolicy(SACPolicy):
 					obs.shape[0], 
 					self.pred_net.input_dim if self.global_cfg.actor_input.obs_pred else self.actor.net.input_dim
 				])
-				obs = self.pred_net(obs)[0].cpu() if self.global_cfg.actor_input.obs_pred else obs
 			else: # normal step
 				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1): # when historical_num == 0, would return False as historical_act
 					# ps. historical_act == None when no error
@@ -595,7 +602,6 @@ class CustomSACPolicy(SACPolicy):
 					obs = np.concatenate([
 						self.get_obs_base(batch, "actor", "next"),
 					], axis=-1)
-					obs = self.pred_net(obs)[0].cpu() if self.global_cfg.actor_input.obs_pred else obs
 				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
 					obs = np.concatenate([
 						self.get_obs_base(batch, "actor", "next"),
@@ -603,8 +609,15 @@ class CustomSACPolicy(SACPolicy):
 						if not self.global_cfg.actor_input.noise_act_debug else \
 						np.random.normal(size=batch.info["historical_act"].shape, loc=0, scale=1),
 					], axis=-1)
-					obs = self.pred_net(obs)[0].cpu() if self.global_cfg.actor_input.obs_pred else obs
 				else: raise ValueError("historical_act shape not implemented")
+			if self.global_cfg.actor_input.obs_pred:
+				pred_output, pred_info = self.pred_net(obs)
+				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
+					obs = pred_output[0].cpu()
+				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
+					obs = pred_info["feats"].cpu()
+				else:
+					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([1, self.actor.net.input_dim]) # TODO should be obs+zero_act
@@ -967,7 +980,12 @@ class CustomRecurrentActorProb(nn.Module):
 		self.act_num = action_shape[0]
 		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
 			if self.hps["global_cfg"].actor_input.obs_pred:
-				input_dim = state_shape[0]
+				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
+					input_dim = self.hps["global_cfg"].actor_input.obs_pred.feat_dim
+				elif self.hps["global_cfg"].actor_input.obs_pred.input_type == "obs":
+					input_dim = state_shape[0]
+				else:
+					raise ValueError("invalid input_type")
 			else:
 				input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
 			output_dim = int(np.prod(action_shape))
@@ -1014,11 +1032,18 @@ class ObsPredNet(nn.Module):
 		super().__init__()
 		self.global_cfg = global_cfg
 		self.hps = kwargs
+		# assert head_num == 1, the rnn layer of decoder is 0
 		self.input_dim = state_shape[0] + action_shape[0] * global_cfg.actor_input.history_num
 		self.output_dim = state_shape[0]
+		self.feat_dim = self.hps["feat_dim"]
 		self.encoder_input_dim = self.input_dim
-		self.encoder_output_dim = self.output_dim
-		# assert head_num == 1, the rnn layer of decoder is 0
+		self.encoder_output_dim = self.feat_dim
+		self.decoder_input_dim = self.feat_dim
+		self.decoder_output_dim = self.output_dim
+		self.encoder_net = self.hps["encoder_net"](self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=1)
+		self.decoder_net = self.hps["decoder_net"](self.decoder_input_dim, self.decoder_output_dim, device=self.hps["device"], head_num=1)
+		self.encoder_net.to(self.hps["device"])
+		self.decoder_net.to(self.hps["device"])
 		# self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=1)
 		# self.net = self.net.to(self.hps["device"])
 		
@@ -1029,11 +1054,14 @@ class ObsPredNet(nn.Module):
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
 		# output, state_ = self.net(input)
-		feat_, state_ = self.encoder_net(input)
-		feat = feat_[0]
-		output, _ = self.decoder_net(feat)
+		feats_, state_ = self.encoder_net(input)
+		feats = feats_[0]
+		output, _ = self.decoder_net(feats)
 		output = output[0]
-		return output, state_
+		return output, {
+			"state": state_,
+			"feats": feats,
+		}
 
 # utils
 
