@@ -210,7 +210,7 @@ search:
       global_cfg.actor_input.obs_pred.input_type={obs_pred_input_type}
       collector.train_collector.buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
-      +trainer.show_progress=false
+      +runner.show_progress=false
       env.delay={env_delay}
       tags=[{tag}]
   type: grid
