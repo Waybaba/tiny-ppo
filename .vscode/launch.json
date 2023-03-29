@@ -61,6 +61,7 @@
 				"env.name=HalfCheetah-v4",
 				"env.delay=8",
 				"start_timesteps=1",
+				"+trainer.show_progress=false",
 			],
 		},
 		// entry.py sac_rnn
