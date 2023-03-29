@@ -221,7 +221,7 @@ search:
     - name: env_name
       # values: [HalfCheetah-v4]
       # values: [HalfCheetah-v4]
-      values: [Ant-v4,Hopper-v4,Walker2d-v4]
+      values: [HalfCheetah-v4,Ant-v4,Hopper-v4,Walker2d-v4]
     - name: experiment
       values: [sac_cat]
     - name: actor_mlp_hidden_sizes
