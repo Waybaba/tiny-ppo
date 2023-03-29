@@ -5,7 +5,7 @@ target:
   name: msrresrchvc    # more GPUs 
 
 environment:
-  image: waybaba/rl:v2
+  image: waybaba/rl:v3
   username: waybaba
   setup:
     - echo "setup start..."
