@@ -404,7 +404,7 @@ class CustomSACPolicy(SACPolicy):
 				to_logs["learn/alpha"] = self._alpha.item()
 			if self.global_cfg.actor_input.obs_pred:
 				to_logs["learn/loss_pred"] = pred_loss.item()
-			wandb.log(to_logs, step=self.learn_step)
+			wandb.log(to_logs, step=self.learn_step, commit=self.global_cfg.log_instant_commit)
 			# wandb.log({"time_related/learn_step": self.train_env_infer_step}, step=int(minutes))
 		return result
 	
@@ -686,7 +686,7 @@ class CustomSACPolicy(SACPolicy):
 					"train_env_infer/expectedT_1mStep_hr": minutes / self.train_env_infer_step * 1e6 / 60,
 					"train_env_infer/time_minutes": minutes,
 				}
-				wandb.log(to_logs, step=self.train_env_infer_step)
+				wandb.log(to_logs, step=self.train_env_infer_step, commit=self.global_cfg.log_instant_commit)
 				# wandb.log({"time_related/train_env_infer_step": self.train_env_infer_step}, step=int(time() - self.start_time))
 		return Batch(
 			logits=logits,

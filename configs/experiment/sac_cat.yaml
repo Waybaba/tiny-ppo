@@ -32,14 +32,17 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       optim:
         _target_: torch.optim.Adam
         _partial_: true
-        lr: 1e-2
+        lr: 3e-4
       middle_detach: true
+      input_type: "feat" # obs or feat
+      feat_idx: -1
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
     history_num: ${global_cfg.actor_input.history_num}
     burnin_num: ${global_cfg.actor_input.burnin_num}
   log_interval: 100
+  log_instant_commit: true # false would make the wandb sync only once per epoch
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
