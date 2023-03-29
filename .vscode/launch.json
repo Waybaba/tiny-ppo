@@ -59,7 +59,7 @@
 			"args": [
 				"experiment=sac_cat",
 				"env.name=HalfCheetah-v4",
-				"env.delay=0",
+				"env.delay=8",
 				"start_timesteps=1",
 			],
 		},

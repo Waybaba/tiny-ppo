@@ -1014,12 +1014,13 @@ class ObsPredNet(nn.Module):
 		super().__init__()
 		self.global_cfg = global_cfg
 		self.hps = kwargs
-		input_dim = state_shape[0] + action_shape[0] * global_cfg.actor_input.history_num
-		output_dim = state_shape[0]
-		self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=1)
-		self.net = self.net.to(self.hps["device"])
-		self.input_dim = input_dim
-		self.output_dim = output_dim
+		self.input_dim = state_shape[0] + action_shape[0] * global_cfg.actor_input.history_num
+		self.output_dim = state_shape[0]
+		self.encoder_input_dim = self.input_dim
+		self.encoder_output_dim = self.output_dim
+		# assert head_num == 1, the rnn layer of decoder is 0
+		# self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=1)
+		# self.net = self.net.to(self.hps["device"])
 		
 	def forward(
 		self,
@@ -1027,9 +1028,12 @@ class ObsPredNet(nn.Module):
 		info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
-		output, state_ = self.net(input)
-		value = output[0]
-		return value, state_
+		# output, state_ = self.net(input)
+		feat_, state_ = self.encoder_net(input)
+		feat = feat_[0]
+		output, _ = self.decoder_net(feat)
+		output = output[0]
+		return output, state_
 
 # utils
 

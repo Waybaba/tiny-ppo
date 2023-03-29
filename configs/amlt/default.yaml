@@ -208,6 +208,7 @@ search:
       global_cfg.actor_input.obs_pred.net.net.mlp_hidden_sizes={obs_pred_mlp_hidden_sizes}
       collector.train_collector.buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
+      +trainer.show_progress=false
       env.delay={env_delay}
       tags=[{tag}]
   type: grid

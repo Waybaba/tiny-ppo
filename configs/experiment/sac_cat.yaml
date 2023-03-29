@@ -14,7 +14,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
     history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
-    history_num: 10 # ! TODO for case 0 and 1
+    history_num: 8 # ! TODO for case 0 and 1
     burnin_num: 0 # only works for stack_rnn
     noise_act_debug: false 
     obs_pred: 
@@ -29,6 +29,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           rnn_hidden_layer_size: 256
           mlp_hidden_sizes: [512,512,512]
           mlp_softmax: false
+        
       optim:
         _target_: torch.optim.Adam
         _partial_: true
