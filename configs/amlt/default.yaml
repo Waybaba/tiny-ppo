@@ -272,6 +272,6 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_pred_featureAsActorInput"] 
+      values: ["pred_obs_pred_featureAsActorInput_2"] 
     
 # global_cfg.actor_input.history_num={actor_history_num}
