@@ -3,7 +3,6 @@ description: AMLT
 target:
   service: singularity
   name: msrresrchvc    # more GPUs 
-  sku: 24G1-P40
 
 environment:
   image: waybaba/rl:v3
@@ -183,6 +182,7 @@ storage:
 search:
   job_template:
     name: RL_Delayed_{experiment_name:s}_{auto:5s}
+    sku: 24G1-P40
     command:
     - python src/entry.py
       -m
