@@ -24,7 +24,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       optim:
         _target_: torch.optim.Adam
         _partial_: true
-        lr: 3e-4
+        lr: 1e-3
       net:
         _target_: src.runner.ObsPredNet
         _partial_: true
@@ -106,12 +106,12 @@ runner:
 critic1_optim:
   _target_: ${actor_optim._target_}
   _partial_: true
-  lr: 3e-4
+  lr: 1e-3
 critic2_optim: ${critic1_optim}
 actor_optim:
   _target_: torch.optim.Adam
   _partial_: true
-  lr: 3e-4
+  lr: 1e-3
 
 
 # common - for all algorithms
