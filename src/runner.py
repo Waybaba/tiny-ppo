@@ -698,6 +698,7 @@ class CustomSACPolicy(SACPolicy):
 				to_logs = {
 					"train_env_infer/expectedT_1mStep_min": minutes / self.train_env_infer_step * 1e6,
 					"train_env_infer/expectedT_1mStep_hr": minutes / self.train_env_infer_step * 1e6 / 60,
+					"train_env_infer/expectedT_left_hr": minutes / self.train_env_infer_step * (1e6 - self.train_env_infer_step) / 60,
 					"train_env_infer/time_minutes": minutes,
 				}
 				pred_output = process_online_batch_info["pred_output"]

@@ -58,8 +58,9 @@
 			"justMyCode": true,
 			"args": [
 				"experiment=sac_cat",
-				"env.name=HalfCheetah-v4",
-				"env.delay=4",
+				// "env.name=HalfCheetah-v4",
+				"env.name=Hopper-v4",
+				"env.delay=8",
 				"start_timesteps=1",
 				"+trainer.show_progress=true",
 			],
