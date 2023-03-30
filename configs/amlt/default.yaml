@@ -3,6 +3,7 @@ description: AMLT
 target:
   service: singularity
   name: msrresrchvc    # more GPUs 
+  sku: 24G1-P40
 
 environment:
   image: waybaba/rl:v3
@@ -199,7 +200,7 @@ search:
       critic1.net.rnn_hidden_layer_size={critic_rnn_hidden_layer_size}
       global_cfg.actor_input.history_merge_method={actor_history_merge_method}
       global_cfg.actor_input.obs_type={actor_obs_type}
-      global_cfg.actor_input.history_num={actor_history_num}
+      # global_cfg.actor_input.history_num={actor_history_num}
       global_cfg.actor_input.burnin_num={actor_burnin_num}
       global_cfg.actor_input.noise_act_debug={noise_act_debug}
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
@@ -252,8 +253,8 @@ search:
       values: ["cat_mlp"]
     - name: actor_obs_type
       values: ["normal"]
-    - name: actor_history_num
-      values: [4,8]
+    # - name: actor_history_num
+    #   values: [8]
     - name: actor_burnin_num 
       values: [0.25]
     - name: noise_act_debug

@@ -405,7 +405,6 @@ class CustomSACPolicy(SACPolicy):
 			if self.global_cfg.actor_input.obs_pred:
 				to_logs["learn/loss_pred"] = pred_loss.item()
 			wandb.log(to_logs, step=self.learn_step, commit=self.global_cfg.log_instant_commit)
-			# wandb.log({"time_related/learn_step": self.train_env_infer_step}, step=int(minutes))
 		return result
 	
 	def process_fn(
@@ -587,6 +586,7 @@ class CustomSACPolicy(SACPolicy):
 		self, batch: Batch
 		):
 		obs = batch.obs
+		process_online_batch_info = {}
 		# if first step when act is none
 		assert batch.obs.shape[0] == 1, "for online batch, batch size must be 1"
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
@@ -618,6 +618,7 @@ class CustomSACPolicy(SACPolicy):
 					obs = pred_info["feats"].cpu()
 				else:
 					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
+				process_online_batch_info["pred_output"] = pred_output
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([1, self.actor.net.input_dim]) # TODO should be obs+zero_act
@@ -642,7 +643,7 @@ class CustomSACPolicy(SACPolicy):
 		else:
 			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")
 		batch.online_input = obs
-		return batch
+		return batch, process_online_batch_info
 
 	def compute_return_custom(self, batch):
 		""" custom defined calculation of returns (only one step)
@@ -670,7 +671,7 @@ class CustomSACPolicy(SACPolicy):
 		if not hasattr(batch, "is_preprocessed") or not batch.is_preprocessed: # online learn
 			### process the input from env (online learn).
 			input = "online_input"
-			batch = self.process_online_batch(batch)
+			batch, process_online_batch_info = self.process_online_batch(batch)
 		actor_input = batch[input]
 		logits, hidden = self.actor(actor_input, state=state, info=batch.info)
 		assert isinstance(logits, tuple)
@@ -699,8 +700,10 @@ class CustomSACPolicy(SACPolicy):
 					"train_env_infer/expectedT_1mStep_hr": minutes / self.train_env_infer_step * 1e6 / 60,
 					"train_env_infer/time_minutes": minutes,
 				}
-				wandb.log(to_logs, step=self.train_env_infer_step, commit=self.global_cfg.log_instant_commit)
-				# wandb.log({"time_related/train_env_infer_step": self.train_env_infer_step}, step=int(time() - self.start_time))
+				pred_output = process_online_batch_info["pred_output"]
+				with torch.no_grad():
+					to_logs["train_env_infer/pred_loss"] = (pred_output - torch.tensor(batch.info["obs_next_nodelay"],device=pred_output.device)).pow(2).mean().cpu().item()
+				wandb.log(to_logs, step=self.train_env_infer_step+1, commit=self.global_cfg.log_instant_commit)
 		return Batch(
 			logits=logits,
 			act=squashed_action,
