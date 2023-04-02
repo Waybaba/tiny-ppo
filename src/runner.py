@@ -404,6 +404,7 @@ class CustomSACPolicy(SACPolicy):
 				to_logs["learn/alpha"] = self._alpha.item()
 			if self.global_cfg.actor_input.obs_pred:
 				to_logs["learn/loss_pred"] = pred_loss.item()
+				to_logs["learn/abs_error_pred"] = pred_loss.item() ** 0.5
 			wandb.log(to_logs, step=self.learn_step, commit=self.global_cfg.log_instant_commit)
 		return result
 	
@@ -703,7 +704,9 @@ class CustomSACPolicy(SACPolicy):
 				}
 				pred_output = process_online_batch_info["pred_output"]
 				with torch.no_grad():
-					to_logs["train_env_infer/pred_loss"] = (pred_output - torch.tensor(batch.info["obs_next_nodelay"],device=pred_output.device)).pow(2).mean().cpu().item()
+					pred_loss = (pred_output - torch.tensor(batch.info["obs_next_nodelay"],device=pred_output.device)).pow(2).mean().cpu().item()
+					to_logs["train_env_infer/pred_loss"] = pred_loss
+					to_logs["train_env_infer/abs_error_pred"] = pred_loss ** 0.5
 				wandb.log(to_logs, step=self.train_env_infer_step+1, commit=self.global_cfg.log_instant_commit)
 		return Batch(
 			logits=logits,
@@ -1020,6 +1023,11 @@ class CustomRecurrentActorProb(nn.Module):
 			sigma = torch.clamp(sigma, min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
 		else:
 			raise NotImplementedError
+		if self.hps["pure_random"]:
+			# mu = mu * 1e-10 + torch.normal(mean=0., std=1., size=mu.shape, device=self.device)
+			mu = (torch.rand_like(mu, device=self.device) * 2) - 1
+			# sigma = torch.ones_like(sigma, device=self.device) * 1e-10
+			sigma = sigma * 1e-10
 		return (mu, sigma), state_
 	
 class ObsPredNet(nn.Module):

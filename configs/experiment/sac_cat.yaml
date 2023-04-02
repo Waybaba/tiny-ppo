@@ -16,7 +16,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_type: "normal" # normal or oracle
     history_num: ${env.delay} # ! TODO for case 0 and 1
     burnin_num: 0 # only works for stack_rnn
-    noise_act_debug: false 
+    noise_act_debug: false
     obs_pred: 
       middle_detach: true
       input_type: "obs" # obs or feat
@@ -65,6 +65,7 @@ actor:
     mlp_softmax: false
   unbounded: true
   conditioned_sigma: true
+  pure_random: false
 critic1:
   _target_: src.runner.CustomRecurrentCritic
   _partial_: true
@@ -86,6 +87,7 @@ policy:
   gamma: 0.99
   global_cfg: ${global_cfg}
   estimation_step: 1
+  deterministic_eval: true
   alpha:
     _target_: builtins.tuple
     _args_:

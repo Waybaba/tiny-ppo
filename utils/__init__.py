@@ -211,13 +211,13 @@ class DummyNumEnv(HalfCheetahEnv):
         self.count += 1
         res = super().step(action)
         obs = res[0]
-        obs = np.ones_like(obs) * self.count
+        obs = (np.ones_like(obs) * self.count)
         res = (obs, *res[1:])
         if self.count > 100:
             # res[2] = True
             res = (obs, res[1], True, *res[3:])
         # reward: 1 - (action - self.count) / 100
-        reward = 1 - (action - self.count) / 100
+        reward = 1 - (action[0] - self.count) / 100
         res = (obs, reward, *res[2:])
         return res
 
