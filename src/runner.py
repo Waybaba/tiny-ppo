@@ -429,18 +429,14 @@ class CustomSACPolicy(SACPolicy):
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			assert self.global_cfg.actor_input.history_num >= 0
 			if self.global_cfg.actor_input.history_num > 0:
-				# stacked_batch_prev [t-T+1, ..., t-1, t  ] the last one is id_end
-				# stacked_batch_cur  [t-T+2, ..., t  , t+1]
-				# TODO note that when the start target q
-				idx_next_stack = utils.idx_next_stack(indices, buffer, self.global_cfg.actor_input.history_num) # (B, T)
-				idx_end = idx_next_stack[:,-1] # (B, )
+				idx_stack = utils.idx_stack(indices, buffer, self.global_cfg.actor_input.history_num, direction=self.global_cfg.actor_input.trace_direction) # (B, T)
+				del indices
+				idx_end = idx_stack[:,-1] # (B, )
 				batch_end = buffer[idx_end] # (B, *)
-				stacked_batch_prev = buffer[buffer.prev(idx_next_stack)] # (B, T, *)
-				stacked_batch_cur = buffer[idx_next_stack] # (B, T, *)
 				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
 				batch_end.actor_input_cur = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "cur"),device=self.actor.device), # (B, T, *)
-					torch.tensor(stacked_batch_prev["act"].reshape(len(batch_end),-1),device=self.actor.device) \
+					self.get_historical_act(idx_end, self.global_cfg.actor_input.history_num, buffer, "cat", self.actor.device) \
 					if not self.global_cfg.actor_input.noise_act_debug else \
 					torch.normal(size=stacked_batch_prev["act"].reshape(batch_end.obs.shape[0],-1).shape, mean=0., std=1.,device=self.actor.device),
 				], dim=-1)
@@ -448,11 +444,18 @@ class CustomSACPolicy(SACPolicy):
 				# dict_a = torch.tensor(batch_end.info["historical_act"]).to(device=self.actor.device)
 				batch_end.actor_input_next = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "next"),device=self.actor.device), # (B, T, *)
-					torch.tensor(stacked_batch_cur["act"].reshape(len(batch_end),-1),device=self.actor.device) \
+					self.get_historical_act(buffer.next(idx_end), self.global_cfg.actor_input.history_num, buffer, "cat", self.actor.device) \
 					if not self.global_cfg.actor_input.noise_act_debug else \
 					torch.normal(size=stacked_batch_cur["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device),
 				], dim=-1) # (B, T, *)
-				batch_end.valid_mask = torch.tensor(idx_end != buffer.next(idx_end), device=self.actor.device).int() # (B, )
+				if self.global_cfg.actor_input.trace_direction == "next":
+					# all that reach end of episode should be invalid
+					batch_end.valid_mask = torch.tensor(idx_end != buffer.next(idx_end), device=self.actor.device).int() # (B, )
+				elif self.global_cfg.actor_input.trace_direction == "prev":
+					# all are valid while before the first action should be 0 filled
+					batch_end.valid_mask = torch.ones(len(batch_end), device=self.actor.device).int() # (B, )
+				else:
+					raise ValueError("trace_direction should be next or prev")
 				# TODO no first step problem
 				# DEBUG
 				# assert act_prev[0] == batch.info["historical_act"][0]
@@ -493,19 +496,19 @@ class CustomSACPolicy(SACPolicy):
 			assert self.global_cfg.actor_input.history_num > self.global_cfg.actor_input.burnin_num, "stack_rnn requires history_num > burnin_num, ususally, it could be a little larger than burnin_num"
 			# [t-T+1, ..., t-1, t] the last one is id_end
 			# TODO note that when the start target q
-			idx_next_stack = utils.idx_next_stack(indices, buffer, self.global_cfg.actor_input.history_num) # (B, T)
-			idx_end = idx_next_stack[:,-1] # (B, )
+			idx_stack = utils.idx_next_stack(indices, buffer, self.global_cfg.actor_input.history_num) # (B, T)
+			idx_end = idx_stack[:,-1] # (B, )
 			batch_end = buffer[idx_end] # (B, *)
-			stacked_batch_prev = buffer[idx_next_stack] # (B, T, *)
-			stacked_batch_cur = buffer[buffer.next(idx_next_stack)] # (B, T, *)
+			stacked_batch_prev = buffer[idx_stack] # (B, T, *)
+			stacked_batch_cur = buffer[buffer.next(idx_stack)] # (B, T, *)
 			indices_bak = indices
-			indices = idx_next_stack.flatten()
+			indices = idx_stack.flatten()
 			batch_ = buffer[indices]
 			batch_.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
 			batch_.valid_mask = buffer.next(indices) != indices
 			batch_.to_torch(device=self.actor.device) # move all to self.device
 			# stacked_batch_prev.info["obs_nodelay"] = buffer[buffer.prev(idx_next_stack)].info["obs_next_nodelay"] # (B, T, *)
-			stacked_batch_cur.info["obs_nodelay"] = buffer[idx_next_stack].info["obs_next_nodelay"] # (B, T, *)
+			stacked_batch_cur.info["obs_nodelay"] = buffer[idx_stack].info["obs_next_nodelay"] # (B, T, *)
 			batch_.actor_input_cur = torch.cat([
 				torch.tensor(self.get_obs_base(stacked_batch_cur, "actor", "cur"),device=self.actor.device), # (B, T, *)
 				torch.tensor(stacked_batch_prev["act"],device=self.actor.device), # (B, T, *)
@@ -516,7 +519,7 @@ class CustomSACPolicy(SACPolicy):
 			], dim=-1) # (B*T, *)
 			batch_.valid_mask = torch.tensor(indices != buffer.next(indices), device=self.actor.device).int() # (B, )
 			# apply burn in mask
-			burn_in_mask = torch.ones(idx_next_stack.shape, device=self.actor.device).float()
+			burn_in_mask = torch.ones(idx_stack.shape, device=self.actor.device).float()
 			if type(self.global_cfg.actor_input.burnin_num) == float:
 				burn_in_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num)
 			else:
@@ -747,6 +750,36 @@ class CustomSACPolicy(SACPolicy):
 			elif self.global_cfg.critic_input.obs_type == "oracle":
 				if stage == "cur": return batch.info["obs_nodelay"]
 				elif stage == "next": return batch.info["obs_next_nodelay"]
+
+	def get_historical_act(self, indices, step, buffer, type=None, device=None):
+		""" get historical act
+		input [t_0, t_1, ...]
+		output [
+			[t_0-step, t_0-step+1, ... t_0-1],
+			[t_1-step, t_1-step+1, ... t_1-1],
+			...
+		]
+		ps. note that cur step is not included
+		ps. the neg step is set to 0.
+		:param indices: indices of the batch (B,)
+		:param step: the step of the batch. int
+		:param buffer: the buffer. 
+		:return: historical act (B, step)
+		"""
+		assert type in ["cat", "stack"], "type must be cat or stack"
+		# [t_0-step, t_0-step+1, ... t_0-1, t_0]
+		idx_stack_plus1 = utils.idx_stack(indices, buffer, step+1, direction="prev")
+		# [t_0-step,   t_0-step+1, ..., t_0-1]
+		idx_stack_next = idx_stack_plus1[:, :-1] # (B, step)
+		# [t_0-step+1, t_0-step+2, ...,   t_0]
+		idx_stack = idx_stack_plus1[:, 1:] # (B, step)
+		invalid = (idx_stack_next == idx_stack) # (B, step)
+		historical_act = buffer[idx_stack].act # (B, step, act_dim)
+		historical_act[invalid] = 0.
+		if type == "cat":
+			historical_act = historical_act.reshape(historical_act.shape[0], -1) # (B, step*act_dim)
+		historical_act = torch.tensor(historical_act, device=device)
+		return historical_act
 
 # net
 
