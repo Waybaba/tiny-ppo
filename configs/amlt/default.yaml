@@ -243,9 +243,9 @@ search:
     - name: middle_detach
       values: [true]
     - name: obs_pred_encoder_mlp_hidden_sizes
-      values: ["[512]"]
+      values: ["[256]"]
     - name: obs_pred_decoder_mlp_hidden_sizes
-      values: ["[512]"]
+      values: ["[256]"]
     - name: obs_pred_input_type
       values: ["obs"]
     - name: actor_history_merge_method
@@ -272,6 +272,6 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_pred_featureAsActorInput_lr_3e_4_1e_3"] 
+      values: ["pred_obs_pred_featureAsActorInput_lr_3e_4_1e_3b256"] 
     
 # global_cfg.actor_input.history_num={actor_history_num}
