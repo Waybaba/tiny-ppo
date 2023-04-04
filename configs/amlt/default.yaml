@@ -247,7 +247,7 @@ search:
     - name: middle_detach
       values: [true]
     - name: obs_pred_encoder_mlp_hidden_sizes
-      values: ["[512,512,512,512]"]
+      values: ["[512,512,512]"]
     - name: obs_pred_decoder_mlp_hidden_sizes
       values: ["[256]"]
     - name: obs_pred_dropout
