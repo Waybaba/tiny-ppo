@@ -250,7 +250,7 @@ search:
     - name: obs_pred_decoder_mlp_hidden_sizes
       values: ["[256]"]
     - name: obs_pred_dropout
-      values: [0.1,null]
+      values: [0.5,0.1,0.0]
     - name: obs_pred_input_type
       values: ["obs"]
     - name: actor_history_merge_method
