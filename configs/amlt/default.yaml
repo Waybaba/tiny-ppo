@@ -247,11 +247,11 @@ search:
     - name: middle_detach
       values: [true]
     - name: obs_pred_encoder_mlp_hidden_sizes
-      values: ["[512,512,512]"]
+      values: ["[256,256]"]
     - name: obs_pred_decoder_mlp_hidden_sizes
       values: ["[256]"]
     - name: obs_pred_dropout
-      values: [0.5,0.1,0.0]
+      values: ["null"]
     - name: obs_pred_input_type
       values: ["obs"]
     - name: actor_history_merge_method
@@ -282,6 +282,6 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_deep_dropout"] 
+      values: ["pred_obs_fixResetZeroBug"] 
     
 # global_cfg.actor_input.history_num={actor_history_num}
