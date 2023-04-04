@@ -25,11 +25,10 @@ class DelayedRoboticEnv(gym.Wrapper):
     def reset(self):
         res = self.env.reset()
         if isinstance(res, tuple): # (obs, {}) # discard info {}
-            # res[-1]["obs_cur"] = res[0]
-            return res[0]
-        self.prev_act = np.zeros_like(self.env.action_space.shape) # ! TODO conditional set
-        if self.global_cfg.historical_act and self.global_cfg.historical_act.num:
-            self.act_buf = [np.zeros_like(self.env.action_space.shape) for _ in range(int(self.historical_act.type.split("-")[1]))]
+            res = res[0]
+        self.prev_act = np.zeros(self.env.action_space.shape) # ! TODO conditional set
+        if self.history_num > 0:
+            self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
         return res
 
     def preprocess_fn(self, res, action):

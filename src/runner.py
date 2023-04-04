@@ -302,6 +302,7 @@ class CustomSACPolicy(SACPolicy):
 		return td, critic_loss
 	
 	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
+		self.train()
 		# critic 1&2
 		td1, critic1_loss = self._mse_optimizer(
 			batch, self.critic1, self.critic1_optim
@@ -402,6 +403,7 @@ class CustomSACPolicy(SACPolicy):
 		use to_torch to move all the data to the device. So the following operations 
 		should be consistent
 		"""
+		self.train()
 		bsz = len(indices)
 		# init
 		batch.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
@@ -572,6 +574,7 @@ class CustomSACPolicy(SACPolicy):
 	def process_online_batch(
 		self, batch: Batch
 		):
+		self.eval()
 		obs = batch.obs
 		process_online_batch_info = {}
 		# if first step when act is none
