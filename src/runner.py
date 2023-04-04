@@ -338,9 +338,6 @@ class CustomSACPolicy(SACPolicy):
 			- torch.min(current_q1a, current_q2a)
 		) * batch.valid_mask
 		).mean()
-		# self.actor_optim.zero_grad()
-		# actor_loss.backward()
-		# self.actor_optim.step()
 
 		### pred loss
 		if self.global_cfg.actor_input.obs_pred:
@@ -464,13 +461,11 @@ class CustomSACPolicy(SACPolicy):
 				if self.global_cfg.actor_input.obs_pred:
 					batch_end.pred_input_cur = batch_end.actor_input_cur
 					batch_end.pred_input_next = batch_end.actor_input_next
-					pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
-					pred_output_next, pred_info_next = self.pred_net(batch_end.pred_input_next)
-					batch_end.pred_output_cur = pred_output_cur
-					batch_end.pred_output_next = pred_output_next
+					batch_end.pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
+					batch_end.pred_output_next, pred_info_next = self.pred_net(batch_end.pred_input_next)
 					if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-						batch_end.actor_input_cur = pred_output_cur
-						batch_end.actor_input_next = pred_output_next
+						batch_end.actor_input_cur = batch_end.pred_output_cur,
+						batch_end.actor_input_next = batch_end.pred_output_next
 					elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 						batch_end.actor_input_cur = pred_info_cur["feats"]
 						batch_end.actor_input_next = pred_info_next["feats"]
@@ -565,7 +560,6 @@ class CustomSACPolicy(SACPolicy):
 			raise NotImplementedError
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
-		
 		# batch.returns = self.compute_return_custom(batch)
 		if "from_target_q" not in batch:
 			batch = self.compute_nstep_return( # ! TODO
@@ -797,7 +791,8 @@ class RNN_MLP_Net(nn.Module):
 		mlp_hidden_sizes: Sequence[int],
 		mlp_softmax: bool,  # TODO add
 		device: str,
-		head_num: int
+		head_num: int,
+		dropout: float = None,
 	):
 		super().__init__()
 		self.device = device
@@ -806,6 +801,7 @@ class RNN_MLP_Net(nn.Module):
 		self.rnn_layer_num = rnn_layer_num
 		self.rnn_hidden_layer_size = rnn_hidden_layer_size
 		self.mlp_hidden_sizes = mlp_hidden_sizes
+		self.dropout = dropout
 		# build rnn
 		if rnn_layer_num:
 			self.nn = nn.GRU(
@@ -824,9 +820,12 @@ class RNN_MLP_Net(nn.Module):
 					rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
 					output_dim,
 					mlp_hidden_sizes,
-					device=self.device
+					device=self.device,
+					activation=nn.ReLU
 				)
 			)
+			if self.dropout: 
+				self.mlps.append(nn.Dropout(self.dropout))
 		self.mlp = nn.ModuleList(self.mlps)
 	
 	def forward(

@@ -36,8 +36,9 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           _partial_: true
           rnn_layer_num: 0
           rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [256]
+          mlp_hidden_sizes: [512,512,512,512]
           mlp_softmax: false
+          dropout: 0.1
         decoder_net:
           _target_: src.runner.RNN_MLP_Net
           _partial_: true
