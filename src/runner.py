@@ -302,6 +302,7 @@ class CustomSACPolicy(SACPolicy):
 		return td, critic_loss
 	
 	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
+		to_logs = {}
 		self.train()
 		# critic 1&2
 		td1, critic1_loss = self._mse_optimizer(
@@ -334,7 +335,13 @@ class CustomSACPolicy(SACPolicy):
 			pred_loss = (batch.pred_output_cur - batch.info["obs_nodelay"]) ** 2
 			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
 			pred_loss = pred_loss.mean()
-			combined_loss = actor_loss + pred_loss
+			combined_loss = actor_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
+			to_logs["learn/obs_pred/loss_pred"] = pred_loss.item()
+			to_logs["learn/obs_pred/abs_error_pred"] = pred_loss.item() ** 0.5
+			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
+				kl_loss = -0.5 * (1 + batch.pred_info_cur_mu - batch.pred_info_cur_mu.pow(2) - batch.pred_info_cur_logvar.exp()).sum(-1).mean()
+				combined_loss = combined_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				to_logs["learn/obs_pred/loss_kl"] = kl_loss.item()
 			self.actor_optim.zero_grad()
 			self._pred_optim.zero_grad()
 			combined_loss.backward()
@@ -360,40 +367,22 @@ class CustomSACPolicy(SACPolicy):
 
 
 		self.sync_weight()
-
-		result = {
-			"learn/loss_actor": actor_loss.item(),
-			"learn/loss_critic1": critic1_loss.item(),
-			"learn/loss_critic2": critic2_loss.item(),
-		}
+		to_logs["learn/loss_actor"] = actor_loss.item()
+		to_logs["learn/loss_critic1"] = critic1_loss.item()
+		to_logs["learn/loss_critic2"] = critic2_loss.item()
 		if self._is_auto_alpha:
-			result["learn/target_entropy"] = self._target_entropy
-			result["learn/loss_alpha"] = alpha_loss.item()
-			result["learn/_log_alpha"] = self._log_alpha.item()
-			result["learn/alpha"] = self._alpha.item()  # type: ignore
-		if self.global_cfg.actor_input.obs_pred:
-			result["learn/loss_pred"] = pred_loss.item()
+			to_logs["learn/target_entropy"] = self._target_entropy
+			to_logs["learn/loss_alpha"] = alpha_loss.item()
+			to_logs["learn/_log_alpha"] = self._log_alpha.item()
+			to_logs["learn/alpha"] = self._alpha.item()  # type: ignore
 		### log - learn
 		if not hasattr(self, "learn_step"): self.learn_step = 1
 		if not hasattr(self, "start_time"): self.start_time = time()
 		self.learn_step += 1
 		if self.learn_step % self.global_cfg.log_interval == 0:
 			minutes = (time() - self.start_time) / 60
-			to_logs = {
-				"learn/loss_actor": actor_loss.item(),
-				"learn/loss_critic1": critic1_loss.item(),
-				"learn/loss_critic2": critic2_loss.item(),
-			}
-			if self._is_auto_alpha:
-				to_logs["learn/target_entropy"] = self._target_entropy
-				to_logs["learn/loss_alpha"] = alpha_loss.item()
-				to_logs["learn/_log_alpha"] = self._log_alpha.item()
-				to_logs["learn/alpha"] = self._alpha.item()
-			if self.global_cfg.actor_input.obs_pred:
-				to_logs["learn/loss_pred"] = pred_loss.item()
-				to_logs["learn/abs_error_pred"] = pred_loss.item() ** 0.5
 			wandb.log(to_logs, step=self.learn_step, commit=self.global_cfg.log_instant_commit)
-		return result
+		return to_logs
 	
 	def process_fn(
 		self, batch: Batch, buffer: ReplayBuffer, indices: np.ndarray
@@ -455,7 +444,7 @@ class CustomSACPolicy(SACPolicy):
 					batch_end.pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
 					batch_end.pred_output_next, pred_info_next = self.pred_net(batch_end.pred_input_next)
 					if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-						batch_end.actor_input_cur = batch_end.pred_output_cur,
+						batch_end.actor_input_cur = batch_end.pred_output_cur
 						batch_end.actor_input_next = batch_end.pred_output_next
 					elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 						batch_end.actor_input_cur = pred_info_cur["feats"]
@@ -466,6 +455,9 @@ class CustomSACPolicy(SACPolicy):
 					if self.global_cfg.actor_input.obs_pred.middle_detach: 
 						batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
 						batch_end.actor_input_next = batch_end.actor_input_next.detach()
+					if self.global_cfg.actor_input.obs_pred.net_type == "vae":
+						batch_end.pred_info_cur_mu = pred_info_cur["mu"]
+						batch_end.pred_info_cur_logvar = pred_info_cur["logvar"]
 				## pop all keys except for the ones mentioned above
 				# for k in batch_end.keys():
 				# 	if k not in ["actor_input_cur", "actor_input_next", "valid_mask", "info"]:
@@ -553,7 +545,7 @@ class CustomSACPolicy(SACPolicy):
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
 		# batch.returns = self.compute_return_custom(batch)
 		if "from_target_q" not in batch:
-			batch = self.compute_nstep_return( # ! TODO
+			batch = self.compute_nstep_return(
 				batch, buffer, indices, self._target_q, self._gamma, self._n_step,
 				self._rew_norm
 			)
@@ -806,8 +798,9 @@ class RNN_MLP_Net(nn.Module):
 			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
 		# build mlp
 		self.mlps = []
-		for i in range(head_num):
-			self.mlps.append(
+		for _ in range(head_num):
+			module_list = []
+			module_list.append(
 				MLP(
 					rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
 					output_dim,
@@ -817,7 +810,8 @@ class RNN_MLP_Net(nn.Module):
 				)
 			)
 			if self.dropout: 
-				self.mlps.append(nn.Dropout(self.dropout))
+				module_list.append(nn.Dropout(self.dropout))
+			self.mlps.append(nn.Sequential(*module_list))
 		self.mlp = nn.ModuleList(self.mlps)
 	
 	def forward(
@@ -1069,6 +1063,7 @@ class ObsPredNet(nn.Module):
 		self.global_cfg = global_cfg
 		self.hps = kwargs
 		# assert head_num == 1, the rnn layer of decoder is 0
+		assert self.hps["net_type"] in ["vae", "mlp"], "invalid net_type {}".format(self.hps["net_type"])
 		self.input_dim = state_shape[0] + action_shape[0] * global_cfg.actor_input.history_num
 		self.output_dim = state_shape[0]
 		self.feat_dim = self.hps["feat_dim"]
@@ -1076,12 +1071,13 @@ class ObsPredNet(nn.Module):
 		self.encoder_output_dim = self.feat_dim
 		self.decoder_input_dim = self.feat_dim
 		self.decoder_output_dim = self.output_dim
-		self.encoder_net = self.hps["encoder_net"](self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=1)
+		if self.hps["net_type"]=="vae":
+			self.encoder_net = self.hps["encoder_net"](self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=2)
+		elif self.hps["net_type"]=="mlp":
+			self.encoder_net = self.hps["encoder_net"](self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=1)
 		self.decoder_net = self.hps["decoder_net"](self.decoder_input_dim, self.decoder_output_dim, device=self.hps["device"], head_num=1)
 		self.encoder_net.to(self.hps["device"])
 		self.decoder_net.to(self.hps["device"])
-		# self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=1)
-		# self.net = self.net.to(self.hps["device"])
 		
 	def forward(
 		self,
@@ -1089,16 +1085,25 @@ class ObsPredNet(nn.Module):
 		info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
-		# output, state_ = self.net(input)
-		feats_, state_ = self.encoder_net(input)
-		feats = feats_[0]
+		info = {}
+		encoder_outputs, state_ = self.encoder_net(input)
+		if self.hps["net_type"] == "vae":
+			mu, logvar = encoder_outputs
+			feats = self.vae_sampling(mu, logvar)
+			info["mu"] = mu
+			info["logvar"] = logvar
+		elif self.hps["net_type"] == "mlp":
+			feats = encoder_outputs[0]
 		output, _ = self.decoder_net(feats)
 		output = output[0]
-		return output, {
-			"state": state_,
-			"feats": feats,
-		}
+		info["state"] = state_
+		info["feats"] = feats
+		return output, info
 
+	def vae_sampling(self, mu, log_var):
+		std = torch.exp(0.5*log_var)
+		eps = torch.randn_like(std)
+		return eps.mul(std).add_(mu) # return z sample
 # utils
 
 class DummyNet(nn.Module):
