@@ -225,7 +225,7 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      values: [0,1,2,4,8]
+      values: [1,2,4,8,16]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
@@ -256,9 +256,9 @@ search:
     - name: obs_pred_dropout
       values: ["null"]
     - name: obs_pred_input_type
-      values: ["obs", "feat"]
+      values: ["feat","obs"]
     - name: obs_pred_net_type
-      values: ["mlp", "vae"]
+      values: ["vae","mlp"]
     - name: obs_pred_pred_loss_weight
       values: [0.1,0.5,1.0]
     - name: obs_pred_norm_kl_loss_weight
@@ -272,7 +272,7 @@ search:
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
-      values: ["next"]
+      values: ["prev","next"]
     - name: noise_act_debug
       values: [false]
     - name: critic_history_merge_method
@@ -291,6 +291,6 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_vae"] 
+      values: ["pred_obs_fixResetZeroBug"] 
     
 # global_cfg.actor_input.history_num={actor_history_num}

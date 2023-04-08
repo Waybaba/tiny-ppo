@@ -20,9 +20,9 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     noise_act_debug: false
     obs_pred: 
       middle_detach: true
-      input_type: "obs" # obs or feat
+      input_type: "feat" # obs or feat
       feat_dim: 256
-      net_type: vae # vae or mlp
+      net_type: mlp # vae or mlp
       pred_loss_weight: 0.1
       norm_kl_loss_weight: 0.1
       optim:
