@@ -261,7 +261,7 @@ search:
     - name: obs_encode_feat_dim
       values: [64,128,256]
     - name: obs_encode_mlp_hidden_sizes
-      values: ["[256,256]"]
+      values: ["[256,256]","[256,256,256]"]
     - name: obs_encode_norm_kl_loss_weight
       values: [0.1,0.5,1.0,0.01]
     - name: actor_history_merge_method
