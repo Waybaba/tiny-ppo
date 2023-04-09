@@ -206,14 +206,6 @@ search:
       global_cfg.actor_input.noise_act_debug={noise_act_debug}
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
       global_cfg.critic_input.obs_type={critic_obs_type}
-      # global_cfg.actor_input.obs_pred.middle_detach={middle_detach}
-      # global_cfg.actor_input.obs_pred.net.encoder_net.mlp_hidden_sizes={obs_pred_encoder_mlp_hidden_sizes}
-      # global_cfg.actor_input.obs_pred.net.decoder_net.mlp_hidden_sizes={obs_pred_decoder_mlp_hidden_sizes}
-      # global_cfg.actor_input.obs_pred.input_type={obs_pred_input_type}
-      # global_cfg.actor_input.obs_pred.net.encoder_net.dropout={obs_pred_dropout}
-      # global_cfg.actor_input.obs_pred.net_type={obs_pred_net_type}
-      # global_cfg.actor_input.obs_pred.pred_loss_weight={obs_pred_pred_loss_weight}
-      # global_cfg.actor_input.obs_pred.norm_kl_loss_weight={obs_pred_norm_kl_loss_weight}
       global_cfg.actor_input.obs_encode.feat_dim={obs_encode_feat_dim}
       global_cfg.actor_input.obs_encode.net.mlp_hidden_sizes={obs_encode_mlp_hidden_sizes}
       global_cfg.actor_input.obs_encode.norm_kl_loss_weight{obs_encode_norm_kl_loss_weight}
@@ -301,5 +293,11 @@ search:
       values: [5]
     - name: tag
       values: ["obs_encode_test"] 
-    
-# global_cfg.actor_input.history_num={actor_history_num}
+      # global_cfg.actor_input.obs_pred.middle_detach={middle_detach}
+      # global_cfg.actor_input.obs_pred.net.encoder_net.mlp_hidden_sizes={obs_pred_encoder_mlp_hidden_sizes}
+      # global_cfg.actor_input.obs_pred.net.decoder_net.mlp_hidden_sizes={obs_pred_decoder_mlp_hidden_sizes}
+      # global_cfg.actor_input.obs_pred.input_type={obs_pred_input_type}
+      # global_cfg.actor_input.obs_pred.net.encoder_net.dropout={obs_pred_dropout}
+      # global_cfg.actor_input.obs_pred.net_type={obs_pred_net_type}
+      # global_cfg.actor_input.obs_pred.pred_loss_weight={obs_pred_pred_loss_weight}
+      # global_cfg.actor_input.obs_pred.norm_kl_loss_weight={obs_pred_norm_kl_loss_weight}
