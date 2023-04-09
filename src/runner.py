@@ -27,6 +27,19 @@ from torch.distributions import Independent, Normal
 from copy import deepcopy
 
 
+def kl_divergence(mu1, logvar1, mu2, logvar2):
+	"""
+	mu1, logvar1: mean and log variance of the first Gaussian distribution
+	mu2, logvar2: mean and log variance of the second Gaussian distribution
+	input:
+		mu1, mu2: (B, K)
+		logvar1, logvar2: (B, K)
+	output:
+		kl: (B, )
+	"""
+	kl = 0.5 * (logvar2 - logvar1 + (torch.exp(logvar1) + (mu1 - mu2).pow(2)) / torch.exp(logvar2) - 1)
+	return kl.sum(dim=-1)
+
 # policy
 class AsyncACDDPGPolicy(DDPGPolicy):
 	@staticmethod
@@ -361,9 +374,11 @@ class CustomSACPolicy(SACPolicy):
 			self.actor_optim.step()
 			self._pred_optim.step()
 		elif self.global_cfg.actor_input.obs_encode:
-			kl_loss =  -0.5 * (1 + batch.pred_info_cur_mu - batch.pred_info_cur_mu.pow(2) - batch.pred_info_cur_logvar.exp()).sum(-1).mean()
-			combined_loss = actor_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
-			to_logs["learn/obs_pred/loss_kl"] = kl_loss.item()
+			kl_loss = kl_divergence(batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar, batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar)
+			kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1) # TODO should we use mask here?
+			kl_loss = kl_loss.mean()
+			combined_loss = actor_loss + kl_loss * self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+			to_logs["learn/obs_encode/loss_kl"] = kl_loss.item()
 			self.actor_optim.zero_grad()
 			self._encode_optim.zero_grad()
 			combined_loss.backward()
@@ -641,7 +656,8 @@ class CustomSACPolicy(SACPolicy):
 					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
 				process_online_batch_info["pred_output"] = pred_output
 			elif self.global_cfg.actor_input.obs_encode:
-				obs = self.encode_net.normal_encode(obs).cpu()
+				encode_output, encode_info = self.encode_net.normal_encode(obs)
+				obs = encode_output.cpu()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([1, self.actor.net.input_dim]) # TODO should be obs+zero_act

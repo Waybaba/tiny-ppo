@@ -206,14 +206,17 @@ search:
       global_cfg.actor_input.noise_act_debug={noise_act_debug}
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
       global_cfg.critic_input.obs_type={critic_obs_type}
-      global_cfg.actor_input.obs_pred.middle_detach={middle_detach}
-      global_cfg.actor_input.obs_pred.net.encoder_net.mlp_hidden_sizes={obs_pred_encoder_mlp_hidden_sizes}
-      global_cfg.actor_input.obs_pred.net.decoder_net.mlp_hidden_sizes={obs_pred_decoder_mlp_hidden_sizes}
-      global_cfg.actor_input.obs_pred.input_type={obs_pred_input_type}
-      global_cfg.actor_input.obs_pred.net.encoder_net.dropout={obs_pred_dropout}
-      global_cfg.actor_input.obs_pred.net_type={obs_pred_net_type}
-      global_cfg.actor_input.obs_pred.pred_loss_weight={obs_pred_pred_loss_weight}
-      global_cfg.actor_input.obs_pred.norm_kl_loss_weight={obs_pred_norm_kl_loss_weight}
+      # global_cfg.actor_input.obs_pred.middle_detach={middle_detach}
+      # global_cfg.actor_input.obs_pred.net.encoder_net.mlp_hidden_sizes={obs_pred_encoder_mlp_hidden_sizes}
+      # global_cfg.actor_input.obs_pred.net.decoder_net.mlp_hidden_sizes={obs_pred_decoder_mlp_hidden_sizes}
+      # global_cfg.actor_input.obs_pred.input_type={obs_pred_input_type}
+      # global_cfg.actor_input.obs_pred.net.encoder_net.dropout={obs_pred_dropout}
+      # global_cfg.actor_input.obs_pred.net_type={obs_pred_net_type}
+      # global_cfg.actor_input.obs_pred.pred_loss_weight={obs_pred_pred_loss_weight}
+      # global_cfg.actor_input.obs_pred.norm_kl_loss_weight={obs_pred_norm_kl_loss_weight}
+      global_cfg.actor_input.obs_encode.feat_dim={obs_encode_feat_dim}
+      global_cfg.actor_input.obs_encode.net.mlp_hidden_sizes={obs_encode_mlp_hidden_sizes}
+      global_cfg.actor_input.obs_encode.norm_kl_loss_weight{obs_encode_norm_kl_loss_weight}
       global_cfg.actor_input.trace_direction={trace_direction}
       collector.train_collector.buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
@@ -247,22 +250,28 @@ search:
       values: [0]
     - name: critic_rnn_hidden_layer_size
       values: [256]
-    - name: middle_detach
-      values: [true]
-    - name: obs_pred_encoder_mlp_hidden_sizes
+    # - name: middle_detach
+    #   values: [true]
+    # - name: obs_pred_encoder_mlp_hidden_sizes
+    #   values: ["[256,256]"]
+    # - name: obs_pred_decoder_mlp_hidden_sizes
+    #   values: ["[256]"]
+    # - name: obs_pred_input_type
+    #   values: ["feat"]
+    # - name: obs_pred_dropout
+    #   values: ["null"]
+    # - name: obs_pred_net_type
+    #   values: ["vae","mlp"]
+    # - name: obs_pred_pred_loss_weight
+    #   values: [0.1,0.5,1.0]
+    # - name: obs_pred_norm_kl_loss_weight
+    #   values: [0.1,0.5,1.0]
+    - name: obs_encode_feat_dim
+      values: [64,128,256]
+    - name: obs_encode_mlp_hidden_sizes
       values: ["[256,256]"]
-    - name: obs_pred_decoder_mlp_hidden_sizes
-      values: ["[256]"]
-    - name: obs_pred_dropout
-      values: ["null"]
-    - name: obs_pred_input_type
-      values: ["feat","obs"]
-    - name: obs_pred_net_type
-      values: ["vae","mlp"]
-    - name: obs_pred_pred_loss_weight
-      values: [0.1,0.5,1.0]
-    - name: obs_pred_norm_kl_loss_weight
-      values: [0.1,0.5,1.0]
+    - name: obs_encode_norm_kl_loss_weight
+      values: [0.1,0.5,1.0,0.01]
     - name: actor_history_merge_method
       values: ["cat_mlp"]
     - name: actor_obs_type
@@ -272,7 +281,7 @@ search:
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
-      values: ["prev","next"]
+      values: ["prev"]
     - name: noise_act_debug
       values: [false]
     - name: critic_history_merge_method
@@ -291,6 +300,6 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_vae"] 
+      values: ["obs_encode_test"] 
     
 # global_cfg.actor_input.history_num={actor_history_num}

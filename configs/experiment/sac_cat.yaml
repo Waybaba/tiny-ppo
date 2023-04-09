@@ -69,7 +69,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           rnn_hidden_layer_size: 256
           mlp_hidden_sizes: [512,512]
           mlp_softmax: false
-          dropout: 0.1
+          dropout: 0.0
       
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
