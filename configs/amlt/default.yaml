@@ -207,7 +207,7 @@ search:
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
       global_cfg.critic_input.obs_type={critic_obs_type}
       global_cfg.actor_input.obs_encode.feat_dim={obs_encode_feat_dim}
-      global_cfg.actor_input.obs_encode.net.mlp_hidden_sizes={obs_encode_mlp_hidden_sizes}
+      global_cfg.actor_input.obs_encode.net.encoder_net.mlp_hidden_sizes={obs_encode_mlp_hidden_sizes}
       global_cfg.actor_input.obs_encode.norm_kl_loss_weight={obs_encode_norm_kl_loss_weight}
       global_cfg.actor_input.trace_direction={trace_direction}
       collector.train_collector.buffer.size={buffer_size}
