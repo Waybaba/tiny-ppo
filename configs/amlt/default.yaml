@@ -291,6 +291,6 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_fixResetZeroBug"] 
+      values: ["pred_obs_vae"] 
     
 # global_cfg.actor_input.history_num={actor_history_num}

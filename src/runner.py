@@ -273,6 +273,9 @@ class CustomSACPolicy(SACPolicy):
 			deterministic_eval=deterministic_eval,
 			**kwargs
 		)
+		
+		assert not (self.global_cfg.actor_input.obs_pred and self.global_cfg.actor_input.obs_encode), "obs_pred and obs_encode cannot be used at the same time"
+		
 		if self.global_cfg.actor_input.obs_pred:
 			self.pred_net = self.global_cfg.actor_input.obs_pred.net(
 				state_shape=self.state_space.shape,
@@ -281,6 +284,16 @@ class CustomSACPolicy(SACPolicy):
 			)
 			self._pred_optim = self.global_cfg.actor_input.obs_pred.optim(
 				self.pred_net.parameters(),
+			)
+		
+		if self.global_cfg.actor_input.obs_encode:
+			self.encode_net = self.global_cfg.actor_input.obs_encode.net(
+				state_shape=self.state_space.shape,
+				action_shape=kwargs["action_space"].shape,
+				global_cfg=self.global_cfg,
+			)
+			self._encode_optim = self.global_cfg.actor_input.obs_encode.optim(
+				self.encode_net.parameters(),
 			)
 	
 	def _mse_optimizer(self,
@@ -347,6 +360,15 @@ class CustomSACPolicy(SACPolicy):
 			combined_loss.backward()
 			self.actor_optim.step()
 			self._pred_optim.step()
+		elif self.global_cfg.actor_input.obs_encode:
+			kl_loss =  -0.5 * (1 + batch.pred_info_cur_mu - batch.pred_info_cur_mu.pow(2) - batch.pred_info_cur_logvar.exp()).sum(-1).mean()
+			combined_loss = actor_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+			to_logs["learn/obs_pred/loss_kl"] = kl_loss.item()
+			self.actor_optim.zero_grad()
+			self._encode_optim.zero_grad()
+			combined_loss.backward()
+			self.actor_optim.step()
+			self._encode_optim.step()
 		else:
 			self.actor_optim.zero_grad()
 			actor_loss.backward()
@@ -458,7 +480,21 @@ class CustomSACPolicy(SACPolicy):
 					if self.global_cfg.actor_input.obs_pred.net_type == "vae":
 						batch_end.pred_info_cur_mu = pred_info_cur["mu"]
 						batch_end.pred_info_cur_logvar = pred_info_cur["logvar"]
-				## pop all keys except for the ones mentioned above
+				if self.global_cfg.actor_input.obs_encode:
+					batch_end.encode_obs_input_cur = batch_end.actor_input_cur
+					batch_end.encode_obs_input_next = batch_end.actor_input_next
+					batch_end.encode_obs_output_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_input_cur)
+					batch_end.encode_obs_output_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_input_next)
+					batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
+					batch_end.encode_oracle_obs_output_next, encode_oracle_obs_info_next = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
+					batch_end.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
+					batch_end.encode_normal_info_cur_logvar = encode_obs_info_cur["logvar"]
+					batch_end.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
+					batch_end.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
+					if True: # TODO other ways
+						batch_end.actor_input_cur = batch_end.encode_obs_output_cur.detach()
+						batch_end.actor_input_next = batch_end.encode_obs_output_next.detach() # TODO ? detach?
+				## pop all keys except for the ones mentioned above	
 				# for k in batch_end.keys():
 				# 	if k not in ["actor_input_cur", "actor_input_next", "valid_mask", "info"]:
 				# 		batch_end.pop(k)
@@ -573,10 +609,13 @@ class CustomSACPolicy(SACPolicy):
 		assert batch.obs.shape[0] == 1, "for online batch, batch size must be 1"
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			if len(batch.act.shape) == 0: # first step (zero cat)
-				obs = np.zeros([
-					obs.shape[0], 
-					self.pred_net.input_dim if self.global_cfg.actor_input.obs_pred else self.actor.net.input_dim
-				])
+				if self.global_cfg.actor_input.obs_pred:
+					new_dim = self.pred_net.input_dim
+				elif self.global_cfg.actor_input.obs_encode:
+					new_dim = self.encode_net.normal_encode_dim
+				else:
+					new_dim = self.actor.net.input_dim
+				obs = np.zeros([obs.shape[0], new_dim])
 			else: # normal step
 				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1): # when historical_num == 0, would return False as historical_act
 					# ps. historical_act == None when no error
@@ -601,6 +640,8 @@ class CustomSACPolicy(SACPolicy):
 				else:
 					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
 				process_online_batch_info["pred_output"] = pred_output
+			elif self.global_cfg.actor_input.obs_encode:
+				obs = self.encode_net.normal_encode(obs).cpu()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if len(batch.act.shape) == 0: # first step (zero cat)
 				obs = np.zeros([1, self.actor.net.input_dim]) # TODO should be obs+zero_act
@@ -797,22 +838,29 @@ class RNN_MLP_Net(nn.Module):
 		else:
 			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
 		# build mlp
-		self.mlps = []
+		assert len(mlp_hidden_sizes) > 0, "mlp_hidden_sizes must be > 0"
+		before_head_mlp_hidden_sizes = mlp_hidden_sizes[:-1]
+		self.mlp_before_head = []
+		self.mlp_before_head.append(MLP(
+			rnn_hidden_layer_size if rnn_layer_num else input_dim,
+			mlp_hidden_sizes[-1],
+			before_head_mlp_hidden_sizes,
+			device=self.device,
+			activation=nn.ReLU
+		))
+		if self.dropout:
+			self.mlp_before_head.append(nn.Dropout(self.dropout))
+		self.heads = []
 		for _ in range(head_num):
-			module_list = []
-			module_list.append(
-				MLP(
-					rnn_hidden_layer_size if rnn_layer_num else input_dim,  # type: ignore
-					output_dim,
-					mlp_hidden_sizes,
-					device=self.device,
-					activation=nn.ReLU
-				)
+			head = MLP(
+				mlp_hidden_sizes[-1],
+				output_dim,
+				hidden_sizes=(),
+				device=self.device,
+				activation=nn.ReLU
 			)
-			if self.dropout: 
-				module_list.append(nn.Dropout(self.dropout))
-			self.mlps.append(nn.Sequential(*module_list))
-		self.mlp = nn.ModuleList(self.mlps)
+			self.heads.append(head.to(self.device))
+		self.mlp_before_head = nn.Sequential(*self.mlp_before_head)
 	
 	def forward(
 		self,
@@ -848,9 +896,11 @@ class RNN_MLP_Net(nn.Module):
 		else: # skip rnn
 			after_rnn = obs
 		### forward mlp
+		before_head = self.flatten_foward(self.mlp_before_head, after_rnn)
+		### forward head
 		outputs = []
-		for mlp in self.mlps:
-			outputs.append(self.flatten_foward(mlp, after_rnn))
+		for head in self.heads:
+			outputs.append(self.flatten_foward(head, before_head))
 		return outputs, {
 			"hidden": hidden.transpose(0, 1).detach(),
 		} if self.rnn_layer_num else None
@@ -1011,6 +1061,8 @@ class CustomRecurrentActorProb(nn.Module):
 					input_dim = state_shape[0]
 				else:
 					raise ValueError("invalid input_type")
+			elif self.hps["global_cfg"].actor_input.obs_encode:
+				input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
 			else:
 				input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
 			output_dim = int(np.prod(action_shape))
@@ -1103,7 +1155,67 @@ class ObsPredNet(nn.Module):
 	def vae_sampling(self, mu, log_var):
 		std = torch.exp(0.5*log_var)
 		eps = torch.randn_like(std)
-		return eps.mul(std).add_(mu) # return z sample
+		return eps.mul(std).add_(mu)
+
+class ObsEncodeNet(nn.Module):
+	"""
+	input delayed state and action, output the non-delayed state
+	"""
+	def __init__(
+		self,
+		state_shape: Sequence[int],
+		action_shape: Sequence[int],
+		global_cfg: Dict[str, Any],
+		**kwargs,
+	) -> None:
+		super().__init__()
+		self.global_cfg = global_cfg
+		self.hps = kwargs
+		self.normal_encode_dim = state_shape[0] + action_shape[0] * global_cfg.actor_input.history_num
+		self.oracle_encode_dim = state_shape[0]
+		self.feat_dim = self.hps["feat_dim"]
+		self.normal_encoder_net = self.hps["encoder_net"](self.normal_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
+		self.oracle_encoder_net = self.hps["encoder_net"](self.oracle_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
+		self.normal_encoder_net.to(self.hps["device"])
+		self.oracle_encoder_net.to(self.hps["device"])
+		
+	def forward(
+		self,
+		input: Union[np.ndarray, torch.Tensor],
+		info: Dict[str, Any] = {},
+	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
+		raise ValueError("should call normal_encode or oracle_encode")
+
+	def normal_encode(
+			self,
+			input: Union[np.ndarray, torch.Tensor],
+			info: Dict[str, Any] = {},
+		):
+		return self.net_forward(self.normal_encoder_net, input, info)
+	
+	def oracle_encode(
+			self,
+			input: Union[np.ndarray, torch.Tensor],
+			info: Dict[str, Any] = {},
+		):
+		return self.net_forward(self.oracle_encoder_net, input, info)
+	
+	def net_forward(self, net, input, info):
+		info = {}
+		encoder_outputs, state_ = net(input)
+		mu, logvar = encoder_outputs
+		feats = self.vae_sampling(mu, logvar)
+		info["mu"] = mu
+		info["logvar"] = logvar
+		info["state"] = state_
+		info["feats"] = feats
+		return feats, info
+
+	def vae_sampling(self, mu, log_var):
+		std = torch.exp(0.5*log_var)
+		eps = torch.randn_like(std)
+		return eps.mul(std).add_(mu)
+
 # utils
 
 class DummyNet(nn.Module):
