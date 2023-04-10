@@ -377,7 +377,7 @@ class CustomSACPolicy(SACPolicy):
 			self.actor_optim.step()
 			self._pred_optim.step()
 		elif self.global_cfg.actor_input.obs_encode:
-			kl_loss = kl_divergence(batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar, batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar)
+			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
 			kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
 			kl_loss = kl_loss.mean()
 			combined_loss = actor_loss + kl_loss * self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
