@@ -506,9 +506,17 @@ class CustomSACPolicy(SACPolicy):
 					batch_end.encode_normal_info_cur_logvar = encode_obs_info_cur["logvar"]
 					batch_end.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
 					batch_end.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
-					if True: # TODO other ways
-						batch_end.actor_input_cur = batch_end.encode_obs_output_cur.detach()
-						batch_end.actor_input_next = batch_end.encode_obs_output_next.detach() # TODO ? detach?
+					if self.global_cfg.actor_input.obs_encode.train_eval_async == True:
+						batch_end.actor_input_cur = batch_end.encode_oracle_obs_output_cur
+						batch_end.actor_input_next = batch_end.encode_oracle_obs_output_next
+					elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
+						batch_end.actor_input_cur = batch_end.encode_obs_output_cur
+						batch_end.actor_input_next = batch_end.encode_obs_output_next
+					else:
+						raise ValueError("batch_end error")
+					if self.global_cfg.actor_input.obs_encode.before_policy_detach:
+						batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
+						batch_end.actor_input_next = batch_end.actor_input_next.detach()
 				## pop all keys except for the ones mentioned above	
 				# for k in batch_end.keys():
 				# 	if k not in ["actor_input_cur", "actor_input_next", "valid_mask", "info"]:
