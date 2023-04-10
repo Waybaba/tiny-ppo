@@ -55,7 +55,12 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       norm_kl_loss_weight: 0.1
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
       before_policy_detach: true # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
+      auto_kl_target: 50
       optim:
+        _target_: torch.optim.Adam
+        _partial_: true
+        lr: ${actor_optim.lr}
+      auto_kl_optim:
         _target_: torch.optim.Adam
         _partial_: true
         lr: ${actor_optim.lr}

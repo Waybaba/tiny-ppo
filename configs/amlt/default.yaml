@@ -211,6 +211,7 @@ search:
       global_cfg.actor_input.obs_encode.norm_kl_loss_weight={obs_encode_norm_kl_loss_weight}
       global_cfg.actor_input.obs_encode.train_eval_async={obs_encode_train_eval_async}
       global_cfg.actor_input.obs_encode.before_policy_detach={obs_encode_before_policy_detach}
+      global_cfg.actor_input.obs_encode.auto_kl_target={obs_encode_auto_kl_target}
       global_cfg.actor_input.trace_direction={trace_direction}
       collector.train_collector.buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
@@ -222,7 +223,7 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      values: [1,2,4,8,16]
+      values: [1,2,4,8,12]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
@@ -264,8 +265,8 @@ search:
       values: [256]
     - name: obs_encode_mlp_hidden_sizes
       values: ["[256,256,256]"]
-    - name: obs_encode_norm_kl_loss_weight
-      values: [1.0,0.1,0.01]
+    - name: obs_encode_auto_kl_target
+      values: [1,50,2500]
     - name: obs_encode_train_eval_async
       values: [true,false]
     - name: obs_encode_before_policy_detach
