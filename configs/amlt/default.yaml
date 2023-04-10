@@ -208,7 +208,6 @@ search:
       global_cfg.critic_input.obs_type={critic_obs_type}
       global_cfg.actor_input.obs_encode.feat_dim={obs_encode_feat_dim}
       global_cfg.actor_input.obs_encode.net.encoder_net.mlp_hidden_sizes={obs_encode_mlp_hidden_sizes}
-      global_cfg.actor_input.obs_encode.norm_kl_loss_weight={obs_encode_norm_kl_loss_weight}
       global_cfg.actor_input.obs_encode.train_eval_async={obs_encode_train_eval_async}
       global_cfg.actor_input.obs_encode.before_policy_detach={obs_encode_before_policy_detach}
       global_cfg.actor_input.obs_encode.auto_kl_target={obs_encode_auto_kl_target}
