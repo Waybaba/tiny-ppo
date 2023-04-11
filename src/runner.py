@@ -309,8 +309,8 @@ class CustomSACPolicy(SACPolicy):
 				self.encode_net.parameters(),
 			)
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				self.kl_weight = torch.tensor([1.], device=self.actor.device, requires_grad=True)
-				self._auto_kl_optim = self.global_cfg.actor_input.obs_encode.auto_kl_optim([self.kl_weight])
+				self.kl_weight_log = torch.tensor([1.], device=self.actor.device, requires_grad=True)
+				self._auto_kl_optim = self.global_cfg.actor_input.obs_encode.auto_kl_optim([self.kl_weight_log])
 	
 	def _mse_optimizer(self,
 		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
@@ -380,7 +380,7 @@ class CustomSACPolicy(SACPolicy):
 			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
 			kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
 			kl_loss = kl_loss.mean()
-			combined_loss = actor_loss + kl_loss * self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+			combined_loss = actor_loss + kl_loss * torch.exp(self.kl_weight_log)
 			to_logs["learn/obs_encode/loss_kl"] = kl_loss.item()
 			self.actor_optim.zero_grad()
 			self._encode_optim.zero_grad()
@@ -388,11 +388,11 @@ class CustomSACPolicy(SACPolicy):
 			self.actor_optim.step()
 			self._encode_optim.step()
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * self.kl_weight
+				kl_weight_loss = (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
-				to_logs["learn/obs_encode/kl_weight"] = self.kl_weight.detach().cpu().numpy()
+				to_logs["learn/obs_encode/kl_weight"] = torch.exp(self.kl_weight_log).detach().cpu().numpy()
 		else:
 			self.actor_optim.zero_grad()
 			actor_loss.backward()
