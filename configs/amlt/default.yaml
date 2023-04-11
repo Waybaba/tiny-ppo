@@ -298,7 +298,7 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["obs_encode_test"] 
+      values: ["obs_encode_test_2"] 
       # global_cfg.actor_input.obs_pred.middle_detach={middle_detach}
       # global_cfg.actor_input.obs_pred.net.encoder_net.mlp_hidden_sizes={obs_pred_encoder_mlp_hidden_sizes}
       # global_cfg.actor_input.obs_pred.net.decoder_net.mlp_hidden_sizes={obs_pred_decoder_mlp_hidden_sizes}
