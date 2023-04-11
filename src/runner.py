@@ -309,7 +309,7 @@ class CustomSACPolicy(SACPolicy):
 				self.encode_net.parameters(),
 			)
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				self.kl_weight_log = torch.tensor([1.], device=self.actor.device, requires_grad=True)
+				self.kl_weight_log = torch.tensor([np.log(0.01)], device=self.actor.device, requires_grad=True)
 				self._auto_kl_optim = self.global_cfg.actor_input.obs_encode.auto_kl_optim([self.kl_weight_log])
 	
 	def _mse_optimizer(self,
