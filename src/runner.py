@@ -392,7 +392,9 @@ class CustomSACPolicy(SACPolicy):
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
+				to_logs["learn/obs_encode/kl_weight_log"] = self.kl_weight_log.detach().cpu().numpy()
 				to_logs["learn/obs_encode/kl_weight"] = torch.exp(self.kl_weight_log).detach().cpu().numpy()
+
 		else:
 			self.actor_optim.zero_grad()
 			actor_loss.backward()
