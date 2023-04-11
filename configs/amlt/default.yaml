@@ -316,4 +316,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["obs_encode_test_2"] 
+      values: ["pred_obs_stochastic"] 
