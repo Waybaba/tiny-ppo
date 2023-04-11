@@ -182,8 +182,8 @@ storage:
 search:
   job_template:
     name: RL_Delayed_{experiment_name:s}_{auto:5s}
-    sku: 24G1-P40
-    # sku: G1
+    # sku: 24G1-P40
+    sku: G1
     command:
     - python src/entry.py
       -m
