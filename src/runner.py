@@ -388,7 +388,7 @@ class CustomSACPolicy(SACPolicy):
 			self.actor_optim.step()
 			self._encode_optim.step()
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
