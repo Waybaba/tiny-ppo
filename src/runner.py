@@ -287,9 +287,9 @@ class CustomSACPolicy(SACPolicy):
 			**kwargs
 		)
 		
-		assert not (self.global_cfg.actor_input.obs_pred and self.global_cfg.actor_input.obs_encode), "obs_pred and obs_encode cannot be used at the same time"
+		assert not (self.global_cfg.actor_input.obs_pred.turn_on and self.global_cfg.actor_input.obs_encode.turn_on), "obs_pred and obs_encode cannot be used at the same time"
 		
-		if self.global_cfg.actor_input.obs_pred:
+		if self.global_cfg.actor_input.obs_pred.turn_on:
 			self.pred_net = self.global_cfg.actor_input.obs_pred.net(
 				state_shape=self.state_space.shape,
 				action_shape=kwargs["action_space"].shape,
@@ -298,8 +298,17 @@ class CustomSACPolicy(SACPolicy):
 			self._pred_optim = self.global_cfg.actor_input.obs_pred.optim(
 				self.pred_net.parameters(),
 			)
+			if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				)], device=self.actor.device, requires_grad=True)
+				self._auto_kl_optim = self.global_cfg.actor_input.obs_pred.auto_kl_optim([self.kl_weight_log])
+			else:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				)], device=self.actor.device)
 		
-		if self.global_cfg.actor_input.obs_encode:
+		if self.global_cfg.actor_input.obs_encode.turn_on:
 			self.encode_net = self.global_cfg.actor_input.obs_encode.net(
 				state_shape=self.state_space.shape,
 				action_shape=kwargs["action_space"].shape,
@@ -309,8 +318,14 @@ class CustomSACPolicy(SACPolicy):
 				self.encode_net.parameters(),
 			)
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				self.kl_weight_log = torch.tensor([np.log(0.01)], device=self.actor.device, requires_grad=True)
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+				)], device=self.actor.device, requires_grad=True)
 				self._auto_kl_optim = self.global_cfg.actor_input.obs_encode.auto_kl_optim([self.kl_weight_log])
+			else:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+				)], device=self.actor.device)
 	
 	def _mse_optimizer(self,
 		batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
@@ -360,7 +375,7 @@ class CustomSACPolicy(SACPolicy):
 		).mean()
 
 		### pred loss
-		if self.global_cfg.actor_input.obs_pred:
+		if self.global_cfg.actor_input.obs_pred.turn_on:
 			pred_loss = (batch.pred_output_cur - batch.info["obs_nodelay"]) ** 2
 			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
 			pred_loss = pred_loss.mean()
@@ -371,12 +386,19 @@ class CustomSACPolicy(SACPolicy):
 				kl_loss = -0.5 * (1 + batch.pred_info_cur_mu - batch.pred_info_cur_mu.pow(2) - batch.pred_info_cur_logvar.exp()).sum(-1).mean()
 				combined_loss = combined_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
 				to_logs["learn/obs_pred/loss_kl"] = kl_loss.item()
+				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+					self._auto_kl_optim.zero_grad()
+					kl_weight_loss.backward()
+					self._auto_kl_optim.step()
+					to_logs["learn/obs_pred/kl_weight_log"] = self.kl_weight_log.detach().cpu().numpy()
+					to_logs["learn/obs_pred/kl_weight"] = torch.exp(self.kl_weight_log).detach().cpu().numpy()
 			self.actor_optim.zero_grad()
 			self._pred_optim.zero_grad()
 			combined_loss.backward()
 			self.actor_optim.step()
 			self._pred_optim.step()
-		elif self.global_cfg.actor_input.obs_encode:
+		elif self.global_cfg.actor_input.obs_encode.turn_on:
 			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
 			kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
 			kl_loss = kl_loss.mean()
@@ -394,7 +416,6 @@ class CustomSACPolicy(SACPolicy):
 				self._auto_kl_optim.step()
 				to_logs["learn/obs_encode/kl_weight_log"] = self.kl_weight_log.detach().cpu().numpy()
 				to_logs["learn/obs_encode/kl_weight"] = torch.exp(self.kl_weight_log).detach().cpu().numpy()
-
 		else:
 			self.actor_optim.zero_grad()
 			actor_loss.backward()
@@ -486,7 +507,7 @@ class CustomSACPolicy(SACPolicy):
 				# assert act_prev[0] == batch.info["historical_act"][0]
 				indices = idx_end
 				###
-				if self.global_cfg.actor_input.obs_pred:
+				if self.global_cfg.actor_input.obs_pred.turn_on:
 					batch_end.pred_input_cur = batch_end.actor_input_cur
 					batch_end.pred_input_next = batch_end.actor_input_next
 					batch_end.pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
@@ -506,7 +527,7 @@ class CustomSACPolicy(SACPolicy):
 					if self.global_cfg.actor_input.obs_pred.net_type == "vae":
 						batch_end.pred_info_cur_mu = pred_info_cur["mu"]
 						batch_end.pred_info_cur_logvar = pred_info_cur["logvar"]
-				if self.global_cfg.actor_input.obs_encode:
+				if self.global_cfg.actor_input.obs_encode.turn_on:
 					batch_end.encode_obs_input_cur = batch_end.actor_input_cur
 					batch_end.encode_obs_input_next = batch_end.actor_input_next
 					batch_end.encode_obs_output_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_input_cur)
@@ -643,9 +664,9 @@ class CustomSACPolicy(SACPolicy):
 		assert batch.obs.shape[0] == 1, "for online batch, batch size must be 1"
 		if self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			if len(batch.act.shape) == 0: # first step (zero cat)
-				if self.global_cfg.actor_input.obs_pred:
+				if self.global_cfg.actor_input.obs_pred.turn_on:
 					new_dim = self.pred_net.input_dim
-				elif self.global_cfg.actor_input.obs_encode:
+				elif self.global_cfg.actor_input.obs_encode.turn_on:
 					new_dim = self.encode_net.normal_encode_dim
 				else:
 					new_dim = self.actor.net.input_dim
@@ -665,7 +686,7 @@ class CustomSACPolicy(SACPolicy):
 						np.random.normal(size=batch.info["historical_act"].shape, loc=0, scale=1),
 					], axis=-1)
 				else: raise ValueError("historical_act shape not implemented")
-			if self.global_cfg.actor_input.obs_pred:
+			if self.global_cfg.actor_input.obs_pred.turn_on:
 				pred_output, pred_info = self.pred_net(obs)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
 					obs = pred_output.cpu()
@@ -674,7 +695,7 @@ class CustomSACPolicy(SACPolicy):
 				else:
 					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
 				process_online_batch_info["pred_output"] = pred_output
-			elif self.global_cfg.actor_input.obs_encode:
+			elif self.global_cfg.actor_input.obs_encode.turn_on:
 				encode_output, encode_info = self.encode_net.normal_encode(obs)
 				obs = encode_output.cpu()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
