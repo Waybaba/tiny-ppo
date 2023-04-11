@@ -222,14 +222,14 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      values: [1,2,4,8,12]
+      values: [8,2,1,4,12]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
     - name: env_name
       # values: [HalfCheetah-v4]
       # values: [HalfCheetah-v4]
-      values: [HalfCheetah-v4,Ant-v4,Hopper-v4,Walker2d-v4]
+      values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
       values: [sac_cat]
     - name: actor_mlp_hidden_sizes
