@@ -383,7 +383,15 @@ class CustomSACPolicy(SACPolicy):
 			to_logs["learn/obs_pred/loss_pred"] = pred_loss.item()
 			to_logs["learn/obs_pred/abs_error_pred"] = pred_loss.item() ** 0.5
 			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
-				kl_loss = -0.5 * (1 + batch.pred_info_cur_mu - batch.pred_info_cur_mu.pow(2) - batch.pred_info_cur_logvar.exp()).sum(-1).mean()
+				# kl_loss = -0.5 * (1 + batch.pred_info_cur_mu - batch.pred_info_cur_mu.pow(2) - batch.pred_info_cur_logvar.exp()).sum(-1).mean()
+				# kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
+				# align it with 0,1 gaussian
+				kl_loss = kl_divergence(
+					torch.zeros_like(batch.pred_info_cur_mu),
+					torch.zeros_like(batch.pred_info_cur_logvar),
+					batch.pred_info_cur_mu,
+					batch.pred_info_cur_logvar,
+				)
 				combined_loss = combined_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
 				to_logs["learn/obs_pred/loss_kl"] = kl_loss.item()
 				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
