@@ -380,7 +380,7 @@ class CustomSACPolicy(SACPolicy):
 			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
 			kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
 			kl_loss = kl_loss.mean()
-			combined_loss = actor_loss + kl_loss * torch.exp(self.kl_weight_log)
+			combined_loss = actor_loss + kl_loss * torch.exp(self.kl_weight_log).detach()
 			to_logs["learn/obs_encode/loss_kl"] = kl_loss.item()
 			self.actor_optim.zero_grad()
 			self._encode_optim.zero_grad()
