@@ -387,10 +387,10 @@ class CustomSACPolicy(SACPolicy):
 				# kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
 				# align it with 0,1 gaussian
 				kl_loss = kl_divergence(
-					torch.zeros_like(batch.pred_info_cur_mu),
-					torch.zeros_like(batch.pred_info_cur_logvar),
 					batch.pred_info_cur_mu,
 					batch.pred_info_cur_logvar,
+					torch.zeros_like(batch.pred_info_cur_mu),
+					torch.zeros_like(batch.pred_info_cur_logvar),
 				)
 				combined_loss = combined_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
 				to_logs["learn/obs_pred/loss_kl"] = kl_loss.item()
