@@ -23,7 +23,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       feat_dim: 256
       middle_detach: true
       input_type: "feat" # obs or feat
-      net_type: mlp # vae or mlp
+      net_type: vae # vae or mlp
       pred_loss_weight: 0.1
       norm_kl_loss_weight: 0.01
       auto_kl_target: 50
