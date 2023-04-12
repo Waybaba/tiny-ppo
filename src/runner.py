@@ -374,7 +374,7 @@ class CustomSACPolicy(SACPolicy):
 		) * batch.valid_mask
 		).mean()
 
-		### pred loss
+		### pred/encode loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
 			pred_loss = (batch.pred_output_cur - batch.info["obs_nodelay"]) ** 2
 			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
@@ -411,6 +411,14 @@ class CustomSACPolicy(SACPolicy):
 			kl_loss = kl_loss.mean()
 			combined_loss = actor_loss + kl_loss * torch.exp(self.kl_weight_log).detach()
 			to_logs["learn/obs_encode/loss_kl"] = kl_loss.item()
+			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+				batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_output_cur)
+				pred_loss = (batch.pred_obs_output_cur - batch.info["obs_nodelay"]) ** 2
+				pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
+				pred_loss = pred_loss.mean()
+				to_logs["learn/obs_encode/loss_pred"] = pred_loss.item()
+				to_logs["learn/obs_encode/abs_error_pred"] = pred_loss.item() ** 0.5
+				combined_loss = actor_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
 			self.actor_optim.zero_grad()
 			self._encode_optim.zero_grad()
 			combined_loss.backward()
@@ -553,6 +561,8 @@ class CustomSACPolicy(SACPolicy):
 						batch_end.actor_input_next = batch_end.encode_obs_output_next
 					else:
 						raise ValueError("batch_end error")
+					if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+						batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_output_cur)
 					if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 						batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
 						batch_end.actor_input_next = batch_end.actor_input_next.detach()
@@ -1239,8 +1249,10 @@ class ObsEncodeNet(nn.Module):
 		self.feat_dim = self.hps["feat_dim"]
 		self.normal_encoder_net = self.hps["encoder_net"](self.normal_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
 		self.oracle_encoder_net = self.hps["encoder_net"](self.oracle_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
+		self.decoder_net = self.hps["decoder_net"](self.feat_dim, self.oracle_encode_dim, device=self.hps["device"], head_num=1)
 		self.normal_encoder_net.to(self.hps["device"])
 		self.oracle_encoder_net.to(self.hps["device"])
+		self.decoder_net.to(self.hps["device"])
 		
 	def forward(
 		self,
@@ -1278,6 +1290,20 @@ class ObsEncodeNet(nn.Module):
 		std = torch.exp(0.5*log_var)
 		eps = torch.randn_like(std)
 		return eps.mul(std).add_(mu)
+
+	def decode(
+			self,
+			input: Union[np.ndarray, torch.Tensor],
+			info: Dict[str, Any] = {},
+		):
+		"""
+		ps. there is only one type of decoder since it is always from latent dim to the oracle obs
+		"""
+		info = {}
+		encoder_outputs, state_ = self.decoder_net(input)
+		res = encoder_outputs[0]
+		return res, info
+		
 
 # utils
 
