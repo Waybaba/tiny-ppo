@@ -166,4 +166,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["oracleCritic_ActorCat_Resweep"] 
+      values: ["oracleCritic_ActorCat_OraclePlusNormal_Resweep"] 
