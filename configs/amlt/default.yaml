@@ -105,7 +105,7 @@ search:
     - name: critic_rnn_hidden_layer_size
       values: [256]
     - name: obs_pred_turn_on
-      values: [true]
+      values: [false]
     - name: middle_detach
       values: [true]
     - name: obs_pred_encoder_mlp_hidden_sizes
@@ -119,7 +119,7 @@ search:
     - name: obs_pred_net_type
       values: ["vae"]
     - name: obs_pred_pred_loss_weight
-      values: [0.1,1.0]
+      values: [0.1]
     - name: obs_pred_norm_kl_loss_weight
       values: [0.01]
     - name: obs_pred_auto_kl_target
@@ -143,7 +143,7 @@ search:
     - name: actor_history_merge_method
       values: ["cat_mlp"]
     - name: actor_obs_type
-      values: ["normal"]
+      values: ["normal","oracle"]
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
@@ -166,4 +166,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_stochastic_2"] 
+      values: ["oracleCritic_ActorCat_Resweep"] 
