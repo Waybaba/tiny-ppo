@@ -319,4 +319,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["pred_obs_stochastic"] 
+      values: ["pred_obs_stochastic_2"] 
