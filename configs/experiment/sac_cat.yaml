@@ -57,7 +57,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           mlp_hidden_sizes: [256]
           mlp_softmax: false
     obs_encode:
-      turn_on: true
+      turn_on: false
       feat_dim: 256
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
       before_policy_detach: true # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
@@ -93,7 +93,6 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           mlp_hidden_sizes: [512,512]
           mlp_softmax: false
           dropout: 0.0
-      
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle

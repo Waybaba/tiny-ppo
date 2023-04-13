@@ -1127,14 +1127,14 @@ class CustomRecurrentActorProb(nn.Module):
 		self.state_shape, self.action_shape = state_shape, action_shape
 		self.act_num = action_shape[0]
 		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
-			if self.hps["global_cfg"].actor_input.obs_pred:
+			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
 				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
 					input_dim = self.hps["global_cfg"].actor_input.obs_pred.feat_dim
 				elif self.hps["global_cfg"].actor_input.obs_pred.input_type == "obs":
 					input_dim = state_shape[0]
 				else:
 					raise ValueError("invalid input_type")
-			elif self.hps["global_cfg"].actor_input.obs_encode:
+			elif self.hps["global_cfg"].actor_input.obs_encode.turn_on:
 				input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
 			else:
 				input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].actor_input.history_num
