@@ -143,7 +143,7 @@ search:
     - name: actor_history_merge_method
       values: ["cat_mlp"]
     - name: actor_obs_type
-      values: ["normal","oracle"]
+      values: ["normal"]
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
