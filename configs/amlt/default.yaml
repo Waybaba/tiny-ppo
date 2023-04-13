@@ -258,7 +258,7 @@ search:
     - name: critic_rnn_hidden_layer_size
       values: [256]
     - name: obs_pred_turn_on
-      values: [false]
+      values: [true]
     - name: middle_detach
       values: [true]
     - name: obs_pred_encoder_mlp_hidden_sizes
@@ -272,13 +272,13 @@ search:
     - name: obs_pred_net_type
       values: ["vae"]
     - name: obs_pred_pred_loss_weight
-      values: [0.1]
+      values: [0.1,1.0]
     - name: obs_pred_norm_kl_loss_weight
       values: [0.01]
     - name: obs_pred_auto_kl_target
       values: [50]
     - name: obs_encode_turn_on
-      values: [true]
+      values: [false]
     - name: obs_encode_feat_dim
       values: [256]
     - name: obs_encode_mlp_hidden_sizes
@@ -288,11 +288,11 @@ search:
     - name: obs_encode_train_eval_async
       values: [true]
     - name: obs_encode_before_policy_detach
-      values: [true,false]
+      values: [true]
     - name: obs_encode_norm_kl_loss_weight
       values: [0.01]
     - name: obs_encode_pred_loss_weight
-      values: [0,0.1,1.0]
+      values: [0]
     - name: actor_history_merge_method
       values: ["cat_mlp"]
     - name: actor_obs_type
@@ -319,4 +319,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["obs_encode_add_pred_loss"] 
+      values: ["pred_obs_stochastic"] 
