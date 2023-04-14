@@ -113,13 +113,13 @@ search:
     - name: obs_pred_decoder_mlp_hidden_sizes
       values: ["[256]"]
     - name: obs_pred_input_type
-      values: ["feat"]
+      values: ["feat","obs"]
     - name: obs_pred_dropout
       values: ["null"]
     - name: obs_pred_net_type
-      values: ["vae"]
+      values: ["vae","mlp"]
     - name: obs_pred_pred_loss_weight
-      values: [0.1]
+      values: [0.1,1.0,5.0]
     - name: obs_pred_norm_kl_loss_weight
       values: [0.01]
     - name: obs_pred_auto_kl_target
@@ -166,4 +166,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["oracleCritic_ActorCat_Resweep"] 
+      values: ["ObsPred_mlpOrSto_featOrObs"] 
