@@ -465,7 +465,7 @@ class CustomSACPolicy(SACPolicy):
 		self.learn_step += 1
 		if self.learn_step % self.global_cfg.log_interval == 0:
 			minutes = (time() - self.start_time) / 60
-			wandb.log(to_logs, step=self.learn_step, commit=self.global_cfg.log_instant_commit)
+			wandb.log(to_logs, commit=self.global_cfg.log_instant_commit)
 		return to_logs
 	
 	def process_fn(
@@ -783,22 +783,22 @@ class CustomSACPolicy(SACPolicy):
 		### log - train_env_infer
 		if not hasattr(self, "train_env_infer_step"): self.train_env_infer_step = 0
 		if not hasattr(self, "start_time"): self.start_time = time()
-		if input == "online_input" and self.training: 
+		if input == "online_input": 
 			self.train_env_infer_step += 1
 			if (self.train_env_infer_step % self.global_cfg.log_interval) == 0:
 				minutes = (time() - self.start_time) / 60
 				to_logs = {
 					"train_env_infer/expectedT_1mStep_min": minutes / self.train_env_infer_step * 1e6,
 					"train_env_infer/expectedT_1mStep_hr": minutes / self.train_env_infer_step * 1e6 / 60,
-					"train_env_infer/expectedT_left_hr": minutes / self.train_env_infer_step * (1e6 - self.train_env_infer_step) / 60,
-					"train_env_infer/time_minutes": minutes,
+					"train_env_infer/left_hr": minutes / self.train_env_infer_step * (1e6 - self.train_env_infer_step) / 60,
+					"train_env_infer/pastT_hr": minutes / 60,
 				}
 				pred_output = process_online_batch_info["pred_output"]
 				with torch.no_grad():
 					pred_loss = (pred_output - torch.tensor(batch.info["obs_next_nodelay"],device=pred_output.device)).pow(2).mean().cpu().item()
 					to_logs["train_env_infer/pred_loss"] = pred_loss
 					to_logs["train_env_infer/abs_error_pred"] = pred_loss ** 0.5
-				wandb.log(to_logs, step=self.train_env_infer_step+1, commit=self.global_cfg.log_instant_commit)
+				wandb.log(to_logs, commit=self.global_cfg.log_instant_commit)
 		return Batch(
 			logits=logits,
 			act=squashed_action,
