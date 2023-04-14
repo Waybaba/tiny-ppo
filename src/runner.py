@@ -793,11 +793,11 @@ class CustomSACPolicy(SACPolicy):
 					"train_env_infer/left_hr": minutes / self.train_env_infer_step * (1e6 - self.train_env_infer_step) / 60,
 					"train_env_infer/pastT_hr": minutes / 60,
 				}
-				pred_output = process_online_batch_info["pred_output"]
-				with torch.no_grad():
-					pred_loss = (pred_output - torch.tensor(batch.info["obs_next_nodelay"],device=pred_output.device)).pow(2).mean().cpu().item()
-					to_logs["train_env_infer/pred_loss"] = pred_loss
-					to_logs["train_env_infer/abs_error_pred"] = pred_loss ** 0.5
+				if self.global_cfg.actor_input.obs_pred.turn_on and self.global_cfg.actor_input.obs_pred.input_type == "obs":
+					with torch.no_grad():
+						pred_loss = (batch.online_input - torch.tensor(batch.info["obs_next_nodelay"],device=batch.online_input.device)).pow(2).mean().cpu().item()
+						to_logs["train_env_infer/pred_loss"] = pred_loss
+						to_logs["train_env_infer/abs_error_pred"] = pred_loss ** 0.5
 				wandb.log(to_logs, commit=self.global_cfg.log_instant_commit)
 		return Batch(
 			logits=logits,
