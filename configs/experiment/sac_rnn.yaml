@@ -16,11 +16,6 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
-  log_interval: 100
-collector:
-  train_collector:
-    buffer:
-      size: 1000000
 trainer:
   batch_size: 32
 actor:

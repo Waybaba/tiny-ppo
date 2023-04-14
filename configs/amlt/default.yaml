@@ -91,7 +91,7 @@ search:
       # values: [HalfCheetah-v4]
       values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
-      values: [sac_cat]
+      values: [sac_rnn]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
@@ -125,7 +125,7 @@ search:
     - name: obs_pred_auto_kl_target
       values: [50]
     - name: obs_encode_turn_on
-      values: [true]
+      values: [false]
     - name: obs_encode_feat_dim
       values: [256]
     - name: obs_encode_mlp_hidden_sizes
@@ -163,7 +163,7 @@ search:
       values: [1000000]
     - name: seed
       values: ["0,1,2,3,4"]
-    - name: tag
-      values: ["obsEncode_trainEvalDiffVlog"] 
     - name: n_jobs
       values: [5]
+    - name: tag
+      values: ["markovA_rnn_delayA"] 
