@@ -580,8 +580,6 @@ class CustomSACPolicy(SACPolicy):
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			assert self.global_cfg.actor_input.history_num > 1, "stack_rnn requires history_num > 1, ususally, it would be 20,40,... since we process long history when running online."
 			assert self.global_cfg.actor_input.history_num > self.global_cfg.actor_input.burnin_num, "stack_rnn requires history_num > burnin_num, ususally, it could be a little larger than burnin_num"
-			# [t-T+1, ..., t-1, t] the last one is id_end
-			# TODO note that when the start target q
 			idx_stack = utils.idx_next_stack(indices, buffer, self.global_cfg.actor_input.history_num) # (B, T)
 			idx_end = idx_stack[:,-1] # (B, )
 			batch_end = buffer[idx_end] # (B, *)
@@ -591,25 +589,23 @@ class CustomSACPolicy(SACPolicy):
 			indices = idx_stack.flatten()
 			batch_ = buffer[indices]
 			batch_.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
-			batch_.valid_mask = buffer.next(indices) != indices
 			batch_.to_torch(device=self.actor.device) # move all to self.device
 			# stacked_batch_prev.info["obs_nodelay"] = buffer[buffer.prev(idx_next_stack)].info["obs_next_nodelay"] # (B, T, *)
 			stacked_batch_cur.info["obs_nodelay"] = buffer[idx_stack].info["obs_next_nodelay"] # (B, T, *)
 			batch_.actor_input_cur = torch.cat([
 				torch.tensor(self.get_obs_base(stacked_batch_cur, "actor", "cur"),device=self.actor.device), # (B, T, *)
 				torch.tensor(stacked_batch_prev["act"],device=self.actor.device), # (B, T, *)
-			], dim=-1) # (B*T, *)
+			], dim=-1) # (B, T, *)
 			batch_.actor_input_next = torch.cat([
 				torch.tensor(self.get_obs_base(stacked_batch_cur, "actor", "next"),device=self.actor.device), # (B, T, *)
 				torch.tensor(stacked_batch_cur["act"],device=self.actor.device), # (B, T, *)
-			], dim=-1) # (B*T, *)
+			], dim=-1) # (B, T, *)
+			# make mask
 			batch_.valid_mask = torch.tensor(indices != buffer.next(indices), device=self.actor.device).int() # (B, )
-			# apply burn in mask
 			burn_in_mask = torch.ones(idx_stack.shape, device=self.actor.device).float()
-			if type(self.global_cfg.actor_input.burnin_num) == float:
-				burn_in_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num)
-			else:
-				burn_in_num = self.global_cfg.actor_input.burnin_num
+			burn_in_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num) \
+			if type(self.global_cfg.actor_input.burnin_num) == float \
+			else self.global_cfg.actor_input.burnin_num
 			burn_in_mask[:,:burn_in_num] = 0
 			batch_.valid_mask = burn_in_mask.flatten() * batch_.valid_mask
 			# TODO no first step problem
