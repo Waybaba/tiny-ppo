@@ -166,4 +166,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["markovA_rnn_delayA"] 
+      values: ["markovA_rnn_oracleA"] 
