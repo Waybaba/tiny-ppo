@@ -91,7 +91,7 @@ search:
       # values: [HalfCheetah-v4]
       values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
-      values: [sac_cat]
+      values: [sac_rnn]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
