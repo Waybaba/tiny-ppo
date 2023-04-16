@@ -61,7 +61,7 @@
 				// "env.name=HalfCheetah-v4",
 				"env.name=Hopper-v4",
 				// "env.name=DummyNum-v0",
-				"env.delay=8",
+				"env.delay=0",
 				"start_timesteps=1",
 				"+trainer.show_progress=true",
 				// "collector.train_collector.buffer.size=1000",

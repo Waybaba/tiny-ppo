@@ -491,7 +491,7 @@ class CustomSACPolicy(SACPolicy):
 			assert self.global_cfg.actor_input.history_num >= 0
 			if self.global_cfg.actor_input.history_num > 0:
 				idx_stack = utils.idx_stack(indices, buffer, self.global_cfg.actor_input.history_num, direction=self.global_cfg.actor_input.trace_direction) # (B, T)
-				del indices
+				# del indices
 				idx_end = idx_stack[:,-1] # (B, )
 				batch_end = buffer[idx_end] # (B, *)
 				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
@@ -563,7 +563,7 @@ class CustomSACPolicy(SACPolicy):
 				# end
 				if "from_target_q" in batch: batch_end.from_target_q = batch.from_target_q
 				if "is_preprocessed" in batch: batch_end.is_preprocessed = batch.is_preprocessed
-				indices = idx_end
+				# indices = idx_end
 				batch = batch_end
 				batch.to_torch(device=self.actor.device)
 			else:
@@ -708,14 +708,14 @@ class CustomSACPolicy(SACPolicy):
 			raise NotImplementedError
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
-		# batch.returns = self.compute_return_custom(batch)
-		return_1 = self.compute_return_custom(batch)
-		if "from_target_q" not in batch:
-			batch = self.compute_nstep_return(
-				batch, buffer, indices, self._target_q, self._gamma, self._n_step,
-				self._rew_norm
-			)
-			# return_2 = batch.returns
+		batch.returns = self.compute_return_custom(batch)
+		# if "from_target_q" not in batch:
+		# 	batch = self.compute_nstep_return(
+		# 		batch, buffer, indices, self._target_q, self._gamma, self._n_step,
+		# 		self._rew_norm
+		# 	)
+		# 	return_2 = batch.returns
+		# return_1 = self.compute_return_custom(batch)
 		# end flag
 		batch.is_preprocessed = True
 		return batch
@@ -727,7 +727,8 @@ class CustomSACPolicy(SACPolicy):
 		target_q = torch.min(
 			self.critic1_old(batch.critic_input_next_online)[0], # (B, 1)
 			self.critic2_old(batch.critic_input_next_online)[0],
-		) - self._alpha * batch.log_prob_next # (B, a_dim, 1)
+		)
+		# ) - self._alpha * batch.log_prob_next # (B, a_dim, 1)
 		return target_q
 
 	def process_online_batch(self, batch, state):
