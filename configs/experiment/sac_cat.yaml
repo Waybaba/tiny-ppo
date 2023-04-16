@@ -13,7 +13,7 @@ defaults:
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
     history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
-    obs_type: "oracle" # normal or oracle
+    obs_type: "normal" # normal or oracle
     trace_direction: "next" # prev or next
     history_num: ${env.delay} # ! TODO for case 0 and 1
     burnin_num: 0 # only works for stack_rnn
@@ -57,10 +57,10 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           mlp_hidden_sizes: [256]
           mlp_softmax: false
     obs_encode:
-      turn_on: false
+      turn_on: true
       feat_dim: 256
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
-      before_policy_detach: true # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
+      before_policy_detach: false # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
       norm_kl_loss_weight: 0.01
       auto_kl_target: 50
       pred_loss_weight: 0.
@@ -198,5 +198,5 @@ trainer:
 start_timesteps: 10000
 
 # common - for all tasks (task_name, tags, output_dir, device)
-task_name: "RL"
+task_name: "RL_Apr"
 tags: ["debug"]
