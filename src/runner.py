@@ -336,7 +336,7 @@ class CustomSACPolicy(SACPolicy):
 		target_q = torch.tensor(batch.returns).to(current_q.device)
 		td = current_q.flatten() - target_q.flatten()
 		critic_loss = (
-			(td.pow(2) * weight) * batch.valid_mask
+			(td.pow(2) * weight) * batch.valid_mask.flatten()
 		).mean()
 		critic_loss = (td.pow(2) * weight)
 		critic_loss = critic_loss.mean()
@@ -371,7 +371,7 @@ class CustomSACPolicy(SACPolicy):
 		actor_loss = ((
 			self._alpha * batch.log_prob_cur.flatten() 
 			- torch.min(current_q1a, current_q2a)
-		) * batch.valid_mask
+		) * batch.valid_mask.flatten()
 		).mean()
 
 		### pred/encode loss
@@ -442,7 +442,7 @@ class CustomSACPolicy(SACPolicy):
 			log_prob = batch.log_prob_cur.detach() + self._target_entropy
 			# please take a look at issue #258 if you'd like to change this line
 			alpha_loss = (
-				-(self._log_alpha * log_prob) * batch.valid_mask
+				-(self._log_alpha * log_prob.flatten()) * batch.valid_mask.flatten()
 				).mean()
 			self._alpha_optim.zero_grad()
 			alpha_loss.backward()
@@ -593,11 +593,11 @@ class CustomSACPolicy(SACPolicy):
 			], dim=-1) # (B, T, obs_dim+act_dim)
 			# make mask
 			if self.global_cfg.actor_input.trace_direction == "next":
-				# all that reach end of episode should be invalid
+				# end step is invalid
 				batch_stack.valid_mask = torch.tensor(idx_stack != buffer.next(idx_stack), device=self.actor.device).int() # (B, T)
 			elif self.global_cfg.actor_input.trace_direction == "prev":
-				# all are valid while before the first action should be 0 filled
-				batch_stack.valid_mask = torch.ones(idx_stack.shape, device=self.actor.device).int() # (B, T)
+				# start step is invalid
+				batch_stack.valid_mask = torch.tensor(idx_stack != buffer.prev(idx_stack), device=self.actor.device).int() # (B, T)
 			else: raise ValueError("trace_direction should be next or prev")
 			burn_in_mask = torch.ones(idx_stack.shape, device=self.actor.device).float() # (B, T)
 			burn_in_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num) \
@@ -694,14 +694,14 @@ class CustomSACPolicy(SACPolicy):
 					batch.act], dim=-1) # (B, T, obs_dim + act_dim) or (B, obs_dim + act_dim)
 				batch.critic_input_cur_online = torch.cat([
 					self.get_obs_base(batch, "critic", "cur"),
-					actor_result_cur.act if len(actor_result_cur.act.shape) == 2 else actor_result_cur.act.reshape(-1,self.actor.action_shape[0]),
+					actor_result_cur.act.reshape(*self.get_obs_base(batch, "critic", "cur").shape[:-1], -1)
 					], dim=-1) # (B, T, obs_dim + act_dim) or (B, obs_dim + act_dim)
 				batch.critic_input_next_online = torch.cat([
 					self.get_obs_base(batch, "critic", "next"),
-					actor_result_next.act if len(actor_result_cur.act.shape) == 2 else actor_result_cur.act.reshape(-1,self.actor.action_shape[0]),
+					actor_result_next.act.reshape(*self.get_obs_base(batch, "critic", "next").shape[:-1], -1)
 					], dim=-1).detach()
-				batch.log_prob_cur = actor_result_cur.log_prob
-				batch.log_prob_next = actor_result_next.log_prob
+				batch.log_prob_cur = actor_result_cur.log_prob.reshape(*batch.obs.shape[:-1], -1)
+				batch.log_prob_next = actor_result_next.log_prob.reshape(*batch.obs.shape[:-1], -1)
 		elif self.global_cfg.critic_input.history_merge_method == "cat_mlp":
 			raise NotImplementedError
 		elif self.global_cfg.critic_input.history_merge_method == "stack_rnn":
@@ -717,6 +717,9 @@ class CustomSACPolicy(SACPolicy):
 		# 	return_2 = batch.returns
 		# return_1 = self.compute_return_custom(batch)
 		# end flag
+		# for k in batch.keys():
+		# 	try: print(k, batch[k].shape)
+		# 	except: pass
 		batch.is_preprocessed = True
 		return batch
 
@@ -727,7 +730,6 @@ class CustomSACPolicy(SACPolicy):
 		target_q = torch.min(
 			self.critic1_old(batch.critic_input_next_online)[0], # (B, 1)
 			self.critic2_old(batch.critic_input_next_online)[0],
-		# )
 		) - self._alpha * batch.log_prob_next # (B, a_dim, 1)
 		return target_q
 
@@ -832,8 +834,8 @@ class CustomSACPolicy(SACPolicy):
 				self.critic2_old(batch.critic_input_next_online)[0],
 			) - self._alpha * batch.log_prob_next
 			# compute returns
-			returns = batch.rew + self._gamma * (1 - batch.done.int()) * value_next.flatten()
-			return returns.unsqueeze(-1)
+			returns = batch.rew + self._gamma * (1 - batch.done.int()) * value_next.reshape(*batch.done.shape[:-1],-1)
+			return returns
 
 	def forward(  # type: ignore
 		self,

@@ -95,7 +95,7 @@ search:
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
-      values: [0]
+      values: [1]
     - name: actor_rnn_hidden_layer_size
       values: [256]
     - name: critic_mlp_hidden_sizes
@@ -141,13 +141,13 @@ search:
     - name: obs_encode_pred_loss_weight
       values: [0]
     - name: actor_history_merge_method
-      values: ["cat_mlp"]
+      values: ["stack_rnn"]
     - name: actor_obs_type
       values: [normal]
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
-      values: ["prev"]
+      values: ["prev","next"]
     - name: noise_act_debug
       values: [false]
     - name: critic_history_merge_method
@@ -166,4 +166,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["markovA_mlp_delayA_prev_customReturnCal"] 
+      values: ["markovA_rnn_delayA_prevNext_customReturnCal"] 

@@ -14,7 +14,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     history_num: 40 # always > 2
     burnin_num: 0.25 # only works for stack_rnn
     obs_pred: 
-      turn_on: true
+      turn_on: false 
       input_type: "obs" # obs or feat
       net_type: rnn # vae or mlp
       net:
