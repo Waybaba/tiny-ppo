@@ -81,8 +81,8 @@ search:
   max_trials: 10000
   params:
     - name: env_delay
-      # values: [0]
-      values: [4,2,1,8,12]
+      values: [0]
+      # values: [4,2,1,8,12]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
@@ -91,11 +91,11 @@ search:
       # values: [HalfCheetah-v4]
       values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
-      values: [sac_rnn]
+      values: [sac_cat]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
-      values: [1]
+      values: [0]
     - name: actor_rnn_hidden_layer_size
       values: [256]
     - name: critic_mlp_hidden_sizes
@@ -141,13 +141,13 @@ search:
     - name: obs_encode_pred_loss_weight
       values: [0]
     - name: actor_history_merge_method
-      values: ["stack_rnn"]
+      values: ["none"]
     - name: actor_obs_type
       values: [normal]
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
-      values: ["prev","next"]
+      values: ["prev"]
     - name: noise_act_debug
       values: [false]
     - name: critic_history_merge_method
