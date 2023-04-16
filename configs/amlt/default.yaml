@@ -147,7 +147,7 @@ search:
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
-      values: ["next"]
+      values: ["prev"]
     - name: noise_act_debug
       values: [false]
     - name: critic_history_merge_method
@@ -166,4 +166,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["markovA_mlp_delayA_customReturnCal"] 
+      values: ["markovA_mlp_delayA_prev_customReturnCal"] 

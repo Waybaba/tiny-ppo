@@ -563,7 +563,7 @@ class CustomSACPolicy(SACPolicy):
 				# end
 				if "from_target_q" in batch: batch_end.from_target_q = batch.from_target_q
 				if "is_preprocessed" in batch: batch_end.is_preprocessed = batch.is_preprocessed
-				# indices = idx_end
+				indices = idx_end
 				batch = batch_end
 				batch.to_torch(device=self.actor.device)
 			else:
@@ -655,7 +655,7 @@ class CustomSACPolicy(SACPolicy):
 			# end
 			if "from_target_q" in batch: batch_stack.from_target_q = batch.from_target_q
 			if "is_preprocessed" in batch: batch_stack.is_preprocessed = batch.is_preprocessed
-			indices = idx_stack
+			# indices = idx_stack
 			batch = batch_stack
 			batch.to_torch(device=self.actor.device)
 		else:
@@ -708,7 +708,7 @@ class CustomSACPolicy(SACPolicy):
 			raise NotImplementedError
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
-		batch.returns = self.compute_return_custom(batch)
+		batch.returns = self.compute_return_custom(batch) # TODO make sure this is correct then remove the following
 		# if "from_target_q" not in batch:
 		# 	batch = self.compute_nstep_return(
 		# 		batch, buffer, indices, self._target_q, self._gamma, self._n_step,
@@ -727,8 +727,8 @@ class CustomSACPolicy(SACPolicy):
 		target_q = torch.min(
 			self.critic1_old(batch.critic_input_next_online)[0], # (B, 1)
 			self.critic2_old(batch.critic_input_next_online)[0],
-		)
-		# ) - self._alpha * batch.log_prob_next # (B, a_dim, 1)
+		# )
+		) - self._alpha * batch.log_prob_next # (B, a_dim, 1)
 		return target_q
 
 	def process_online_batch(self, batch, state):

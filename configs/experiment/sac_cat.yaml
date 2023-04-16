@@ -127,7 +127,6 @@ critic1:
     rnn_hidden_layer_size: 256
     mlp_hidden_sizes: [256,256]
     mlp_softmax: false
-
 critic2: ${critic1}
 policy:
   _target_: src.runner.CustomSACPolicy
