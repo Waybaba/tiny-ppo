@@ -347,7 +347,6 @@ class CustomSACPolicy(SACPolicy):
 	
 	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
 		to_logs = {}
-		self.train()
 		# critic 1&2
 		td1, critic1_loss = self._mse_optimizer(
 			batch, self.critic1, self.critic1_optim
@@ -448,8 +447,6 @@ class CustomSACPolicy(SACPolicy):
 			alpha_loss.backward()
 			self._alpha_optim.step()
 			self._alpha = self._log_alpha.detach().exp()
-
-
 		self.sync_weight()
 		to_logs["learn/loss_actor"] = actor_loss.item()
 		to_logs["learn/loss_critic1"] = critic1_loss.item()
@@ -464,7 +461,8 @@ class CustomSACPolicy(SACPolicy):
 		if not hasattr(self, "start_time"): self.start_time = time()
 		self.learn_step += 1
 		if self.learn_step % self.global_cfg.log_interval == 0:
-			minutes = (time() - self.start_time) / 60
+			if hasattr(batch, "valid_mask"):
+				to_logs["learn/mask_valid_ratio"] = batch.valid_mask.float().mean().item()
 			wandb.log(to_logs, commit=self.global_cfg.log_instant_commit)
 		return to_logs
 	
@@ -476,7 +474,6 @@ class CustomSACPolicy(SACPolicy):
 		use to_torch to move all the data to the device. So the following operations 
 		should be consistent
 		"""
-		self.train()
 		bsz = len(indices)
 		# init
 		batch.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
@@ -592,19 +589,32 @@ class CustomSACPolicy(SACPolicy):
 				torch.normal(size=stacked_batch_cur["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device), # TODO
 			], dim=-1) # (B, T, obs_dim+act_dim)
 			# make mask
-			if self.global_cfg.actor_input.trace_direction == "next":
-				# end step is invalid
-				batch_stack.valid_mask = torch.tensor(idx_stack != buffer.next(idx_stack), device=self.actor.device).int() # (B, T)
-			elif self.global_cfg.actor_input.trace_direction == "prev":
-				# start step is invalid
-				batch_stack.valid_mask = torch.tensor(idx_stack != buffer.prev(idx_stack), device=self.actor.device).int() # (B, T)
-			else: raise ValueError("trace_direction should be next or prev")
-			burn_in_mask = torch.ones(idx_stack.shape, device=self.actor.device).float() # (B, T)
+			# if self.global_cfg.actor_input.trace_direction == "next":
+			# 	# end step is invalid
+			# 	batch_stack.valid_mask = torch.tensor(idx_stack != buffer.next(idx_stack), device=self.actor.device).int() # (B, T)
+			# elif self.global_cfg.actor_input.trace_direction == "prev":
+			# 	# start step is invalid
+			# 	batch_stack.valid_mask = torch.tensor(idx_stack != buffer.prev(idx_stack), device=self.actor.device).int() # (B, T)
+			# else: raise ValueError("trace_direction should be next or prev")
+
+			# if the start of the idx reach start or end of the idx reach end, then the whole episode is invalid
+			# idx_stack: B, T
+			batch_stack.valid_mask = np.ones_like(idx_stack) # (B, T)
+			if self.global_cfg.actor_input.seq_mask == True:
+				reach_start = idx_stack[:,0] == buffer.prev(idx_stack[:,0]) # (B, )
+				reach_end = idx_stack[:,-1] == buffer.next(idx_stack[:,-1]) # (B, )
+				batch_stack.valid_mask[reach_start==1,:] = 0
+				batch_stack.valid_mask[reach_end==1,:] = 0
+			elif self.global_cfg.actor_input.seq_mask == False:
+				reach_start = idx_stack == buffer.prev(idx_stack) # (B, )
+				reach_end = idx_stack == buffer.next(idx_stack) # (B, )
+				batch_stack.valid_mask[reach_start==1] = 0
+				batch_stack.valid_mask[reach_end==1] = 0
+			else: raise ValueError("seq_mask should be True or False")
 			burn_in_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num) \
 			if type(self.global_cfg.actor_input.burnin_num) == float \
 			else self.global_cfg.actor_input.burnin_num
-			burn_in_mask[:,:burn_in_num] = 0
-			batch_stack.valid_mask = (burn_in_mask * batch_stack.valid_mask) # (B, T)
+			batch_stack.valid_mask[:,:burn_in_num] = 0
 			# obs_pred & obs_encode
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				batch_stack.pred_input_cur = batch_stack.actor_input_cur
@@ -664,44 +674,19 @@ class CustomSACPolicy(SACPolicy):
 		if self.global_cfg.critic_input.history_merge_method == "none":
 			actor_result_cur = self.forward(batch, input="actor_input_cur")
 			actor_result_next = self.forward(batch, input="actor_input_next")
-			if self.global_cfg.actor_input.obs_pred.turn_on: 
-				batch.critic_input_cur_offline = torch.cat([
-					self.get_obs_base(batch, "critic", "cur"),
-					batch.act], dim=-1) # (B, T, obs_dim + act_dim)
-				batch.critic_input_cur_online = torch.cat([
-					self.get_obs_base(batch, "critic", "cur"),
-					actor_result_cur.act,
-					], dim=-1) # (B, T, obs_dim + act_dim)
-				batch.critic_input_next_online = torch.cat([
-					self.get_obs_base(batch, "critic", "next"),
-					actor_result_next.act,
-					], dim=-1).detach() # (B, T, obs_dim + act_dim)
-				batch.log_prob_cur = actor_result_cur.log_prob
-				batch.log_prob_next = actor_result_next.log_prob
-				# print all shapes
-				# for k in batch.keys():
-				# 	try: print(k, batch[k].shape)
-				# 	except: pass
-			else:
-				if self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-					assert actor_result_cur.act.shape == (bsz, self.global_cfg.actor_input.history_num, self.actor.action_shape[0])
-					actor_result_cur.act = actor_result_cur.act.reshape(-1,self.actor.action_shape[0])
-					actor_result_cur.log_prob = actor_result_cur.log_prob.reshape(-1,1)
-					actor_result_next.act = actor_result_next.act.reshape(-1,self.actor.action_shape[0])
-					actor_result_next.log_prob = actor_result_next.log_prob.reshape(-1,1)
-				batch.critic_input_cur_offline = torch.cat([
-					self.get_obs_base(batch, "critic", "cur"),
-					batch.act], dim=-1) # (B, T, obs_dim + act_dim) or (B, obs_dim + act_dim)
-				batch.critic_input_cur_online = torch.cat([
-					self.get_obs_base(batch, "critic", "cur"),
-					actor_result_cur.act.reshape(*self.get_obs_base(batch, "critic", "cur").shape[:-1], -1)
-					], dim=-1) # (B, T, obs_dim + act_dim) or (B, obs_dim + act_dim)
-				batch.critic_input_next_online = torch.cat([
-					self.get_obs_base(batch, "critic", "next"),
-					actor_result_next.act.reshape(*self.get_obs_base(batch, "critic", "next").shape[:-1], -1)
-					], dim=-1).detach()
-				batch.log_prob_cur = actor_result_cur.log_prob.reshape(*batch.obs.shape[:-1], -1)
-				batch.log_prob_next = actor_result_next.log_prob.reshape(*batch.obs.shape[:-1], -1)
+			batch.critic_input_cur_offline = torch.cat([
+				self.get_obs_base(batch, "critic", "cur"),
+				batch.act], dim=-1) # (B, T, obs_dim + act_dim) or (B, obs_dim + act_dim)
+			batch.critic_input_cur_online = torch.cat([
+				self.get_obs_base(batch, "critic", "cur"),
+				actor_result_cur.act.reshape(*self.get_obs_base(batch, "critic", "cur").shape[:-1], -1)
+				], dim=-1) # (B, T, obs_dim + act_dim) or (B, obs_dim + act_dim)
+			batch.critic_input_next_online = torch.cat([
+				self.get_obs_base(batch, "critic", "next"),
+				actor_result_next.act.reshape(*self.get_obs_base(batch, "critic", "next").shape[:-1], -1)
+				], dim=-1).detach()
+			batch.log_prob_cur = actor_result_cur.log_prob.reshape(*batch.obs.shape[:-1], -1)
+			batch.log_prob_next = actor_result_next.log_prob.reshape(*batch.obs.shape[:-1], -1)
 		elif self.global_cfg.critic_input.history_merge_method == "cat_mlp":
 			raise NotImplementedError
 		elif self.global_cfg.critic_input.history_merge_method == "stack_rnn":
@@ -709,17 +694,6 @@ class CustomSACPolicy(SACPolicy):
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
 		batch.returns = self.compute_return_custom(batch) # TODO make sure this is correct then remove the following
-		# if "from_target_q" not in batch:
-		# 	batch = self.compute_nstep_return(
-		# 		batch, buffer, indices, self._target_q, self._gamma, self._n_step,
-		# 		self._rew_norm
-		# 	)
-		# 	return_2 = batch.returns
-		# return_1 = self.compute_return_custom(batch)
-		# end flag
-		# for k in batch.keys():
-		# 	try: print(k, batch[k].shape)
-		# 	except: pass
 		batch.is_preprocessed = True
 		return batch
 
@@ -734,7 +708,6 @@ class CustomSACPolicy(SACPolicy):
 		return target_q
 
 	def process_online_batch(self, batch, state):
-		self.eval()
 		obs = batch.obs
 		process_online_batch_info = {}
 		# if first step when act is none
@@ -871,17 +844,18 @@ class CustomSACPolicy(SACPolicy):
 			raise NotImplementedError("stack_rnn + obs_encode not implemented")
 			state_res["hidden_encode_pred_rnn"]  = process_online_batch_info["hidden_encode_pred_rnn"]
 		### log - train_env_infer
-		if not hasattr(self, "train_env_infer_step"): self.train_env_infer_step = 0
-		if not hasattr(self, "start_time"): self.start_time = time()
-		if input == "online_input": 
+		if input == "online_input" and self.training: 
+			if not hasattr(self, "start_time"): self.start_time = time()
+			if not hasattr(self, "train_env_infer_step"): self.train_env_infer_step = 0
 			self.train_env_infer_step += 1
 			if (self.train_env_infer_step % self.global_cfg.log_interval) == 0:
 				minutes = (time() - self.start_time) / 60
+				hours = minutes / 60
 				to_logs = {
-					"train_env_infer/expectedT_1mStep_min": minutes / self.train_env_infer_step * 1e6,
-					"train_env_infer/expectedT_1mStep_hr": minutes / self.train_env_infer_step * 1e6 / 60,
-					"train_env_infer/left_hr": minutes / self.train_env_infer_step * (1e6 - self.train_env_infer_step) / 60,
-					"train_env_infer/pastT_hr": minutes / 60,
+					"train_env_infer/left_hr": hours *  ((1e6 - self.train_env_infer_step) / self.train_env_infer_step),
+					"train_env_infer/past_hr": hours,
+					"train_env_infer/1mStep_hr": hours * (1e6 / self.train_env_infer_step),
+					"train_env_infer/step": self.train_env_infer_step,
 				}
 				if self.global_cfg.actor_input.obs_pred.turn_on and self.global_cfg.actor_input.obs_pred.input_type == "obs":
 					with torch.no_grad():
@@ -1482,7 +1456,7 @@ class SACRunner(DefaultRLRunner):
 		for epoch, epoch_stat, info in trainer:
 			to_log = {
 				"key/reward": epoch_stat["test_reward"],
-				# "key/length": epoch_stat["test/episode_length"],
+				"eval/reward": epoch_stat["test_reward"],
 			}
 			to_log.update(epoch_stat)
 			to_log.update(info)

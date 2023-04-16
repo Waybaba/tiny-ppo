@@ -72,6 +72,7 @@ search:
       global_cfg.actor_input.obs_encode.auto_kl_target={obs_encode_auto_kl_target}
       global_cfg.actor_input.obs_encode.pred_loss_weight={obs_encode_pred_loss_weight}
       global_cfg.actor_input.trace_direction={trace_direction}
+      global_cfg.actor_input.seq_mask={seq_mask}
       collector.train_collector.buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
       ++trainer.show_progress=false
@@ -81,8 +82,8 @@ search:
   max_trials: 10000
   params:
     - name: env_delay
-      values: [0]
-      # values: [4,2,1,8,12]
+      # values: [0]
+      values: [4,2,1,8,12]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
@@ -91,11 +92,13 @@ search:
       # values: [HalfCheetah-v4]
       values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
-      values: [sac_cat]
+      values: [sac_rnn]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
-      values: [0]
+      values: [1]
+    - name: seq_mask
+      values: [true,false]
     - name: actor_rnn_hidden_layer_size
       values: [256]
     - name: critic_mlp_hidden_sizes
@@ -141,13 +144,13 @@ search:
     - name: obs_encode_pred_loss_weight
       values: [0]
     - name: actor_history_merge_method
-      values: ["none"]
+      values: ["stack_rnn"]
     - name: actor_obs_type
       values: [normal]
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
-      values: ["prev"]
+      values: ["prev","next"]
     - name: noise_act_debug
       values: [false]
     - name: critic_history_merge_method
@@ -158,7 +161,7 @@ search:
       values: [3e-4]
       ### cluster related
     - name: trainer_batch_size
-      values: [256]
+      values: [32]
     - name: buffer_size
       values: [1000000]
     - name: seed
@@ -166,4 +169,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["upperBound_customReturnCal"] 
+      values: ["markovA_rnn_delayA_prevNext_customReturnCal_2"] 
