@@ -82,7 +82,7 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      values: [8,2,1,4,12]
+      values: [4,2,1,8,12]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
@@ -125,13 +125,13 @@ search:
     - name: obs_pred_auto_kl_target
       values: [50]
     - name: obs_encode_turn_on
-      values: [true]
+      values: [false]
     - name: obs_encode_feat_dim
       values: [256]
     - name: obs_encode_mlp_hidden_sizes
       values: ["[256,256,256]"]
     - name: obs_encode_auto_kl_target
-      values: [1,50,2500]
+      values: [50]
     - name: obs_encode_train_eval_async
       values: [true]
     - name: obs_encode_before_policy_detach
@@ -166,4 +166,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["obsEncode_trainEvalDiffVlog_v2"] 
+      values: ["markovA_mlp_delayA_customReturnCal"] 
