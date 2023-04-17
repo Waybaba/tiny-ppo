@@ -474,8 +474,8 @@ class CustomSACPolicy(SACPolicy):
 		use to_torch to move all the data to the device. So the following operations 
 		should be consistent
 		"""
-		bsz = len(indices)
 		# init
+		bsz = len(indices)
 		batch.info["obs_nodelay"] = buffer[buffer.prev(indices)].info["obs_next_nodelay"] # (B, T, *)
 		batch.valid_mask = buffer.next(indices) != indices
 		batch.to_torch(device=self.actor.device) # move all to self.device
@@ -668,8 +668,7 @@ class CustomSACPolicy(SACPolicy):
 			# indices = idx_stack
 			batch = batch_stack
 			batch.to_torch(device=self.actor.device)
-		else:
-			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
+		else: raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
 		# critic input 
 		if self.global_cfg.critic_input.history_merge_method == "none":
 			actor_result_cur = self.forward(batch, input="actor_input_cur")
@@ -691,10 +690,17 @@ class CustomSACPolicy(SACPolicy):
 			raise NotImplementedError
 		elif self.global_cfg.critic_input.history_merge_method == "stack_rnn":
 			raise NotImplementedError
-		else:
-			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
-		batch.returns = self.compute_return_custom(batch) # TODO make sure this is correct then remove the following
-		batch.is_preprocessed = True
+		else: raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.critic_input.history_merge_method))
+		# return cal
+		if self.global_cfg.actor_input.custom_return_cal == True:
+			batch.returns = self.compute_return_custom(batch)
+		elif self.global_cfg.actor_input.custom_return_cal == False:
+			if not hasattr(batch, "from_target_q") or not batch.from_target_q:
+				batch = self.compute_nstep_return(
+					batch, buffer, indices, self._target_q, self._gamma, self._n_step,
+					self._rew_norm
+				)
+		else: raise ValueError("batch_end error")
 		return batch
 
 	def _target_q(self, buffer, indices) -> torch.Tensor:

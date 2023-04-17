@@ -51,6 +51,7 @@ search:
       global_cfg.actor_input.obs_type={actor_obs_type}
       global_cfg.actor_input.burnin_num={actor_burnin_num}
       global_cfg.actor_input.noise_act_debug={noise_act_debug}
+      global_cfg.actor_input.custom_return_cal={custom_return_cal}
       global_cfg.critic_input.history_merge_method={critic_history_merge_method}
       global_cfg.critic_input.obs_type={critic_obs_type}
       global_cfg.actor_input.obs_pred.turn_on={obs_pred_turn_on}
@@ -83,22 +84,25 @@ search:
   params:
     - name: env_delay
       # values: [0]
-      values: [4,2,1,8,12]
+      values: [4,2,1,8]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
     - name: env_name
       # values: [HalfCheetah-v4]
       # values: [HalfCheetah-v4]
-      values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
+      values: [Hopper-v4,HalfCheetah-v4]
+      # values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
-      values: [sac_rnn]
+      values: [sac_cat]
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
       values: [1]
     - name: seq_mask
-      values: [true,false]
+      values: [false]
+    - name: custom_return_cal
+      values: [false,true]
     - name: actor_rnn_hidden_layer_size
       values: [256]
     - name: critic_mlp_hidden_sizes
@@ -144,13 +148,13 @@ search:
     - name: obs_encode_pred_loss_weight
       values: [0]
     - name: actor_history_merge_method
-      values: ["stack_rnn"]
+      values: ["cat_mlp"]
     - name: actor_obs_type
       values: [normal]
     - name: actor_burnin_num 
       values: [0.25]
     - name: trace_direction
-      values: ["prev","next"]
+      values: ["next"]
     - name: noise_act_debug
       values: [false]
     - name: critic_history_merge_method
@@ -161,12 +165,12 @@ search:
       values: [3e-4]
       ### cluster related
     - name: trainer_batch_size
-      values: [32]
+      values: [256]
     - name: buffer_size
       values: [1000000]
     - name: seed
-      values: ["0,1,2,3,4"]
+      values: ["0,1,2,3"]
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["markovA_rnn_delayA_prevNext_customReturnCal_2"] 
+      values: ["customReturn_Compare"] 

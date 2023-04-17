@@ -15,8 +15,9 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
     obs_type: "normal" # normal or oracle
     trace_direction: "prev" # prev or next
+    custom_return_cal: false 
     history_num: ${env.delay} # ! TODO for case 0 and 1
-    burnin_num: 0 # only works for stack_rnn
+    burnin_num: 0.25 # only works for stack_rnn
     noise_act_debug: false
     obs_pred: 
       turn_on: false
