@@ -98,7 +98,7 @@ search:
     - name: actor_mlp_hidden_sizes
       values: ["[256,256]"]
     - name: actor_rnn_layer_num
-      values: [1]
+      values: [0]
     - name: seq_mask
       values: [false]
     - name: custom_return_cal
