@@ -17,6 +17,7 @@ import tianshou
 from torch.utils.tensorboard import SummaryWriter
 import utils
 from functools import partial
+import torch.nn.functional as F
 
 
 import warnings
@@ -25,6 +26,8 @@ from tianshou.policy import DDPGPolicy
 from tianshou.exploration import BaseNoise
 from torch.distributions import Independent, Normal
 from copy import deepcopy
+from rich.progress import Progress
+from rich.progress import track
 
 
 def kl_divergence(mu1, logvar1, mu2, logvar2):
@@ -942,6 +945,7 @@ class CustomSACPolicy(SACPolicy):
 
 
 
+
 # net
 
 class RNN_MLP_Net(nn.Module):
@@ -1390,7 +1394,13 @@ class ObsEncodeNet(nn.Module):
 		encoder_outputs, state_ = self.decoder_net(input)
 		res = encoder_outputs[0]
 		return res, info
-		
+
+
+class TianshouTD3Wrapper(tianshou.policy.TD3Policy):
+	def __init__(self, *args, **kwargs):
+		self.global_cfg = kwargs.pop("global_cfg")
+		self.state_space = kwargs.pop("state_space")
+		super().__init__(*args, **kwargs)
 
 # utils
 
@@ -1472,3 +1482,217 @@ class SACRunner(DefaultRLRunner):
 			wandb.log(to_log)
 		wandb.finish()
 		print("SACRunner init end!")
+
+class TD3Runner(DefaultRLRunner):
+	def start(self, cfg):
+		with Progress() as progress:
+			print("TD3Runner init start ...")
+			super().start(cfg)
+			env = self.env
+			train_envs = self.train_envs
+			test_envs = self.test_envs
+			self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
+			actor_optim = cfg.actor_optim(self.actor.parameters())
+			self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+			self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
+			self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+			self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
+			self.actor_old = deepcopy(self.actor)
+			self.critic1_old = deepcopy(self.critic1)
+			self.critic2_old = deepcopy(self.critic2)
+			self.critic1_old.eval()
+			self.critic2_old.eval()
+			self.actor_old.eval()
+			self.buf = cfg.buffer
+			exploration_noise = cfg.policy.exploration_noise
+			
+			# initial exploration
+			initial_exploration_task = progress.add_task("[green]Initial Exploration...", total=cfg.start_timesteps)
+			init_step_cnt = 0
+			exit_init_explore = False
+			while True:
+				env_step_cur = 0
+				s = env.reset()
+				while True: # episode loop
+					a = env.action_space.sample() # TODO END
+					s_, r, terminated, info = env.step(a)
+					truncated = env_step_cur == cfg.env_max_step
+					self.buf.add(Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info))
+					s = s_
+					# update cnt
+					init_step_cnt += 1
+					env_step_cur += 1
+					progress.update(
+						initial_exploration_task, 
+						advance=1,
+					)
+					# break process
+					if init_step_cnt == cfg.start_timesteps: # init exploration done
+						exit_init_explore = True
+						break
+					if truncated or terminated: # episode done
+						break
+				if exit_init_explore: break
+
+			# training
+			training_task = progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
+			logs = {}
+			logs["env_step_global"] = 0
+			critic_update_cnt = 0
+			exit_training = False
+			while True: # traininng loop
+				logs["env_step_cur"] = 0
+				s = env.reset()
+				rwd_sum = 0.
+				while True: # episode loop
+					progress.update(
+						training_task, 
+						advance=1, 
+						description="\n[yellow]".join([f"[green]Training...",] + [f"{k}={'{:.2f}'.format(v)}" for k, v in logs.items()]
+						)
+					)
+					a = self.actor(s)[0][0]
+					noise = np.random.normal(0, env.action_space.high*exploration_noise, size=a.shape)
+					a = a + torch.tensor(noise, device=cfg.device).clamp(-cfg.policy.clip, cfg.policy.clip)
+					low_bound = torch.tensor(env.action_space.low, device=cfg.device).expand_as(a)
+					high_bound = torch.tensor(env.action_space.high, device=cfg.device).expand_as(a)
+					a = torch.clamp(a, low_bound, high_bound).detach().cpu().numpy()
+					s_, r, terminated, info = env.step(a)
+					truncated = logs["env_step_cur"] == cfg.env_max_step
+					self.buf.add(Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info))
+					s = s_
+					rwd_sum += r
+					# learn
+					if logs["env_step_global"] % cfg.trainer.step_per_collect == 0: # TODO check the var is right
+						for update_step in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
+							critic_update_cnt += 1
+							batch, indices = self.buf.sample(cfg.trainer.batch_size)
+							batch.to_torch(device=cfg.device, dtype=torch.float32)
+							# critic
+							noise = np.random.normal(0, env.action_space.high*exploration_noise, size=[len(batch),*env.action_space.shape])
+							a_ = self.actor_old(batch.obs_next)[0][0] + torch.tensor(noise, device=cfg.device)
+							low_bound = torch.tensor(env.action_space.low, device=cfg.device).expand_as(a_)
+							high_bound = torch.tensor(env.action_space.high, device=cfg.device).expand_as(a_)
+							a_ = torch.clamp(a_, low_bound, high_bound)
+							target_q = batch.rew + cfg.policy.gamma * (1 - batch.done.int()) * torch.min(self.critic1_old(torch.cat([batch.obs_next, a_],-1))[0], self.critic2_old(torch.cat([batch.obs_next, a_],-1))[0])
+							critic_loss = F.mse_loss(self.critic1(
+								torch.cat([batch.obs, batch.act],-1)
+							)[0], target_q) + F.mse_loss(self.critic2(
+								torch.cat([batch.obs, batch.act],-1)
+							)[0], target_q)
+							self.critic1_optim.zero_grad()
+							self.critic2_optim.zero_grad()
+							critic_loss.backward()
+							self.critic1_optim.step()
+							self.critic2_optim.step()
+							logs["learn/critic_loss"] = critic_loss.cpu().item()
+							if critic_update_cnt % cfg.policy.update_a_per_c == 0: # actor loss & soft update
+								# actor loss
+								actor_loss, _ = self.critic1(torch.cat([batch.obs, self.actor(batch.obs)[0][0]],-1))
+								actor_loss = -actor_loss.mean()
+								actor_optim.zero_grad()
+								actor_loss.backward()
+								actor_optim.step()
+								logs["learn/actor_loss"] = actor_loss.cpu().item()
+								# soft update
+								self.soft_update(self.critic1_old, self.critic1, cfg.policy.tau)
+								self.soft_update(self.critic2_old, self.critic2, cfg.policy.tau)
+								self.soft_update(self.actor_old, self.actor, cfg.policy.tau)
+					# eval
+					if logs["env_step_global"] % cfg.trainer.step_per_epoch == 0:
+						logs["epoch"] = int(logs["env_step_global"] / cfg.trainer.step_per_epoch)
+						exploration_noise = exploration_noise * cfg.policy.noise_decay_rate
+						eval_task = progress.add_task("[yellow]Eval", total=cfg.trainer.episode_per_test)
+						env_steps = []
+						rwd_sums = []
+						for test_env_idx in range(cfg.trainer.episode_per_test):
+							env_step_cur = 0
+							rwd_sum = 0
+							s = env.reset()
+							while True:
+								a = self.actor(s)[0][0].detach().cpu()
+								s_, r, terminated, info = env.step(a)
+								truncated = env_step_cur == cfg.env_max_step
+								env_step_cur += 1
+								rwd_sum += r
+								if terminated or truncated: # episode done
+									env_steps.append(env_step_cur)
+									rwd_sums.append(rwd_sum)
+									progress.update(eval_task, advance=1)
+									break
+						progress.remove_task(eval_task)
+						logs["eval/reward"] = sum(rwd_sums) / len(rwd_sums)
+						logs["eval/length"] = sum(env_steps) / len(env_steps)
+					# log
+					if logs["env_step_global"] % cfg.trainer.log_interval == 0:
+						wandb.log(logs)
+					# update cnt
+					logs["env_step_global"] += 1
+					logs["env_step_cur"] += 1
+					# break process
+					if terminated or truncated: # episode done
+						logs["rwd_sum"] = rwd_sum
+						logs["env_len"] = logs["env_step_cur"]
+						break
+					if logs["env_step_global"] == cfg.trainer.max_epoch * cfg.trainer.step_per_epoch:
+						exit_training = True
+						break
+				if exit_training: break
+
+	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
+		"""Softly update the parameters of target module towards the parameters \
+		of source module."""
+		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
+			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
+					
+class TD3Tianshou(DefaultRLRunner):
+	def start(self, cfg):
+		print("SACRunner init start ...")
+		# TODO add cfg check here e.g. global_cfg == rnn, rnn_layer > 0
+		super().start(cfg)
+		env = self.env
+		train_envs = self.train_envs
+		test_envs = self.test_envs
+		actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
+		actor_optim = cfg.actor_optim(actor.parameters())
+		critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+		critic1_optim = cfg.critic1_optim(critic1.parameters())
+		critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+		critic2_optim = cfg.critic2_optim(critic2.parameters())
+		policy = cfg.policy(
+			actor, actor_optim,
+			critic1, critic1_optim,
+			critic2, critic2_optim,
+			action_space=env.action_space,
+			state_space=env.observation_space,
+		)
+		# collector
+		train_collector = cfg.collector.train_collector(policy, train_envs)
+		test_collector = cfg.collector.test_collector(policy, test_envs)
+		train_collector.collect(n_step=cfg.start_timesteps, random=True)
+		# train
+		logger = tianshou.utils.WandbLogger(config=cfg)
+		logger.load(SummaryWriter(cfg.output_dir))
+		trainer = cfg.trainer(
+			policy, train_collector, test_collector, 
+			stop_fn=lambda mean_reward: mean_reward >= 10000,
+			logger=logger,
+		)
+		for epoch, epoch_stat, info in trainer:
+			to_log = {
+				"key/reward": epoch_stat["test_reward"],
+				"eval/reward": epoch_stat["test_reward"],
+			}
+			to_log.update(epoch_stat)
+			to_log.update(info)
+			wandb.log(to_log)
+		wandb.finish()
+		print("SACRunner init end!")
+
+		
+				
+
+
+				
+
+
