@@ -16,6 +16,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_type: "normal" # normal or oracle
     trace_direction: "prev" # prev or next
     custom_return_cal: false 
+    seq_mask: false
     history_num: ${env.delay} # ! TODO for case 0 and 1
     burnin_num: 0.25 # only works for stack_rnn
     noise_act_debug: false
