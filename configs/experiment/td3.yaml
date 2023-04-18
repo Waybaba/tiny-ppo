@@ -22,6 +22,7 @@ trainer:
   batch_size: 256
   test_in_train: false
   log_interval: 10
+  log_upload_interval: 10000
 policy:
   update_a_per_c: 2
   tau: 0.005
@@ -192,7 +193,7 @@ collector:
   test_collector:
     _target_: tianshou.data.Collector
     _partial_: true
-start_timesteps: 1000
+start_timesteps: 10000
 
 # common - for all tasks (task_name, tags, output_dir, device)
 task_name: "RL_Apr"

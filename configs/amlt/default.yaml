@@ -41,7 +41,7 @@ search:
       env.delay={env_delay}
       experiment={experiment}
       trainer.batch_size={trainer_batch_size}
-      collector.train_collector.buffer.size={buffer_size}
+      buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
       ++trainer.show_progress=false
       tags=[{tag}]
