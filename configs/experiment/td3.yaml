@@ -10,14 +10,13 @@ defaults:
 
 # common - for all tasks (task_name, tags, output_dir, device)
 
-# TODO new
 buffer: 
   _target_: tianshou.data.ReplayBuffer
   size: 1000000
 trainer:
   max_epoch: 200
   step_per_epoch: 5000 # epoch is eval
-  step_per_collect: 50
+  step_per_collect: 1
   update_per_step: 1
   episode_per_test: 10
   batch_size: 256
@@ -28,8 +27,13 @@ policy:
   tau: 0.005
   clip: 1.0
   noise_decay_rate: 0.998
-  initial_exploration_noise: 0.15
+  initial_exploration_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
   gamma: 0.99
+  exploration_noise:
+    _target_: tianshou.exploration.random.GaussianNoise
+    sigma: 0.1
 env_max_step: 5000
 
 # SAC specific

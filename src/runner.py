@@ -1643,7 +1643,7 @@ class EnvCollector:
 		self.env = env
 		self.env_loop = self.create_env_loop()
 
-	def collect(self, act_func, n_step=None, n_episode=None, env_max_step=5000, reset=False, progress_bar=None):
+	def collect(self, act_func, n_step=None, n_episode=None, env_max_step=5000, reset=False, progress_bar=None, rich_progress=None):
 		"""
 		Return 
 			res: a list of Batch(obs, act, rew, done, obs_next, info).
@@ -1656,6 +1656,7 @@ class EnvCollector:
 		"""
 		assert isinstance(act_func, (str, Callable)), "act_func should be a function or string 'random'"
 		assert (n_step is None) ^ (n_episode is None), "n_step and n_episode should be provided one and only one"
+		if progress_bar is not None: assert rich_progress is not None, "rich process must be provided to display process bar"
 
 		self.to_reset = reset
 		self.act_func = act_func
@@ -1670,7 +1671,7 @@ class EnvCollector:
 		episode_cnt = 0
 		finish_flag = False
 		if progress_bar is not None:
-			progress = Progress()
+			progress = rich_progress
 			task = progress.add_task(progress_bar, total=n_episode if n_episode is not None else n_step)
 		while not finish_flag:
 			batch, env_loop_info = next(self.env_loop)
@@ -1688,7 +1689,7 @@ class EnvCollector:
 				finish_flag = step_cnt >= n_step
 			elif n_episode is not None:
 				finish_flag = episode_cnt >= n_episode
-		if progress_bar is not None: progress.stop()
+		if progress_bar is not None: progress.remove_task(task)
 		return res_list, res_info
 
 	def create_env_loop(self):
@@ -1790,23 +1791,22 @@ class WaybabaRecorder:
 	def __str__(self):
 		return self.to_progress_bar_description()
 	
-class TD3Runner(DefaultRLRunner):
+
+class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
 		print("TD3Runner init start ...")
 		super().start(cfg)
 
 		print("Init Components ...")
-		self._init_components()
+		self.init_components()
 
 		print("Initial Exploration ...")
 		self._initial_exploration()
 
 		print("Training Start ...")
-		self.progress_info = {}
 		self.env_step_global = 0
-		progress = Progress()
-		progress.start()
-		training_task = progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
+		self.training_task = self.progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
+		
 		while True: # traininng loop
 			# env step collect
 			info_ = self._collect_once()
@@ -1816,7 +1816,7 @@ class TD3Runner(DefaultRLRunner):
 			if self._should_update(): 
 				for _ in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
 					batch, indices = self.buf.sample(self.cfg.trainer.batch_size) # sample
-					self.update_policy(batch, indices)
+					self.update_once(batch, indices)
 			
 			# evaluate
 			if self._should_evaluate():
@@ -1829,12 +1829,12 @@ class TD3Runner(DefaultRLRunner):
 				
 			# loop control
 			if self._should_end(): break
-			progress.update(training_task, advance=cfg.trainer.step_per_collect, description=f"[green]🚀 Training {self.env_step_global}/{self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch}[/green]\n"+self.record.to_progress_bar_description())
+			self.progress.update(self.training_task, advance=cfg.trainer.step_per_collect, description=f"[green]🚀 Training {self.env_step_global}/{self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch}[/green]\n"+self.record.to_progress_bar_description())
 			self.env_step_global += self.cfg.trainer.step_per_collect
 
-		progress.end()
+		self._end()
 
-	def _init_components(self):
+	def init_components(self):
 		cfg = self.cfg
 		env = self.env
 		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
@@ -1854,12 +1854,17 @@ class TD3Runner(DefaultRLRunner):
 		self.test_collector = EnvCollector(env)
 		self.exploration_noise = cfg.policy.initial_exploration_noise
 		self.record = WaybabaRecorder()
+		self.progress = Progress()
+		self.progress.start()
+		self._noise = self.cfg.policy.exploration_noise
+		self._noise_clip = self.cfg.policy.noise_clip
+		self.buf.to_torch(device=self.cfg.device)
 
 	def _initial_exploration(self):
 		"""exploration before training and add to self.buf"""
 		initial_batches, info_ = self.train_collector.collect(
 			act_func="random", n_step=self.cfg.start_timesteps, reset=True, 
-			progress_bar="Initial Exploration"
+			progress_bar="Initial Exploration ...", rich_progress=self.progress
 		)
 		for batch in initial_batches: self.buf.add(batch)
 
@@ -1885,29 +1890,10 @@ class TD3Runner(DefaultRLRunner):
 
 	def on_collect_end(self, **kwargs):
 		"""called after a step of data collection"""
-		if "rwd_sum_list" in kwargs and kwargs["rwd_sum_list"]:
-			for i in range(len(kwargs["rwd_sum_list"])): self.record("collect/rwd_sum", kwargs["rwd_sum_list"][i])
-		if "ep_len_list" in kwargs and kwargs["ep_len_list"]:
-			for i in range(len(kwargs["ep_len_list"])): self.record("collect/ep_len", kwargs["ep_len_list"][i])
-
-	def preprocess(self, batch):
-		return batch
-
-	def update_policy(self, batch, indices):
-		batch = self.preprocess(batch)
-		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
-		# update cirtic
-		critic_info_ = self.update_critic(batch, indices)
-		if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
-			# update actor
-			actor_info_ = self.update_actor(batch, indices)
-			self.record("learn/actor_loss", actor_info_["actor_loss"])
-			self.exploration_noise *= self.cfg.policy.noise_decay_rate
-		self.soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
-		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
-		self.soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
-		self.record("learn/critic_loss", critic_info_["critic_loss"])
-		self.update_cnt += 1
+		pass
+	
+	def update_once(self, batch, indices):
+		raise NotImplementedError
 
 	def _evaluate(self, env, act_func):
 		"""Evaluate the performance of an agent in an environment.
@@ -1921,7 +1907,8 @@ class TD3Runner(DefaultRLRunner):
 		if not hasattr(self, "epoch_cnt"): self.epoch_cnt = 0
 		eval_batches, info_ = self.test_collector.collect(
 			act_func=partial(self.select_act, add_noise=False), 
-			n_episode=self.cfg.trainer.episode_per_test, reset=True)
+			n_episode=self.cfg.trainer.episode_per_test, reset=True,
+			progress_bar="Evaluating ...", rich_progress=self.progress)
 		eval_rwds = [0. for _ in range(self.cfg.trainer.episode_per_test)]
 		eval_lens = [0 for _ in range(self.cfg.trainer.episode_per_test)]
 		cur_ep = 0
@@ -1938,63 +1925,14 @@ class TD3Runner(DefaultRLRunner):
 
 	def on_evaluate_end(self, **kwargs):
 		"""called after a step of evaluation"""
-		wandb.log(
-			{"eval/"+k: v for k, v in kwargs.items() if k != "batches"}
-		)
 		self.record("eval/rwd_mean", kwargs["rwd_mean"])
 		self.record("eval/len_mean", kwargs["len_mean"])
 
+	def _end(self):
+		self.progress.end()
+
 	def select_act(self, obs, add_noise=True):
-		# if not tensor, turn to tensor
-		if not isinstance(obs, torch.Tensor):
-			obs = torch.tensor(obs, dtype=torch.float32).to(self.cfg.device)
-		if add_noise:
-			a = self.actor_old(obs)[0][0]
-			noise = np.random.normal(0, self.env.action_space.high*self.exploration_noise, size=a.shape)
-			# ! TODO noise clip, use pytorch
-			return a + torch.tensor(noise, dtype=torch.float32).to(self.cfg.device)
-		else:
-			return self.actor_old(obs)[0][0]
-
-	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
-		"""Softly update the parameters of target module towards the parameters \
-		of source module."""
-		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
-			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
-
-	def update_critic(self, batch, indices):
-		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
-		# ! TODO clamp
-		a_ = self.select_act(batch.obs_next, add_noise=True)
-		target_q = batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
-			torch.min(
-				self.critic1_old(torch.cat([batch.obs_next, a_],-1))[0],
-				self.critic2_old(torch.cat([batch.obs_next, a_],-1))[0]
-			).flatten()
-		critic_loss = F.mse_loss(self.critic1(
-			torch.cat([batch.obs, batch.act],-1)
-		)[0].flatten(), target_q) + F.mse_loss(self.critic2(
-			torch.cat([batch.obs, batch.act],-1)
-		)[0].flatten(), target_q)
-		self.critic1_optim.zero_grad()
-		self.critic2_optim.zero_grad()
-		critic_loss.backward()
-		self.critic1_optim.step()
-		self.critic2_optim.step()
-		return {
-			"critic_loss": critic_loss.cpu().item()
-		}
-
-	def update_actor(self, batch, indices):
-		res_info = {}
-		actor_loss, _ = self.critic1(torch.cat([batch.obs, self.actor(batch.obs)[0][0]],-1))
-		actor_loss = -actor_loss.mean()
-		self.actor_optim.zero_grad()
-		actor_loss.backward()
-		self.actor_optim.step()
-		return {
-			"actor_loss": actor_loss.cpu().item()
-		}
+		raise NotImplementedError
 
 	def _should_update(self):
 		# TODO since we collect x steps, so we always update
@@ -2025,118 +1963,100 @@ class TD3Runner(DefaultRLRunner):
 	def _should_end(self):
 		return self.env_step_global >= self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
 
-	def old():
-		with Progress() as progress:
-			# training
-			training_task = progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
-			critic_update_cnt = 0
-			exit_training = False
-			while True: # traininng loop
-				self.logs["env_step_cur"] = 0
-				s = senv.reset()
-				rwd_sum = 0.
-				while True: # episode loop
-					progress.update(
-						training_task, 
-						advance=1, 
-						description="\n[yellow]".join([f"[green]Training...",] + [f"{k}={'{:.2f}'.format(v)}" for k, v in self.logs.items()]
-						)
-					)
-					a = self.actor(s)[0][0]
-					noise = np.random.normal(0, env.action_space.high*exploration_noise, size=a.shape)
-					a = a + torch.tensor(noise, device=cfg.device).clamp(-cfg.policy.clip, cfg.policy.clip)
-					low_bound = torch.tensor(env.action_space.low, device=cfg.device).expand_as(a)
-					high_bound = torch.tensor(env.action_space.high, device=cfg.device).expand_as(a)
-					a = torch.clamp(a, low_bound, high_bound).detach().cpu().numpy()
-					s_, r, terminated, info = env.step(a)
-					truncated = self.logs["env_step_cur"] == cfg.env_max_step
-					self.buf.add(Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info))
-					s = s_
-					rwd_sum += r
-					# learn
-					if self.logs["env_step_global"] % cfg.trainer.step_per_collect == 0: # TODO check the var is right
-						for update_step in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
-							critic_update_cnt += 1
-							batch, indices = self.buf.sample(cfg.trainer.batch_size)
-							batch.to_torch(device=cfg.device, dtype=torch.float32)
-							# critic
-							noise = np.random.normal(0, env.action_space.high*exploration_noise, size=[len(batch),*env.action_space.shape])
-							a_ = self.actor_old(batch.obs_next)[0][0] + torch.tensor(noise, device=cfg.device)
-							low_bound = torch.tensor(env.action_space.low, device=cfg.device).expand_as(a_)
-							high_bound = torch.tensor(env.action_space.high, device=cfg.device).expand_as(a_)
-							a_ = torch.clamp(a_, low_bound, high_bound)
-							target_q = batch.rew + cfg.policy.gamma * (1 - batch.done.int()) * \
-								torch.min(
-									self.critic1_old(torch.cat([batch.obs_next, a_],-1))[0],
-		  							self.critic2_old(torch.cat([batch.obs_next, a_],-1))[0]
-								).flatten()
-							critic_loss = F.mse_loss(self.critic1(
-								torch.cat([batch.obs, batch.act],-1)
-							)[0].flatten(), target_q) + F.mse_loss(self.critic2(
-								torch.cat([batch.obs, batch.act],-1)
-							)[0].flatten(), target_q)
-							self.critic1_optim.zero_grad()
-							self.critic2_optim.zero_grad()
-							critic_loss.backward()
-							self.critic1_optim.step()
-							self.critic2_optim.step()
-							self.logs["learn/critic_loss"] = critic_loss.cpu().item()
-							if critic_update_cnt % cfg.policy.update_a_per_c == 0: # actor loss & soft update
-								# actor loss
-								actor_loss, _ = self.critic1(torch.cat([batch.obs, self.actor(batch.obs)[0][0]],-1))
-								actor_loss = -actor_loss.mean()
-								self.actor_optim.zero_grad()
-								actor_loss.backward()
-								self.actor_optim.step()
-								self.logs["learn/actor_loss"] = actor_loss.cpu().item()
-								# soft update
-								self.soft_update(self.critic1_old, self.critic1, cfg.policy.tau)
-								self.soft_update(self.critic2_old, self.critic2, cfg.policy.tau)
-								self.soft_update(self.actor_old, self.actor, cfg.policy.tau)
-					# eval
-					if self.logs["env_step_global"] % cfg.trainer.step_per_epoch == 0:
-						self.logs["epoch"] = int(self.logs["env_step_global"] / cfg.trainer.step_per_epoch)
-						exploration_noise = exploration_noise * cfg.policy.noise_decay_rate
-						eval_task = progress.add_task("[yellow]Eval", total=cfg.trainer.episode_per_test)
-						env_steps = []
-						rwd_sums = []
-						for test_env_idx in range(cfg.trainer.episode_per_test):
-							env_step_cur = 0
-							rwd_sum = 0
-							s = env.reset()
-							while True:
-								a = self.actor(s)[0][0].detach().cpu()
-								s_, r, terminated, info = env.step(a)
-								s = s_
-								truncated = env_step_cur == cfg.env_max_step
-								env_step_cur += 1
-								rwd_sum += r
-								if terminated or truncated: # episode done
-									env_steps.append(env_step_cur)
-									rwd_sums.append(rwd_sum)
-									progress.update(eval_task, advance=1)
-									break
-						progress.remove_task(eval_task)
-						self.logs["eval/reward"] = sum(rwd_sums) / len(rwd_sums)
-						self.logs["eval/length"] = sum(env_steps) / len(env_steps)
-					# log
-					if self.logs["env_step_global"] % cfg.trainer.log_interval == 0:
-						wandb.log(self.logs)
-						pass
-					# update cnt
-					self.logs["env_step_global"] += 1
-					self.logs["env_step_cur"] += 1
-					# break process
-					if terminated or truncated: # episode done
-						self.logs["learn/rwd_sum"] = rwd_sum
-						self.logs["learn/env_len"] = self.logs["env_step_cur"]
-						break
-					if self.logs["env_step_global"] == cfg.trainer.max_epoch * cfg.trainer.step_per_epoch:
-						exit_training = True
-						break
-				if exit_training: break
 
+class TD3Runner(OfflineRLRunner):
 
+	def select_act(self, obs, add_noise=True):
+		# if not tensor, turn to tensor
+		if not isinstance(obs, torch.Tensor):
+			obs = torch.tensor(obs, dtype=torch.float32).to(self.cfg.device)
+		if add_noise:
+			a = self.actor(obs)[0][0]
+			noise = torch.tensor(self._noise(a.shape), device=self.cfg.device)
+			if self.cfg.policy.noise_clip > 0.0:
+				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+			return a + noise
+		else:
+			return self.actor(obs)[0][0]
+
+	def on_collect_end(self, **kwargs):
+		"""called after a step of data collection"""
+		if "rwd_sum_list" in kwargs and kwargs["rwd_sum_list"]:
+			for i in range(len(kwargs["rwd_sum_list"])): self.record("collect/rwd_sum", kwargs["rwd_sum_list"][i])
+		if "ep_len_list" in kwargs and kwargs["ep_len_list"]:
+			for i in range(len(kwargs["ep_len_list"])): self.record("collect/ep_len", kwargs["ep_len_list"][i])
+
+	def pre_update_process(self, batch):
+		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
+		return batch
+
+	def update_once(self, batch, indices):
+		batch = self.pre_update_process(batch)
+		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
+		# update cirtic
+		critic_info_ = self.update_critic(batch, indices)
+		if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
+			# update actor
+			actor_info_ = self.update_actor(batch, indices)
+			self.record("learn/actor_loss", actor_info_["actor_loss"])
+			self.exploration_noise *= self.cfg.policy.noise_decay_rate
+		self.soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
+		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
+		self.soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
+		self.record("learn/critic_loss", critic_info_["critic_loss"])
+		self.update_cnt += 1
+
+	def update_critic(self, batch, indices):
+
+		batch.a_next = self.actor_old(batch.obs_next)[0][0]
+		noise = torch.randn(size=batch.a_next.shape, device=batch.a_next.device) * self.cfg.policy.noise_clip
+		if self.cfg.policy.noise_clip > 0.0:
+			noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+		batch.a_next += noise
+		
+		target_q = batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+			torch.min(
+				self.critic1_old(torch.cat([batch.obs_next, batch.a_next],-1))[0],
+				self.critic2_old(torch.cat([batch.obs_next, batch.a_next],-1))[0]
+			).flatten()
+		
+		critic_loss = F.mse_loss(self.critic1(
+			torch.cat([batch.obs, batch.act],-1)
+		)[0].flatten(), target_q) + F.mse_loss(self.critic2(
+			torch.cat([batch.obs, batch.act],-1)
+		)[0].flatten(), target_q)
+
+		self.critic1_optim.zero_grad()
+		self.critic2_optim.zero_grad()
+		critic_loss.backward()
+		self.critic1_optim.step()
+		self.critic2_optim.step()
+
+		return {
+			"critic_loss": critic_loss.cpu().item()
+		}
+
+	def update_actor(self, batch, indices):
+		res_info = {}
+		actor_loss, _ = self.critic1(torch.cat([batch.obs, self.select_act(batch.obs, add_noise=False)],-1))
+		actor_loss = -actor_loss.mean()
+		self.actor_optim.zero_grad()
+		actor_loss.backward()
+		self.actor_optim.step()
+		return {
+			"actor_loss": actor_loss.cpu().item()
+		}
+
+	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
+		"""Softly update the parameters of target module towards the parameters \
+		of source module."""
+		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
+			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
+
+	def on_evaluate_end(self, **kwargs):
+		"""called after a step of evaluation"""
+		self.record("eval/rwd_mean", kwargs["rwd_mean"])
+		self.record("eval/len_mean", kwargs["len_mean"])
 
 
 
