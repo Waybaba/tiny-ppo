@@ -35,8 +35,7 @@ search:
     - python src/entry.py
       -m
       hydra/launcher=wsl_parallel
-      trainer.
-      ++trainer.log_upload_interval=10000
+      ++trainer.log_upload_interval=100000
       n_jobs={n_jobs}
       seed={seed}
       env.name={env_name}
