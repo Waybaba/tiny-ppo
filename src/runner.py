@@ -80,15 +80,15 @@ class AsyncACDDPGPolicy(DDPGPolicy):
 	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
 		batch = buffer[indices]  # batch.obs: s_{t+n}
 		next_batch = buffer[indices + 1]  # next_batch.obs: s_{t+n+1}
-		next_batch.obs_cur = next_batch.info["obs_cur"]
+		next_batch.c_in_curur = next_batch.info["obs_cur"]
 		# obs_next_result = self(batch, input="obs_cur")
 		obs_next_result = self(next_batch, input="obs_cur")
 		act_ = obs_next_result.act
 		target_q = torch.min(
 			# self.critic1_old(batch.obs_next, act_),
 			# self.critic2_old(batch.obs_next, act_),
-			self.critic1_old(next_batch.obs_cur, act_),
-			self.critic2_old(next_batch.obs_cur, act_),
+			self.critic1_old(next_batch.c_in_curur, act_),
+			self.critic2_old(next_batch.c_in_curur, act_),
 		) - self._alpha * obs_next_result.log_prob
 		return target_q
 
@@ -1997,12 +1997,27 @@ class TD3Runner(OfflineRLRunner):
 		if "ep_len_list" in kwargs and kwargs["ep_len_list"]:
 			for i in range(len(kwargs["ep_len_list"])): self.record("collect/ep_len", kwargs["ep_len_list"][i])
 
-	def pre_update_process(self, batch):
+	def pre_update_process(self, batch, indices):
 		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
-		return batch
+		# obs_nodelay # TODO ! bug fisrt step should use original
+		batch.obs_nodelay = self.buf[self.buf.prev(indices)].info["obs_next_nodelay"]
+		batch.obs_nodelay = torch.tensor(batch.obs_nodelay, device=self.cfg.device)
+		batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
+		# actor input
+		batch.a_in_cur = batch.obs # TODO different types
+		batch.a_in_next = batch.obs_next
+		# critic input
+		if self.cfg.global_cfg.critic_input.obs_type == "normal":
+			batch.c_in_cur = batch.obs
+			batch.c_in_next = batch.obs_next
+		elif self.cfg.global_cfg.critic_input.obs_type == "oracle":
+			batch.c_in_cur = batch.obs_nodelay
+			batch.c_in_next = batch.obs_next_nodelay
+		else: raise NotImplementedError
+		return batch, indices
 
 	def update_once(self, batch, indices):
-		batch = self.pre_update_process(batch)
+		batch, indices = self.pre_update_process(batch, indices)
 		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
 		# update cirtic
 		critic_info_ = self.update_critic(batch, indices)
@@ -2019,7 +2034,7 @@ class TD3Runner(OfflineRLRunner):
 
 	def update_critic(self, batch, indices):
 
-		batch.a_next = self.actor_old(batch.obs_next)[0][0]
+		batch.a_next = self.actor_old(batch.a_in_next)[0][0]
 		noise = torch.randn(size=batch.a_next.shape, device=batch.a_next.device) * self.cfg.policy.noise_clip
 		if self.cfg.policy.noise_clip > 0.0:
 			noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
@@ -2027,14 +2042,14 @@ class TD3Runner(OfflineRLRunner):
 		
 		target_q = batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
 			torch.min(
-				self.critic1_old(torch.cat([batch.obs_next, batch.a_next],-1))[0],
-				self.critic2_old(torch.cat([batch.obs_next, batch.a_next],-1))[0]
+				self.critic1_old(torch.cat([batch.c_in_next, batch.a_next],-1))[0],
+				self.critic2_old(torch.cat([batch.c_in_next, batch.a_next],-1))[0]
 			).flatten()
 		
 		critic_loss = F.mse_loss(self.critic1(
-			torch.cat([batch.obs, batch.act],-1)
+			torch.cat([batch.c_in_cur, batch.act],-1)
 		)[0].flatten(), target_q) + F.mse_loss(self.critic2(
-			torch.cat([batch.obs, batch.act],-1)
+			torch.cat([batch.c_in_cur, batch.act],-1)
 		)[0].flatten(), target_q)
 
 		self.critic1_optim.zero_grad()
@@ -2049,7 +2064,7 @@ class TD3Runner(OfflineRLRunner):
 
 	def update_actor(self, batch, indices):
 		res_info = {}
-		actor_loss, _ = self.critic1(torch.cat([batch.obs, self.select_act(batch.obs, add_noise=False)],-1))
+		actor_loss, _ = self.critic1(torch.cat([batch.c_in_cur, self.select_act(batch.a_in_cur, add_noise=False)],-1))
 		actor_loss = -actor_loss.mean()
 		self.actor_optim.zero_grad()
 		actor_loss.backward()

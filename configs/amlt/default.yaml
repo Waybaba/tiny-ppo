@@ -42,6 +42,7 @@ search:
       env.name={env_name}
       env.delay={env_delay}
       experiment={experiment}
+      global_cfg.critic_input.obs_type={critic_input_obs_type}
       trainer.batch_size={trainer_batch_size}
       buffer.size={buffer_size}
       tags=[{tag}]
@@ -53,7 +54,7 @@ search:
       # values: [4,2,1,8]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
-      values: [0,1,2,4,8,12]
+      values: [4,1,2,8,12,0]
     - name: env_name
       # values: [HalfCheetah-v4]
       # values: [HalfCheetah-v4]
@@ -65,9 +66,11 @@ search:
       values: [256]
     - name: buffer_size
       values: [1000000]
+    - name: critic_input_obs_type
+      values: [oracle,normal]
     - name: seed
       values: ["0,1,2,3"]
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["custom_td3_delayed"] 
+      values: ["custom_td3_dummyAndOracleCritic"] 
