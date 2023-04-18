@@ -37,133 +37,30 @@ search:
       hydra/launcher=wsl_parallel
       n_jobs={n_jobs}
       seed={seed}
-      experiment={experiment}
       env.name={env_name}
+      env.delay={env_delay}
+      experiment={experiment}
       trainer.batch_size={trainer_batch_size}
-      actor_optim.lr={actor_optim_lr}
-      actor.net.mlp_hidden_sizes={actor_mlp_hidden_sizes}
-      actor.net.rnn_layer_num={actor_rnn_layer_num}
-      actor.net.rnn_hidden_layer_size={actor_rnn_hidden_layer_size}
-      critic1.net.mlp_hidden_sizes={critic_mlp_hidden_sizes}
-      critic1.net.rnn_layer_num={critic_rnn_layer_num}
-      critic1.net.rnn_hidden_layer_size={critic_rnn_hidden_layer_size}
-      global_cfg.actor_input.history_merge_method={actor_history_merge_method}
-      global_cfg.actor_input.obs_type={actor_obs_type}
-      global_cfg.actor_input.burnin_num={actor_burnin_num}
-      global_cfg.actor_input.noise_act_debug={noise_act_debug}
-      global_cfg.actor_input.custom_return_cal={custom_return_cal}
-      global_cfg.critic_input.history_merge_method={critic_history_merge_method}
-      global_cfg.critic_input.obs_type={critic_obs_type}
-      global_cfg.actor_input.obs_pred.turn_on={obs_pred_turn_on}
-      global_cfg.actor_input.obs_pred.middle_detach={middle_detach}
-      global_cfg.actor_input.obs_pred.net.encoder_net.mlp_hidden_sizes={obs_pred_encoder_mlp_hidden_sizes}
-      global_cfg.actor_input.obs_pred.net.decoder_net.mlp_hidden_sizes={obs_pred_decoder_mlp_hidden_sizes}
-      global_cfg.actor_input.obs_pred.input_type={obs_pred_input_type}
-      global_cfg.actor_input.obs_pred.net.encoder_net.dropout={obs_pred_dropout}
-      global_cfg.actor_input.obs_pred.net_type={obs_pred_net_type}
-      global_cfg.actor_input.obs_pred.pred_loss_weight={obs_pred_pred_loss_weight}
-      global_cfg.actor_input.obs_pred.norm_kl_loss_weight={obs_pred_norm_kl_loss_weight}
-      global_cfg.actor_input.obs_pred.auto_kl_target={obs_pred_auto_kl_target}
-      global_cfg.actor_input.obs_encode.turn_on={obs_encode_turn_on}
-      global_cfg.actor_input.obs_encode.feat_dim={obs_encode_feat_dim}
-      global_cfg.actor_input.obs_encode.net.encoder_net.mlp_hidden_sizes={obs_encode_mlp_hidden_sizes}
-      global_cfg.actor_input.obs_encode.train_eval_async={obs_encode_train_eval_async}
-      global_cfg.actor_input.obs_encode.before_policy_detach={obs_encode_before_policy_detach}
-      global_cfg.actor_input.obs_encode.norm_kl_loss_weight={obs_encode_norm_kl_loss_weight}
-      global_cfg.actor_input.obs_encode.auto_kl_target={obs_encode_auto_kl_target}
-      global_cfg.actor_input.obs_encode.pred_loss_weight={obs_encode_pred_loss_weight}
-      global_cfg.actor_input.trace_direction={trace_direction}
-      global_cfg.actor_input.seq_mask={seq_mask}
       collector.train_collector.buffer.size={buffer_size}
       global_cfg.log_instant_commit=false
       ++trainer.show_progress=false
-      env.delay={env_delay}
       tags=[{tag}]
   type: grid
   max_trials: 10000
   params:
     - name: env_delay
-      # values: [0]
-      values: [4,2,1,8]
+      values: [0]
+      # values: [4,2,1,8]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
       # values: [0,2,4]
     - name: env_name
       # values: [HalfCheetah-v4]
       # values: [HalfCheetah-v4]
-      values: [Hopper-v4,HalfCheetah-v4]
-      # values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
+      # values: [Hopper-v4,HalfCheetah-v4]
+      values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
-      values: [sac_cat]
-    - name: actor_mlp_hidden_sizes
-      values: ["[256,256]"]
-    - name: actor_rnn_layer_num
-      values: [0]
-    - name: seq_mask
-      values: [false]
-    - name: custom_return_cal
-      values: [false,true]
-    - name: actor_rnn_hidden_layer_size
-      values: [256]
-    - name: critic_mlp_hidden_sizes
-      values: ["[256,256]"]
-    - name: critic_rnn_layer_num
-      values: [0]
-    - name: critic_rnn_hidden_layer_size
-      values: [256]
-    - name: obs_pred_turn_on
-      values: [false]
-    - name: middle_detach
-      values: [true]
-    - name: obs_pred_encoder_mlp_hidden_sizes
-      values: ["[256,256,256]"]
-    - name: obs_pred_decoder_mlp_hidden_sizes
-      values: ["[256]"]
-    - name: obs_pred_input_type
-      values: ["feat"]
-    - name: obs_pred_dropout
-      values: ["null"]
-    - name: obs_pred_net_type
-      values: ["vae"]
-    - name: obs_pred_pred_loss_weight
-      values: [1.0]
-    - name: obs_pred_norm_kl_loss_weight
-      values: [0.01]
-    - name: obs_pred_auto_kl_target
-      values: [50]
-    - name: obs_encode_turn_on
-      values: [false]
-    - name: obs_encode_feat_dim
-      values: [256]
-    - name: obs_encode_mlp_hidden_sizes
-      values: ["[256,256,256]"]
-    - name: obs_encode_auto_kl_target
-      values: [50]
-    - name: obs_encode_train_eval_async
-      values: [true]
-    - name: obs_encode_before_policy_detach
-      values: [false]
-    - name: obs_encode_norm_kl_loss_weight
-      values: [0.01]
-    - name: obs_encode_pred_loss_weight
-      values: [0]
-    - name: actor_history_merge_method
-      values: ["cat_mlp"]
-    - name: actor_obs_type
-      values: [normal]
-    - name: actor_burnin_num 
-      values: [0.25]
-    - name: trace_direction
-      values: ["next"]
-    - name: noise_act_debug
-      values: [false]
-    - name: critic_history_merge_method
-      values: ["none"]
-    - name: critic_obs_type
-      values: ["oracle"]
-    - name: actor_optim_lr
-      values: [3e-4]
-      ### cluster related
+      values: [td3]
     - name: trainer_batch_size
       values: [256]
     - name: buffer_size
@@ -173,4 +70,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["customReturn_Compare"] 
+      values: ["custom_td3"] 
