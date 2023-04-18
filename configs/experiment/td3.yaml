@@ -14,15 +14,15 @@ buffer:
   _target_: tianshou.data.ReplayBuffer
   size: 1000000
 trainer:
+  batch_size: 256
+  test_in_train: false
+  episode_per_test: 10
   max_epoch: 200
   step_per_epoch: 5000 # epoch is eval
   step_per_collect: 1
   update_per_step: 1
-  episode_per_test: 10
-  batch_size: 256
-  test_in_train: false
   log_interval: 10
-  log_upload_interval: 10000
+  log_upload_interval: 100 # 0 for instant upload
 policy:
   update_a_per_c: 2
   tau: 0.005

@@ -35,6 +35,8 @@ search:
     - python src/entry.py
       -m
       hydra/launcher=wsl_parallel
+      trainer.
+      ++trainer.log_upload_interval=10000
       n_jobs={n_jobs}
       seed={seed}
       env.name={env_name}
@@ -42,8 +44,6 @@ search:
       experiment={experiment}
       trainer.batch_size={trainer_batch_size}
       buffer.size={buffer_size}
-      global_cfg.log_instant_commit=false
-      ++trainer.show_progress=false
       tags=[{tag}]
   type: grid
   max_trials: 10000

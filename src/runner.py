@@ -1825,14 +1825,18 @@ class OfflineRLRunner(DefaultRLRunner):
 			
 			# log
 			if self._should_log():
-				self.record.upload_to_wandb(step=self.env_step_global)
+				self.record.upload_to_wandb(step=self.env_step_global, commit=False)
+			
+			# upload
+			if self._should_upload():
+				wandb.log({}, commit=True)
 				
 			# loop control
 			if self._should_end(): break
 			self.progress.update(self.training_task, advance=cfg.trainer.step_per_collect, description=f"[green]🚀 Training {self.env_step_global}/{self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch}[/green]\n"+self.record.to_progress_bar_description())
 			self.env_step_global += self.cfg.trainer.step_per_collect
 
-		self._end()
+		self._end_all()
 
 	def init_components(self):
 		cfg = self.cfg
@@ -1927,8 +1931,9 @@ class OfflineRLRunner(DefaultRLRunner):
 		self.record("eval/rwd_mean", kwargs["rwd_mean"])
 		self.record("eval/len_mean", kwargs["len_mean"])
 
-	def _end(self):
+	def _end_all(self):
 		self.progress.end()
+		wandb.finish()
 
 	def select_act(self, obs, add_noise=True):
 		raise NotImplementedError
@@ -1959,8 +1964,18 @@ class OfflineRLRunner(DefaultRLRunner):
 			return True
 		return False
 
+	def _should_upload(self):
+		if not self.cfg.trainer.log_upload_interval: return True # missing or zero, always upload
+		if not hasattr(self, "should_upload_record"): self.should_upload_record = {}
+		cur_upload_tick = self.env_step_global // self.cfg.trainer.log_upload_interval
+		if cur_upload_tick not in self.should_upload_record:
+			self.should_upload_record[cur_upload_tick] = True
+			return True
+		return False
+
 	def _should_end(self):
 		return self.env_step_global >= self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
+
 
 
 class TD3Runner(OfflineRLRunner):
