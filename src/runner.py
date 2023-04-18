@@ -1773,12 +1773,7 @@ class WaybabaRecorder:
 			wandb.log(to_upload, *args, **kwargs)
 
 	def to_progress_bar_description(self):
-		info_dict = {
-			k: v["values"][-1] for k, v in \
-			sorted(self.data.items(), key=lambda item: item[0]) \
-			if v["show_in_progress_bar"] and len(v["values"]) > 0
-		}
-		return "\n".join([f"{k}={'{:.2f}'.format(v)}" for k, v in info_dict.items()])
+		return self.__str__()
 
 	def _create_new(self):
 		return {
@@ -1789,7 +1784,16 @@ class WaybabaRecorder:
 		}
 	
 	def __str__(self):
-		return self.to_progress_bar_description()
+		info_dict = {
+			k: v["values"][-1] for k, v in \
+			sorted(self.data.items(), key=lambda item: item[0]) \
+			if v["show_in_progress_bar"] and len(v["values"]) > 0
+		}
+		for k, v in info_dict.items():
+			if type(v) == int: info_dict[k] = str(v)
+			elif type(v) == float: info_dict[k] = '{:.2f}'.format(v)
+			else: info_dict[k] = '{:.2f}'.format(v)
+		return "\n".join([f"{k}={v}" for k, v in info_dict.items()])
 	
 
 class OfflineRLRunner(DefaultRLRunner):
@@ -1885,7 +1889,6 @@ class OfflineRLRunner(DefaultRLRunner):
 		if not hasattr(self, "ep_len_history"): self.ep_len_history = []
 		self.rwd_sum_history += info_["rwd_sum_list"]
 		self.ep_len_history += info_["ep_len_list"]
-
 		return {
 			"batches": batches,
 			**info_
@@ -1925,11 +1928,6 @@ class OfflineRLRunner(DefaultRLRunner):
 			"rwd_mean": np.mean(eval_rwds),
 			"len_mean": np.mean(eval_lens)
 		}
-
-	def on_evaluate_end(self, **kwargs):
-		"""called after a step of evaluation"""
-		self.record("eval/rwd_mean", kwargs["rwd_mean"])
-		self.record("eval/len_mean", kwargs["len_mean"])
 
 	def _end_all(self):
 		self.progress.end()
@@ -1975,7 +1973,6 @@ class OfflineRLRunner(DefaultRLRunner):
 
 	def _should_end(self):
 		return self.env_step_global >= self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
-
 
 
 class TD3Runner(OfflineRLRunner):
@@ -2071,6 +2068,7 @@ class TD3Runner(OfflineRLRunner):
 		"""called after a step of evaluation"""
 		self.record("eval/rwd_mean", kwargs["rwd_mean"])
 		self.record("eval/len_mean", kwargs["len_mean"])
+		self.record("epoch", self.epoch_cnt)
 
 
 
