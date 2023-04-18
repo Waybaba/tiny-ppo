@@ -128,6 +128,7 @@
 				"env.name=Hopper-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
+				"buffer.size=123",
 				"env.delay=0",
 				"start_timesteps=10000",
 			],

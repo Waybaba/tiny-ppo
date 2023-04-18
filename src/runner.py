@@ -1858,7 +1858,6 @@ class OfflineRLRunner(DefaultRLRunner):
 		self.progress.start()
 		self._noise = self.cfg.policy.exploration_noise
 		self._noise_clip = self.cfg.policy.noise_clip
-		self.buf.to_torch(device=self.cfg.device)
 
 	def _initial_exploration(self):
 		"""exploration before training and add to self.buf"""
