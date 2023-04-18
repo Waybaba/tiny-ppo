@@ -21,7 +21,7 @@ trainer:
   step_per_epoch: 5000 # epoch is eval
   step_per_collect: 1
   update_per_step: 1
-  log_interval: 10
+  log_interval: 100
   log_upload_interval: 1 # 0 for instant upload
 policy:
   update_a_per_c: 2
