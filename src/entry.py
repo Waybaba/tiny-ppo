@@ -1,9 +1,8 @@
 import pyrootutils
 root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
-import hydra
-import torch
-import wandb
 import numpy as np
+import hydra
+import wandb
 import utils
 
 
