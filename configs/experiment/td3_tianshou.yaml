@@ -131,29 +131,21 @@ critic1:
     mlp_softmax: false
 critic2: ${critic1}
 policy:
-  _target_: src.runner.CustomSACPolicy
+  _target_: src.runner.TianshouTD3Wrapper
   _partial_: true
   tau: 0.005
   gamma: 0.99
-  global_cfg: ${global_cfg}
+  exploration_noise:
+    _target_: tianshou.exploration.random.GaussianNoise
+    sigma: 0.1
+  policy_noise: 0.2
+  update_actor_freq: 2
+  noise_clip: 0.5
   estimation_step: 1
-  deterministic_eval: true
-  alpha:
-    _target_: builtins.tuple
-    _args_:
-      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
-        - _target_: torch.zeros
-          size: 
-            _target_: builtins.tuple
-            _args_:
-              - - 1
-          requires_grad: true
-          device: ${device}
-        - _target_: torch.optim.Adam
-          _partial_: true
-          lr: ${actor_optim.lr}
+  global_cfg: ${global_cfg}
+  # deterministic_eval: true
 runner:
-  _target_: src.runner.SACRunner
+  _target_: src.runner.TD3Tianshou
   _partial_: true
 critic1_optim:
   _target_: ${actor_optim._target_}

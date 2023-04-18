@@ -8,7 +8,7 @@ import torch
 import wandb
 import numpy as np
 from tianshou.policy import SACPolicy
-from typing import Any, Dict, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Dict, Optional, Sequence, Tuple, Type, Union, Callable
 import numpy as np
 import torch
 from torch import nn
@@ -1395,8 +1395,156 @@ class ObsEncodeNet(nn.Module):
 		res = encoder_outputs[0]
 		return res, info
 
+class TD3Policy(DDPGPolicy):
+	"""Implementation of TD3, arXiv:1802.09477.
 
-class TianshouTD3Wrapper(tianshou.policy.TD3Policy):
+	:param torch.nn.Module actor: the actor network following the rules in
+		:class:`~tianshou.policy.BasePolicy`. (s -> logits)
+	:param torch.optim.Optimizer actor_optim: the optimizer for actor network.
+	:param torch.nn.Module critic1: the first critic network. (s, a -> Q(s, a))
+	:param torch.optim.Optimizer critic1_optim: the optimizer for the first
+		critic network.
+	:param torch.nn.Module critic2: the second critic network. (s, a -> Q(s, a))
+	:param torch.optim.Optimizer critic2_optim: the optimizer for the second
+		critic network.
+	:param float tau: param for soft update of the target network. Default to 0.005.
+	:param float gamma: discount factor, in [0, 1]. Default to 0.99.
+	:param float exploration_noise: the exploration noise, add to the action.
+		Default to ``GaussianNoise(sigma=0.1)``
+	:param float policy_noise: the noise used in updating policy network.
+		Default to 0.2.
+	:param int update_actor_freq: the update frequency of actor network.
+		Default to 2.
+	:param float noise_clip: the clipping range used in updating policy network.
+		Default to 0.5.
+	:param bool reward_normalization: normalize the reward to Normal(0, 1).
+		Default to False.
+	:param bool action_scaling: whether to map actions from range [-1, 1] to range
+		[action_spaces.low, action_spaces.high]. Default to True.
+	:param str action_bound_method: method to bound action to range [-1, 1], can be
+		either "clip" (for simply clipping the action) or empty string for no bounding.
+		Default to "clip".
+	:param Optional[gym.Space] action_space: env's action space, mandatory if you want
+		to use option "action_scaling" or "action_bound_method". Default to None.
+	:param lr_scheduler: a learning rate scheduler that adjusts the learning rate in
+		optimizer in each policy.update(). Default to None (no lr_scheduler).
+
+	.. seealso::
+
+		Please refer to :class:`~tianshou.policy.BasePolicy` for more detailed
+		explanation.
+	"""
+
+	def __init__(
+		self,
+		actor: torch.nn.Module,
+		actor_optim: torch.optim.Optimizer,
+		critic1: torch.nn.Module,
+		critic1_optim: torch.optim.Optimizer,
+		critic2: torch.nn.Module,
+		critic2_optim: torch.optim.Optimizer,
+		tau: float = 0.005,
+		gamma: float = 0.99,
+		exploration_noise=None,
+		policy_noise: float = 0.2,
+		update_actor_freq: int = 2,
+		noise_clip: float = 0.5,
+		reward_normalization: bool = False,
+		estimation_step: int = 1,
+		**kwargs: Any,
+	) -> None:
+		super().__init__(
+			actor, actor_optim, None, None, tau, gamma, exploration_noise,
+			reward_normalization, estimation_step, **kwargs
+		)
+		self.critic1, self.critic1_old = critic1, deepcopy(critic1)
+		self.critic1_old.eval()
+		self.critic1_optim = critic1_optim
+		self.critic2, self.critic2_old = critic2, deepcopy(critic2)
+		self.critic2_old.eval()
+		self.critic2_optim = critic2_optim
+		self._policy_noise = policy_noise
+		self._freq = update_actor_freq
+		self._noise_clip = noise_clip
+		self._cnt = 0
+		self._last = 0
+
+	def train(self, mode: bool = True) -> "TD3Policy":
+		self.training = mode
+		self.actor.train(mode)
+		self.critic1.train(mode)
+		self.critic2.train(mode)
+		return self
+
+	def sync_weight(self) -> None:
+		self.soft_update(self.critic1_old, self.critic1, self.tau)
+		self.soft_update(self.critic2_old, self.critic2, self.tau)
+		self.soft_update(self.actor_old, self.actor, self.tau)
+
+	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
+		batch = buffer[indices]  # batch.obs: s_{t+n}
+		act_ = self(batch, model="actor_old", input="obs_next").act
+		noise = torch.randn(size=act_.shape, device=act_.device) * self._policy_noise
+		if self._noise_clip > 0.0:
+			noise = noise.clamp(-self._noise_clip, self._noise_clip)
+		act_ += noise
+		target_q = torch.min(
+			self.critic1_old(batch.obs_next, act_),
+			self.critic2_old(batch.obs_next, act_),
+		)
+		return target_q
+
+	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
+		# critic 1&2
+		td1, critic1_loss = self._mse_optimizer(
+			batch, self.critic1, self.critic1_optim
+		)
+		td2, critic2_loss = self._mse_optimizer(
+			batch, self.critic2, self.critic2_optim
+		)
+		batch.weight = (td1 + td2) / 2.0  # prio-buffer
+
+		# actor
+		if self._cnt % self._freq == 0:
+			actor_loss = -self.critic1(batch.obs, self(batch, eps=0.0).act).mean()
+			self.actor_optim.zero_grad()
+			actor_loss.backward()
+			self._last = actor_loss.item()
+			self.actor_optim.step()
+			self.sync_weight()
+		self._cnt += 1
+		return {
+			"loss/actor": self._last,
+			"loss/critic1": critic1_loss.item(),
+			"loss/critic2": critic2_loss.item(),
+		}
+
+	def forward(
+		self,
+		batch: Batch,
+		state: Optional[Union[dict, Batch, np.ndarray]] = None,
+		model: str = "actor",
+		input: str = "obs",
+		**kwargs: Any,
+	) -> Batch:
+		"""Compute action over the given batch data.
+
+		:return: A :class:`~tianshou.data.Batch` which has 2 keys:
+
+			* ``act`` the action.
+			* ``state`` the hidden state.
+
+		.. seealso::
+
+			Please refer to :meth:`~tianshou.policy.BasePolicy.forward` for
+			more detailed explanation.
+		"""
+		model = getattr(self, model)
+		obs = batch[input]
+		actions, hidden = model(obs, state=state, info=batch.info)
+		return Batch(act=actions, state=hidden)
+	
+class TianshouTD3Wrapper(TD3Policy):
 	def __init__(self, *args, **kwargs):
 		self.global_cfg = kwargs.pop("global_cfg")
 		self.state_space = kwargs.pop("state_space")
@@ -1438,6 +1586,7 @@ class DefaultRLRunner:
 		self.test_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.test_num)])
 		self.env = utils.make_env(cfg.env) # to get obs_space and act_space
 		print("RLRunner end!")
+
 
 class SACRunner(DefaultRLRunner):
 	def start(self, cfg):
@@ -1483,72 +1632,414 @@ class SACRunner(DefaultRLRunner):
 		wandb.finish()
 		print("SACRunner init end!")
 
+
+class EnvCollector:
+	"""
+	Use policy to collect data from env.
+	This collector will continue from the last state of the env.
+	"""
+
+	def __init__(self, env):
+		self.env = env
+		self.env_loop = self.create_env_loop()
+
+	def collect(self, act_func, n_step=None, n_episode=None, env_max_step=5000, reset=False, progress_bar=None):
+		"""
+		Return 
+			res: a list of Batch(obs, act, rew, done, obs_next, info).
+			# info: {
+			# 	"rwds": list of total rewards of each episode,
+			# }
+		Policy can be function or string "random".
+		n_step and n_episode should be provided one and only one.
+		Will continue from the last state of the env if reset=False.
+		"""
+		assert isinstance(act_func, (str, Callable)), "act_func should be a function or string 'random'"
+		assert (n_step is None) ^ (n_episode is None), "n_step and n_episode should be provided one and only one"
+
+		self.to_reset = reset
+		self.act_func = act_func
+		self.env_max_step = env_max_step
+		res_list = []
+		res_info = {
+			"rwd_sum_list": [],
+			"ep_len_list": []
+		}
+
+		step_cnt = 0
+		episode_cnt = 0
+		finish_flag = False
+		if progress_bar is not None:
+			progress = Progress()
+			task = progress.add_task(progress_bar, total=n_episode if n_episode is not None else n_step)
+		while not finish_flag:
+			batch, env_loop_info = next(self.env_loop)
+			res_list.append(batch)
+
+			if (batch.terminated or batch.truncated).any(): 
+				episode_cnt += 1
+				if progress_bar is not None: progress.update(task, advance=1)
+				res_info["rwd_sum_list"].append(env_loop_info["rwd_sum"])
+				res_info["ep_len_list"].append(env_loop_info["ep_len"])
+
+			if n_step is not None:
+				step_cnt += 1
+				if progress_bar is not None: progress.update(task, advance=1)
+				finish_flag = step_cnt >= n_step
+			elif n_episode is not None:
+				finish_flag = episode_cnt >= n_episode
+		if progress_bar is not None: progress.stop()
+		return res_list, res_info
+
+	def create_env_loop(self):
+		"""
+		Infinite loop, yield a Batch(obs, act, rew, done, obs_next, info).
+		Will restart from 0 and return Batch(s_0, ...) if self.to_reset = True.
+		"""
+		while True:
+			env_step_cur = 0
+			rwd_sum_cur = 0.
+			s = self.env.reset()
+
+			while True:
+				a = self._select_action(s)
+				# if a is tensor, turn to numpy array
+				if isinstance(a, torch.Tensor):
+					a = a.detach()
+					if a.device != torch.device("cpu"):
+						a = a.cpu()
+					a = a.numpy()
+				s_, r, terminated, info = self.env.step(a)
+				rwd_sum_cur += r
+
+				truncated = env_step_cur == self.env_max_step
+				batch = Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info)
+				yield batch, {
+					"rwd_sum": rwd_sum_cur,
+					"ep_len": env_step_cur,
+				}
+
+				if self.to_reset:
+					self.to_reset = False
+					break
+
+				if terminated or truncated:
+					break
+
+				env_step_cur += 1
+				s = s_
+
+	def _select_action(self, s):
+		if self.act_func == "random":
+			return self.env.action_space.sample()
+		else:
+			return self.act_func(s)
+
+
+class WaybabaRecorder:
+	"""
+	store all digit values during training and render in different ways.
+	self.data = {
+		"name": {
+			"value": [],
+			"show_in_progress_bar": True,
+			"upload_to_wandb": False,
+			"wandb_logged": False,
+		},
+		...
+	}
+	"""
+	def __init__(self):
+		self.data = {}
+	
+	def __call__(self, k, v, wandb_=None, progress_bar=None):
+		"""
+		would update upload_to_wandb and show_in_progress_bar if provided.
+		"""
+		if k not in self.data: self.data[k] = self._create_new()
+		self.data[k]["values"].append(v)
+		if progress_bar in [True, False]: self.data[k]["show_in_progress_bar"] = progress_bar
+		if wandb_ in [True, False]:  self.data[k]["upload_to_wandb"] = wandb_
+		self.data[k]["wandb_logged"] = False
+
+	def upload_to_wandb(self, *args, **kwargs):
+		to_upload = {}
+		for k, v in self.data.items():
+			if v["upload_to_wandb"] and not v["wandb_logged"] and len(v["values"]) > 0:
+				to_upload[k] = v["values"][-1]
+				self.data[k]["wandb_logged"] = True
+		if len(to_upload) > 0:
+			wandb.log(to_upload, *args, **kwargs)
+
+	def to_progress_bar_description(self):
+		info_dict = {
+			k: v["values"][-1] for k, v in \
+			sorted(self.data.items(), key=lambda item: item[0]) \
+			if v["show_in_progress_bar"] and len(v["values"]) > 0
+		}
+		return "\n".join([f"{k}={'{:.2f}'.format(v)}" for k, v in info_dict.items()])
+
+	def _create_new(self):
+		return {
+			"values": [],
+			"show_in_progress_bar": True,
+			"upload_to_wandb": True,
+			"wandb_logged": False,
+		}
+	
+	def __str__(self):
+		return self.to_progress_bar_description()
+	
 class TD3Runner(DefaultRLRunner):
 	def start(self, cfg):
-		with Progress() as progress:
-			print("TD3Runner init start ...")
-			super().start(cfg)
-			env = self.env
-			train_envs = self.train_envs
-			test_envs = self.test_envs
-			self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
-			actor_optim = cfg.actor_optim(self.actor.parameters())
-			self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
-			self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
-			self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
-			self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
-			self.actor_old = deepcopy(self.actor)
-			self.critic1_old = deepcopy(self.critic1)
-			self.critic2_old = deepcopy(self.critic2)
-			self.critic1_old.eval()
-			self.critic2_old.eval()
-			self.actor_old.eval()
-			self.buf = cfg.buffer
-			exploration_noise = cfg.policy.exploration_noise
-			
-			# initial exploration
-			initial_exploration_task = progress.add_task("[green]Initial Exploration...", total=cfg.start_timesteps)
-			init_step_cnt = 0
-			exit_init_explore = False
-			while True:
-				env_step_cur = 0
-				s = env.reset()
-				while True: # episode loop
-					a = env.action_space.sample() # TODO END
-					s_, r, terminated, info = env.step(a)
-					truncated = env_step_cur == cfg.env_max_step
-					self.buf.add(Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info))
-					s = s_
-					# update cnt
-					init_step_cnt += 1
-					env_step_cur += 1
-					progress.update(
-						initial_exploration_task, 
-						advance=1,
-					)
-					# break process
-					if init_step_cnt == cfg.start_timesteps: # init exploration done
-						exit_init_explore = True
-						break
-					if truncated or terminated: # episode done
-						break
-				if exit_init_explore: break
+		print("TD3Runner init start ...")
+		super().start(cfg)
 
+		print("Init Components ...")
+		self._init_components()
+
+		print("Initial Exploration ...")
+		self._initial_exploration()
+
+		print("Training Start ...")
+		self.progress_info = {}
+		self.env_step_global = 0
+		progress = Progress()
+		progress.start()
+		training_task = progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
+		while True: # traininng loop
+			# env step collect
+			info_ = self._collect_once()
+			self.on_collect_end(**info_)
+			
+			# update
+			if self._should_update(): 
+				for _ in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
+					batch, indices = self.buf.sample(self.cfg.trainer.batch_size) # sample
+					self.update_policy(batch, indices)
+			
+			# evaluate
+			if self._should_evaluate():
+				eval_info = self._evaluate(self.env, self.select_act)
+				self.on_evaluate_end(**eval_info)
+			
+			# log
+			if self._should_log():
+				self.record.upload_to_wandb(step=self.env_step_global)
+				
+			# loop control
+			if self._should_end(): break
+			progress.update(training_task, advance=cfg.trainer.step_per_collect, description=f"[green]🚀 Training {self.env_step_global}/{self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch}[/green]\n"+self.record.to_progress_bar_description())
+			self.env_step_global += self.cfg.trainer.step_per_collect
+
+		progress.end()
+
+	def _init_components(self):
+		cfg = self.cfg
+		env = self.env
+		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
+		self.actor_optim = cfg.actor_optim(self.actor.parameters())
+		self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
+		self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
+		self.actor_old = deepcopy(self.actor)
+		self.critic1_old = deepcopy(self.critic1)
+		self.critic2_old = deepcopy(self.critic2)
+		self.critic1_old.eval()
+		self.critic2_old.eval()
+		self.actor_old.eval()
+		self.buf = cfg.buffer
+		self.train_collector = EnvCollector(env)
+		self.test_collector = EnvCollector(env)
+		self.exploration_noise = cfg.policy.initial_exploration_noise
+		self.record = WaybabaRecorder()
+
+	def _initial_exploration(self):
+		"""exploration before training and add to self.buf"""
+		initial_batches, info_ = self.train_collector.collect(
+			act_func="random", n_step=self.cfg.start_timesteps, reset=True, 
+			progress_bar="Initial Exploration"
+		)
+		for batch in initial_batches: self.buf.add(batch)
+
+	def _collect_once(self):
+		"""collect data and add to self.buf"""
+
+		batches, info_ = self.train_collector.collect(
+			act_func=partial(self.select_act, add_noise=True), 
+			n_step=self.cfg.trainer.step_per_collect, reset=False
+		)
+		for batch in batches: self.buf.add(batch)
+
+		# store history
+		if not hasattr(self, "rwd_sum_history"): self.rwd_sum_history = []
+		if not hasattr(self, "ep_len_history"): self.ep_len_history = []
+		self.rwd_sum_history += info_["rwd_sum_list"]
+		self.ep_len_history += info_["ep_len_list"]
+
+		return {
+			"batches": batches,
+			**info_
+		}
+
+	def on_collect_end(self, **kwargs):
+		"""called after a step of data collection"""
+		if "rwd_sum_list" in kwargs and kwargs["rwd_sum_list"]:
+			for i in range(len(kwargs["rwd_sum_list"])): self.record("collect/rwd_sum", kwargs["rwd_sum_list"][i])
+		if "ep_len_list" in kwargs and kwargs["ep_len_list"]:
+			for i in range(len(kwargs["ep_len_list"])): self.record("collect/ep_len", kwargs["ep_len_list"][i])
+
+	def preprocess(self, batch):
+		return batch
+
+	def update_policy(self, batch, indices):
+		batch = self.preprocess(batch)
+		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
+		# update cirtic
+		critic_info_ = self.update_critic(batch, indices)
+		if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
+			# update actor
+			actor_info_ = self.update_actor(batch, indices)
+			self.record("learn/actor_loss", actor_info_["actor_loss"])
+			self.exploration_noise *= self.cfg.policy.noise_decay_rate
+		self.soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
+		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
+		self.soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
+		self.record("learn/critic_loss", critic_info_["critic_loss"])
+		self.update_cnt += 1
+
+	def _evaluate(self, env, act_func):
+		"""Evaluate the performance of an agent in an environment.
+		Args:
+			env: Environment to evaluate on.
+			act_func: Action selection function. It should take a single argument
+				(observation) and return a single action.
+		Returns:
+			Episode reward.
+		"""
+		if not hasattr(self, "epoch_cnt"): self.epoch_cnt = 0
+		eval_batches, info_ = self.test_collector.collect(
+			act_func=partial(self.select_act, add_noise=False), 
+			n_episode=self.cfg.trainer.episode_per_test, reset=True)
+		eval_rwds = [0. for _ in range(self.cfg.trainer.episode_per_test)]
+		eval_lens = [0 for _ in range(self.cfg.trainer.episode_per_test)]
+		cur_ep = 0
+		for i, batch in enumerate(eval_batches): 
+			eval_rwds[cur_ep] += batch.rew
+			eval_lens[cur_ep] += 1
+			if batch.terminated or batch.truncated:
+				cur_ep += 1
+		self.epoch_cnt += 1
+		return {
+			"rwd_mean": np.mean(eval_rwds),
+			"len_mean": np.mean(eval_lens)
+		}
+
+	def on_evaluate_end(self, **kwargs):
+		"""called after a step of evaluation"""
+		wandb.log(
+			{"eval/"+k: v for k, v in kwargs.items() if k != "batches"}
+		)
+		self.record("eval/rwd_mean", kwargs["rwd_mean"])
+		self.record("eval/len_mean", kwargs["len_mean"])
+
+	def select_act(self, obs, add_noise=True):
+		# if not tensor, turn to tensor
+		if not isinstance(obs, torch.Tensor):
+			obs = torch.tensor(obs, dtype=torch.float32).to(self.cfg.device)
+		if add_noise:
+			a = self.actor_old(obs)[0][0]
+			noise = np.random.normal(0, self.env.action_space.high*self.exploration_noise, size=a.shape)
+			# ! TODO noise clip, use pytorch
+			return a + torch.tensor(noise, dtype=torch.float32).to(self.cfg.device)
+		else:
+			return self.actor_old(obs)[0][0]
+
+	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
+		"""Softly update the parameters of target module towards the parameters \
+		of source module."""
+		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
+			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
+
+	def update_critic(self, batch, indices):
+		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
+		# ! TODO clamp
+		a_ = self.select_act(batch.obs_next, add_noise=True)
+		target_q = batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+			torch.min(
+				self.critic1_old(torch.cat([batch.obs_next, a_],-1))[0],
+				self.critic2_old(torch.cat([batch.obs_next, a_],-1))[0]
+			).flatten()
+		critic_loss = F.mse_loss(self.critic1(
+			torch.cat([batch.obs, batch.act],-1)
+		)[0].flatten(), target_q) + F.mse_loss(self.critic2(
+			torch.cat([batch.obs, batch.act],-1)
+		)[0].flatten(), target_q)
+		self.critic1_optim.zero_grad()
+		self.critic2_optim.zero_grad()
+		critic_loss.backward()
+		self.critic1_optim.step()
+		self.critic2_optim.step()
+		return {
+			"critic_loss": critic_loss.cpu().item()
+		}
+
+	def update_actor(self, batch, indices):
+		res_info = {}
+		actor_loss, _ = self.critic1(torch.cat([batch.obs, self.actor(batch.obs)[0][0]],-1))
+		actor_loss = -actor_loss.mean()
+		self.actor_optim.zero_grad()
+		actor_loss.backward()
+		self.actor_optim.step()
+		return {
+			"actor_loss": actor_loss.cpu().item()
+		}
+
+	def _should_update(self):
+		# TODO since we collect x steps, so we always update
+		# if not hasattr(self, "should_update_record"): self.should_update_record = {}
+		# cur_update_tick = self.env_step_global // self.cfg.trainer.
+		# if cur_update_tick not in self.should_update_record:
+		# 	self.should_update_record[cur_update_tick] = True
+		# 	return True
+		# return False
+		return True
+	
+	def _should_evaluate(self):
+		if not hasattr(self, "should_evaluate_record"): self.should_evaluate_record = {}
+		cur_evaluate_tick = self.env_step_global // self.cfg.trainer.step_per_epoch
+		if cur_evaluate_tick not in self.should_evaluate_record:
+			self.should_evaluate_record[cur_evaluate_tick] = True
+			return True
+		return False
+	
+	def _should_log(self):
+		if not hasattr(self, "should_log_record"): self.should_log_record = {}
+		cur_log_tick = self.env_step_global // self.cfg.trainer.log_interval
+		if cur_log_tick not in self.should_log_record:
+			self.should_log_record[cur_log_tick] = True
+			return True
+		return False
+
+	def _should_end(self):
+		return self.env_step_global >= self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
+
+	def old():
+		with Progress() as progress:
 			# training
 			training_task = progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
-			logs = {}
-			logs["env_step_global"] = 0
 			critic_update_cnt = 0
 			exit_training = False
 			while True: # traininng loop
-				logs["env_step_cur"] = 0
-				s = env.reset()
+				self.logs["env_step_cur"] = 0
+				s = senv.reset()
 				rwd_sum = 0.
 				while True: # episode loop
 					progress.update(
 						training_task, 
 						advance=1, 
-						description="\n[yellow]".join([f"[green]Training...",] + [f"{k}={'{:.2f}'.format(v)}" for k, v in logs.items()]
+						description="\n[yellow]".join([f"[green]Training...",] + [f"{k}={'{:.2f}'.format(v)}" for k, v in self.logs.items()]
 						)
 					)
 					a = self.actor(s)[0][0]
@@ -1558,12 +2049,12 @@ class TD3Runner(DefaultRLRunner):
 					high_bound = torch.tensor(env.action_space.high, device=cfg.device).expand_as(a)
 					a = torch.clamp(a, low_bound, high_bound).detach().cpu().numpy()
 					s_, r, terminated, info = env.step(a)
-					truncated = logs["env_step_cur"] == cfg.env_max_step
+					truncated = self.logs["env_step_cur"] == cfg.env_max_step
 					self.buf.add(Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info))
 					s = s_
 					rwd_sum += r
 					# learn
-					if logs["env_step_global"] % cfg.trainer.step_per_collect == 0: # TODO check the var is right
+					if self.logs["env_step_global"] % cfg.trainer.step_per_collect == 0: # TODO check the var is right
 						for update_step in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
 							critic_update_cnt += 1
 							batch, indices = self.buf.sample(cfg.trainer.batch_size)
@@ -1574,33 +2065,37 @@ class TD3Runner(DefaultRLRunner):
 							low_bound = torch.tensor(env.action_space.low, device=cfg.device).expand_as(a_)
 							high_bound = torch.tensor(env.action_space.high, device=cfg.device).expand_as(a_)
 							a_ = torch.clamp(a_, low_bound, high_bound)
-							target_q = batch.rew + cfg.policy.gamma * (1 - batch.done.int()) * torch.min(self.critic1_old(torch.cat([batch.obs_next, a_],-1))[0], self.critic2_old(torch.cat([batch.obs_next, a_],-1))[0])
+							target_q = batch.rew + cfg.policy.gamma * (1 - batch.done.int()) * \
+								torch.min(
+									self.critic1_old(torch.cat([batch.obs_next, a_],-1))[0],
+		  							self.critic2_old(torch.cat([batch.obs_next, a_],-1))[0]
+								).flatten()
 							critic_loss = F.mse_loss(self.critic1(
 								torch.cat([batch.obs, batch.act],-1)
-							)[0], target_q) + F.mse_loss(self.critic2(
+							)[0].flatten(), target_q) + F.mse_loss(self.critic2(
 								torch.cat([batch.obs, batch.act],-1)
-							)[0], target_q)
+							)[0].flatten(), target_q)
 							self.critic1_optim.zero_grad()
 							self.critic2_optim.zero_grad()
 							critic_loss.backward()
 							self.critic1_optim.step()
 							self.critic2_optim.step()
-							logs["learn/critic_loss"] = critic_loss.cpu().item()
+							self.logs["learn/critic_loss"] = critic_loss.cpu().item()
 							if critic_update_cnt % cfg.policy.update_a_per_c == 0: # actor loss & soft update
 								# actor loss
 								actor_loss, _ = self.critic1(torch.cat([batch.obs, self.actor(batch.obs)[0][0]],-1))
 								actor_loss = -actor_loss.mean()
-								actor_optim.zero_grad()
+								self.actor_optim.zero_grad()
 								actor_loss.backward()
-								actor_optim.step()
-								logs["learn/actor_loss"] = actor_loss.cpu().item()
+								self.actor_optim.step()
+								self.logs["learn/actor_loss"] = actor_loss.cpu().item()
 								# soft update
 								self.soft_update(self.critic1_old, self.critic1, cfg.policy.tau)
 								self.soft_update(self.critic2_old, self.critic2, cfg.policy.tau)
 								self.soft_update(self.actor_old, self.actor, cfg.policy.tau)
 					# eval
-					if logs["env_step_global"] % cfg.trainer.step_per_epoch == 0:
-						logs["epoch"] = int(logs["env_step_global"] / cfg.trainer.step_per_epoch)
+					if self.logs["env_step_global"] % cfg.trainer.step_per_epoch == 0:
+						self.logs["epoch"] = int(self.logs["env_step_global"] / cfg.trainer.step_per_epoch)
 						exploration_noise = exploration_noise * cfg.policy.noise_decay_rate
 						eval_task = progress.add_task("[yellow]Eval", total=cfg.trainer.episode_per_test)
 						env_steps = []
@@ -1612,6 +2107,7 @@ class TD3Runner(DefaultRLRunner):
 							while True:
 								a = self.actor(s)[0][0].detach().cpu()
 								s_, r, terminated, info = env.step(a)
+								s = s_
 								truncated = env_step_cur == cfg.env_max_step
 								env_step_cur += 1
 								rwd_sum += r
@@ -1621,76 +2117,32 @@ class TD3Runner(DefaultRLRunner):
 									progress.update(eval_task, advance=1)
 									break
 						progress.remove_task(eval_task)
-						logs["eval/reward"] = sum(rwd_sums) / len(rwd_sums)
-						logs["eval/length"] = sum(env_steps) / len(env_steps)
+						self.logs["eval/reward"] = sum(rwd_sums) / len(rwd_sums)
+						self.logs["eval/length"] = sum(env_steps) / len(env_steps)
 					# log
-					if logs["env_step_global"] % cfg.trainer.log_interval == 0:
-						wandb.log(logs)
+					if self.logs["env_step_global"] % cfg.trainer.log_interval == 0:
+						wandb.log(self.logs)
+						pass
 					# update cnt
-					logs["env_step_global"] += 1
-					logs["env_step_cur"] += 1
+					self.logs["env_step_global"] += 1
+					self.logs["env_step_cur"] += 1
 					# break process
 					if terminated or truncated: # episode done
-						logs["rwd_sum"] = rwd_sum
-						logs["env_len"] = logs["env_step_cur"]
+						self.logs["learn/rwd_sum"] = rwd_sum
+						self.logs["learn/env_len"] = self.logs["env_step_cur"]
 						break
-					if logs["env_step_global"] == cfg.trainer.max_epoch * cfg.trainer.step_per_epoch:
+					if self.logs["env_step_global"] == cfg.trainer.max_epoch * cfg.trainer.step_per_epoch:
 						exit_training = True
 						break
 				if exit_training: break
 
-	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
-		"""Softly update the parameters of target module towards the parameters \
-		of source module."""
-		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
-			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
-					
-class TD3Tianshou(DefaultRLRunner):
-	def start(self, cfg):
-		print("SACRunner init start ...")
-		# TODO add cfg check here e.g. global_cfg == rnn, rnn_layer > 0
-		super().start(cfg)
-		env = self.env
-		train_envs = self.train_envs
-		test_envs = self.test_envs
-		actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
-		actor_optim = cfg.actor_optim(actor.parameters())
-		critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
-		critic1_optim = cfg.critic1_optim(critic1.parameters())
-		critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
-		critic2_optim = cfg.critic2_optim(critic2.parameters())
-		policy = cfg.policy(
-			actor, actor_optim,
-			critic1, critic1_optim,
-			critic2, critic2_optim,
-			action_space=env.action_space,
-			state_space=env.observation_space,
-		)
-		# collector
-		train_collector = cfg.collector.train_collector(policy, train_envs)
-		test_collector = cfg.collector.test_collector(policy, test_envs)
-		train_collector.collect(n_step=cfg.start_timesteps, random=True)
-		# train
-		logger = tianshou.utils.WandbLogger(config=cfg)
-		logger.load(SummaryWriter(cfg.output_dir))
-		trainer = cfg.trainer(
-			policy, train_collector, test_collector, 
-			stop_fn=lambda mean_reward: mean_reward >= 10000,
-			logger=logger,
-		)
-		for epoch, epoch_stat, info in trainer:
-			to_log = {
-				"key/reward": epoch_stat["test_reward"],
-				"eval/reward": epoch_stat["test_reward"],
-			}
-			to_log.update(epoch_stat)
-			to_log.update(info)
-			wandb.log(to_log)
-		wandb.finish()
-		print("SACRunner init end!")
 
-		
-				
+
+
+
+
+
+			
 
 
 				

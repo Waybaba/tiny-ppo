@@ -114,6 +114,42 @@
 			"console": "integratedTerminal",
 			"justMyCode": true
 		},
+		// entry td3
+		{
+			"name": "td3",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/entry.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				"experiment=td3",
+				// "env.name=HalfCheetah-v4",
+				// "env.name=Hopper-v4",
+				"env.name=Pendulum-v1",
+				// "env.name=DummyNum-v0",
+				"env.delay=0",
+				"start_timesteps=10000",
+			],
+		},
+		// entry td3_tianshou
+		{
+			"name": "td3_tianshou",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/entry.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				"experiment=td3_tianshou",
+				"env.name=HalfCheetah-v4",
+				// "env.name=Hopper-v4",
+				// "env.name=Pendulum-v1",
+				// "env.name=DummyNum-v0",
+				"env.delay=0",
+				"start_timesteps=100",
+			],
+		},
 		{
 			"name": "ppo_continuous",
 			"type": "python",
