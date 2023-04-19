@@ -1795,10 +1795,25 @@ class WaybabaRecorder:
 			if v["show_in_progress_bar"] and len(v["values"]) > 0
 		}
 		for k, v in info_dict.items():
-			if type(v) == int: info_dict[k] = str(v)
-			elif type(v) == float: info_dict[k] = '{:.2f}'.format(v)
-			else: info_dict[k] = '{:.2f}'.format(v)
-		return "\n".join([f"{k}={v}" for k, v in info_dict.items()])
+			if type(v) == int:
+				info_dict[k] = str(v)
+			elif type(v) == float:
+				info_dict[k] = '{:.2f}'.format(v)
+			else:
+				info_dict[k] = '{:.2f}'.format(v)
+
+		# Find the maximum length of keys and values
+		max_key_length = max(len(k) for k in info_dict.keys())
+		max_value_length = max(len(v) for v in info_dict.values())
+
+		# Align keys to the left and values to the right
+		aligned_info = []
+		for k, v in info_dict.items():
+			left_aligned_key = k.ljust(max_key_length)
+			right_aligned_value = v.rjust(max_value_length)
+			aligned_info.append(f"{left_aligned_key} {right_aligned_value}")
+
+		return "\n".join(aligned_info)
 	
 
 class OfflineRLRunner(DefaultRLRunner):
@@ -1813,7 +1828,7 @@ class OfflineRLRunner(DefaultRLRunner):
 
 		self.log("Training Start ...")
 		self.env_step_global = 0
-		self.training_task = self.progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
+		if cfg.trainer.progress_bar: self.training_task = self.progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
 		
 		while True: # traininng loop
 			# env step collect
@@ -1827,8 +1842,7 @@ class OfflineRLRunner(DefaultRLRunner):
 			
 			# evaluate
 			if self._should_evaluate():
-				eval_info = self._evaluate()
-				self.on_evaluate_end(**eval_info)
+				self._evaluate()
 			
 			# log
 			if self._should_log():
@@ -1840,7 +1854,7 @@ class OfflineRLRunner(DefaultRLRunner):
 				
 			# loop control
 			if self._should_end(): break
-			self.progress.update(self.training_task, advance=cfg.trainer.step_per_collect, description=f"[green]🚀 Training {self.env_step_global}/{self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch}[/green]\n"+self.record.to_progress_bar_description())
+			if cfg.trainer.progress_bar: self.progress.update(self.training_task, advance=cfg.trainer.step_per_collect, description=f"[green]🚀 Training {self.env_step_global}/{self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch}[/green]\n"+self.record.to_progress_bar_description())
 			self.env_step_global += self.cfg.trainer.step_per_collect
 
 		self._end_all()
@@ -1866,8 +1880,9 @@ class OfflineRLRunner(DefaultRLRunner):
 		self.test_collector = EnvCollector(env)
 		self.exploration_noise = cfg.policy.initial_exploration_noise
 		self.record = WaybabaRecorder()
-		self.progress = Progress()
-		self.progress.start()
+		if self.cfg.trainer.progress_bar:
+			self.progress = Progress()
+			self.progress.start()
 		self._noise = self.cfg.policy.exploration_noise
 		self._noise_clip = self.cfg.policy.noise_clip
 
@@ -1875,7 +1890,8 @@ class OfflineRLRunner(DefaultRLRunner):
 		"""exploration before training and add to self.buf"""
 		initial_batches, info_ = self.train_collector.collect(
 			act_func="random", n_step=self.cfg.start_timesteps, reset=True, 
-			progress_bar="Initial Exploration ...", rich_progress=self.progress
+			progress_bar="Initial Exploration ..." if self.cfg.trainer.progress_bar else None,
+			rich_progress=self.progress if self.cfg.trainer.progress_bar else None
 		)
 		self.train_collector.reset()
 		for batch in initial_batches: self.buf.add(batch)
@@ -1920,7 +1936,9 @@ class OfflineRLRunner(DefaultRLRunner):
 		eval_batches, info_ = self.test_collector.collect(
 			act_func=partial(self.select_act_for_env, mode="eval"), 
 			n_episode=self.cfg.trainer.episode_per_test, reset=True,
-			progress_bar="Evaluating ...", rich_progress=self.progress)
+			progress_bar="Evaluating ..." if self.cfg.trainer.progress_bar else None,
+			rich_progress=self.progress if self.cfg.trainer.progress_bar else None,
+		)
 		eval_rwds = [0. for _ in range(self.cfg.trainer.episode_per_test)]
 		eval_lens = [0 for _ in range(self.cfg.trainer.episode_per_test)]
 		cur_ep = 0
@@ -1930,13 +1948,25 @@ class OfflineRLRunner(DefaultRLRunner):
 			if batch.terminated or batch.truncated:
 				cur_ep += 1
 		self.epoch_cnt += 1
-		return {
+		res_info = {
 			"rwd_mean": np.mean(eval_rwds),
 			"len_mean": np.mean(eval_lens)
 		}
+		self._on_evaluate_end(**res_info)
+		return res_info
+	
+	def _on_evaluate_end(self, **kwargs):
+		to_print = self.record.__str__().replace("\n", "  ")
+		to_print = "[Epoch {: 5d}/{}] ### ".format(self.epoch_cnt-1, self.cfg.trainer.max_epoch) + to_print
+		if not self.cfg.trainer.hide_eval_info_print:
+			print(to_print)
+		self.on_evaluate_end(**kwargs)
+	
+	def on_evaluate_end(self, **kwargs):
+		pass
 
 	def _end_all(self):
-		self.progress.stop()
+		if self.cfg.trainer.progress_bar: self.progress.stop()
 		wandb.finish()
 
 	def select_act_for_env(self, obs, info=None, state=None, mode=None):
@@ -1990,9 +2020,12 @@ class TD3Runner(OfflineRLRunner):
 		# if first step when act is none
 		assert len(batch.obs.shape) == 1, "for online batch, batch size must be 1"
 		if self.global_cfg.actor_input.history_merge_method == "none":
-			a_in = batch.obs
+			if self.global_cfg.actor_input.obs_type == "normal":
+				a_in = batch.obs
+			elif self.global_cfg.actor_input.obs_type == "oracle":
+				a_in = batch.info["obs_next_nodelay"]
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			if "is_first_step" in batch.info: # first step (zero cat) # TODO checkname
+			if "is_first_step" in batch.info: # first step (zero cat)
 				if self.global_cfg.actor_input.obs_pred.turn_on:
 					new_dim = self.pred_net.input_dim
 				elif self.global_cfg.actor_input.obs_encode.turn_on:
@@ -2001,12 +2034,15 @@ class TD3Runner(OfflineRLRunner):
 					new_dim = self.actor.net.input_dim
 				a_in = np.zeros([new_dim])
 			else: # normal step
-				a_in = np.concatenate([
-					self.get_obs_base(batch, "actor", "cur"),
-					batch.info["historical_act"] \
-					if not self.global_cfg.actor_input.noise_act_debug else \
-					np.random.normal(size=batch.info["historical_act"].shape, loc=0, scale=1),
-				], axis=-1)
+				if self.global_cfg.actor_input.obs_type == "normal": a_in = batch.obs
+				elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
+				if self.global_cfg.actor_input.history_num > 0:
+					a_in = np.concatenate([
+						a_in,
+						batch.info["historical_act"] \
+						if not self.global_cfg.actor_input.noise_act_debug else \
+						np.random.normal(size=batch.info["historical_act"].shape, loc=0, scale=1),
+					], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				pred_output, pred_info = self.pred_net(a_in)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
@@ -2381,7 +2417,9 @@ class TD3Runner(OfflineRLRunner):
 				if stage == "cur": return batch.obs
 				elif stage == "next": return batch.obs_next
 			elif self.global_cfg.actor_input.obs_type == "oracle":
-				if stage == "cur": return batch.info["obs_nodelay"]
+				if stage == "cur": 
+					try: return batch.info["obs_nodelay"]
+					except: return batch.obs_nodelay
 				elif stage == "next": return batch.info["obs_next_nodelay"]
 		elif a_or_c == "critic":
 			if self.global_cfg.critic_input.obs_type == "normal":

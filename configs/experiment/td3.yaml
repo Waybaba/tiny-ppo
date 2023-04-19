@@ -17,12 +17,14 @@ trainer:
   batch_size: 256
   test_in_train: false
   episode_per_test: 10
-  max_epoch: 200
-  step_per_epoch: 5000 # epoch is eval
+  max_epoch: 20
+  step_per_epoch: 50 # epoch is eval
   step_per_collect: 1
   update_per_step: 1
   log_interval: 100
-  log_upload_interval: 1 # 0 for instant upload
+  log_upload_interval: 100 # 0 for instant upload
+  progress_bar: true
+  hide_eval_info_print: ${trainer.progress_bar}
 policy:
   update_a_per_c: 2
   tau: 0.005
@@ -42,7 +44,7 @@ env_max_step: 5000
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
     history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
-    obs_type: "normal" # normal or oracle
+    obs_type: "oracle" # normal or oracle
     trace_direction: "prev" # prev or next
     custom_return_cal: false 
     seq_mask: false

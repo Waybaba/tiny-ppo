@@ -9,7 +9,6 @@ import utils
 import warnings
 warnings.filterwarnings('ignore')
 
-root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
 @hydra.main(version_base=None, config_path=str(root / "configs"), config_name="train.yaml")	
 def main(cfg):
 	# print config

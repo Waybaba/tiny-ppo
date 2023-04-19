@@ -129,7 +129,7 @@
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
 				"buffer.size=1e+6",
-				"env.delay=4",
+				"env.delay=0",
 				"start_timesteps=10000",
 			],
 		},
