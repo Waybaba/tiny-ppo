@@ -1817,8 +1817,7 @@ class OfflineRLRunner(DefaultRLRunner):
 		
 		while True: # traininng loop
 			# env step collect
-			info_ = self._collect_once()
-			self.on_collect_end(**info_)
+			self._collect_once()
 			
 			# update
 			if self._should_update(): 
@@ -1895,14 +1894,15 @@ class OfflineRLRunner(DefaultRLRunner):
 		if not hasattr(self, "ep_len_history"): self.ep_len_history = []
 		self.rwd_sum_history += info_["rwd_sum_list"]
 		self.ep_len_history += info_["ep_len_list"]
-		return {
+		res_info = {
 			"batches": batches,
 			**info_
 		}
+		self._on_collect_end(**res_info)
 
-	def on_collect_end(self, **kwargs):
+	def _on_collect_end(self, **kwargs):
 		"""called after a step of data collection"""
-		pass
+		self.on_collect_end(**kwargs)
 	
 	def update_once(self, batch, indices):
 		raise NotImplementedError
