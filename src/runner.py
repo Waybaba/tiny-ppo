@@ -592,17 +592,6 @@ class CustomSACPolicy(SACPolicy):
 				if not self.global_cfg.actor_input.noise_act_debug else \
 				torch.normal(size=stacked_batch_cur["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device), # TODO
 			], dim=-1) # (B, T, obs_dim+act_dim)
-			# make mask
-			# if self.global_cfg.actor_input.trace_direction == "next":
-			# 	# end step is invalid
-			# 	batch_stack.valid_mask = torch.tensor(idx_stack != buffer.next(idx_stack), device=self.actor.device).int() # (B, T)
-			# elif self.global_cfg.actor_input.trace_direction == "prev":
-			# 	# start step is invalid
-			# 	batch_stack.valid_mask = torch.tensor(idx_stack != buffer.prev(idx_stack), device=self.actor.device).int() # (B, T)
-			# else: raise ValueError("trace_direction should be next or prev")
-
-			# if the start of the idx reach start or end of the idx reach end, then the whole episode is invalid
-			# idx_stack: B, T
 			batch_stack.valid_mask = np.ones_like(idx_stack) # (B, T)
 			if self.global_cfg.actor_input.seq_mask == True:
 				reach_start = idx_stack[:,0] == buffer.prev(idx_stack[:,0]) # (B, )
@@ -610,8 +599,8 @@ class CustomSACPolicy(SACPolicy):
 				batch_stack.valid_mask[reach_start==1,:] = 0
 				batch_stack.valid_mask[reach_end==1,:] = 0
 			elif self.global_cfg.actor_input.seq_mask == False:
-				reach_start = idx_stack == buffer.prev(idx_stack) # (B, )
-				reach_end = idx_stack == buffer.next(idx_stack) # (B, )
+				reach_start = idx_stack == buffer.prev(idx_stack) # (B, T)
+				reach_end = idx_stack == buffer.next(idx_stack) # (B, T)
 				batch_stack.valid_mask[reach_start==1] = 0
 				batch_stack.valid_mask[reach_end==1] = 0
 			else: raise ValueError("seq_mask should be True or False")
@@ -1893,6 +1882,7 @@ class OfflineRLRunner(DefaultRLRunner):
 		self.test_collector = EnvCollector(env)
 		self.exploration_noise = cfg.policy.initial_exploration_noise
 		self.record = WaybabaRecorder()
+		self._start_time = time()
 		if self.cfg.trainer.progress_bar:
 			self.progress = Progress()
 			self.progress.start()
@@ -1969,10 +1959,13 @@ class OfflineRLRunner(DefaultRLRunner):
 		return res_info
 	
 	def _on_evaluate_end(self, **kwargs):
+		# log time
+		cur_time = time()
+		self.record("misc/hours_left", (cur_time-self._start_time)/3600*(self.cfg.trainer.max_epoch-self.epoch_cnt))
+		self.record("misc/hours_spent", (cur_time-self._start_time)/3600)
 		to_print = self.record.__str__().replace("\n", "  ")
 		to_print = "[Epoch {: 5d}/{}] ### ".format(self.epoch_cnt-1, self.cfg.trainer.max_epoch) + to_print
-		if not self.cfg.trainer.hide_eval_info_print:
-			print(to_print)
+		if not self.cfg.trainer.hide_eval_info_print: print(to_print)
 		self.on_evaluate_end(**kwargs)
 	
 	def on_evaluate_end(self, **kwargs):
@@ -2032,10 +2025,13 @@ class TD3Runner(OfflineRLRunner):
 		# if first step when act is none
 		assert len(batch.obs.shape) == 1, "for online batch, batch size must be 1"
 		if self.global_cfg.actor_input.history_merge_method == "none":
-			if self.global_cfg.actor_input.obs_type == "normal":
+			if "is_first_step" in batch.info: # first step (zero cat)
 				a_in = batch.obs
-			elif self.global_cfg.actor_input.obs_type == "oracle":
-				a_in = batch.info["obs_next_nodelay"]
+			else: # normal step
+				if self.global_cfg.actor_input.obs_type == "normal":
+					a_in = batch.obs
+				elif self.global_cfg.actor_input.obs_type == "oracle":
+					a_in = batch.info["obs_next_nodelay"]
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			if "is_first_step" in batch.info: # first step (zero cat)
 				if self.global_cfg.actor_input.obs_pred.turn_on:
@@ -2116,7 +2112,7 @@ class TD3Runner(OfflineRLRunner):
 				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
 			res = a_ori + noise
 		elif mode == "eval":
-			res = self.actor(a_in, state)[0][0]
+			res = a_ori
 		else:
 			raise NotImplementedError
 		return res, res_state
@@ -2236,13 +2232,13 @@ class TD3Runner(OfflineRLRunner):
 			batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, *)
 			batch_stack.info["obs_nodelay"] = buffer[buffer.prev(idx_stack)].info["obs_next_nodelay"] # (B, T, *)
 			batch_stack.a_in_cur = torch.cat([
-				torch.tensor(self.get_obs_base(buffer[idx_stack], "actor", "cur"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
+				torch.tensor(self.get_obs_base(batch_stack, "actor", "cur"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
 				self.get_historical_act(idx_end, self.global_cfg.actor_input.history_num, buffer, "stack", self.actor.device) \
 				if not self.global_cfg.actor_input.noise_act_debug else \
 				torch.normal(size=stacked_batch_prev["act"].reshape(batch_end.obs.shape[0],-1).shape, mean=0., std=1.,device=self.actor.device), # TODO
 			], dim=-1) # (B, T, obs_dim+act_dim)
 			batch_stack.a_in_next = torch.cat([
-				torch.tensor(self.get_obs_base(buffer[idx_stack], "actor", "next"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
+				torch.tensor(self.get_obs_base(batch_stack, "actor", "next"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
 				self.get_historical_act(buffer.next(idx_end), self.global_cfg.actor_input.history_num, buffer, "stack", self.actor.device) \
 				if not self.global_cfg.actor_input.noise_act_debug else \
 				torch.normal(size=stacked_batch_cur["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device), # TODO
@@ -2265,15 +2261,21 @@ class TD3Runner(OfflineRLRunner):
 				batch_stack.valid_mask[reach_start==1,:] = 0
 				batch_stack.valid_mask[reach_end==1,:] = 0
 			elif self.global_cfg.actor_input.seq_mask == False:
-				reach_start = idx_stack == buffer.prev(idx_stack) # (B, )
-				reach_end = idx_stack == buffer.next(idx_stack) # (B, )
+				reach_start = idx_stack == buffer.prev(idx_stack) # (B, T)
+				reach_end = idx_stack == buffer.next(idx_stack) # (B, T)
 				batch_stack.valid_mask[reach_start==1] = 0
 				batch_stack.valid_mask[reach_end==1] = 0
+
 			else: raise ValueError("seq_mask should be True or False")
 			burn_in_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num) \
 			if type(self.global_cfg.actor_input.burnin_num) == float \
 			else self.global_cfg.actor_input.burnin_num
 			batch_stack.valid_mask[:,:burn_in_num] = 0
+			# if trace direction == next
+			# if reach_start, all seq = true
+			if self.global_cfg.actor_input.trace_direction == "next":
+				seq_reach_start = idx_stack[:,0] == buffer.prev(idx_stack[:,0])
+				batch_stack.valid_mask[seq_reach_start] = True
 			# obs_pred & obs_encode
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				batch_stack.pred_input_cur = batch_stack.a_in_cur
@@ -2358,26 +2360,29 @@ class TD3Runner(OfflineRLRunner):
 		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
 		self.soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
 		self.record("learn/critic_loss", critic_info_["critic_loss"])
+		self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
 		self.update_cnt += 1
 
 	def update_critic(self, batch, indices):
 
-		batch.a_next_online = self.actor_old(batch.a_in_next, state=None)[0][0]
-		noise = torch.randn(size=batch.a_next_online.shape, device=batch.a_next_online.device) * self.cfg.policy.noise_clip
-		if self.cfg.policy.noise_clip > 0.0:
-			noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
-		batch.a_next_online += noise
-		
-		target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
-			torch.min(
-				self.critic1_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0],
-				self.critic2_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0]
-			).squeeze(-1)
-		).flatten().detach()
+		with torch.no_grad():
+			batch.a_next_online = self.actor_old(batch.a_in_next, state=None)[0][0]
+			noise = torch.randn(size=batch.a_next_online.shape, device=batch.a_next_online.device) * self.cfg.policy.noise_clip
+			if self.cfg.policy.noise_clip > 0.0:
+				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+			batch.a_next_online += noise
+			
+			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+				torch.min(
+					self.critic1_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0],
+					self.critic2_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0]
+				).squeeze(-1)
+			).flatten()
 		
 		critic_loss = F.mse_loss(self.critic1(
 			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].flatten(), target_q, reduce=False) + F.mse_loss(self.critic2(
+		)[0].flatten(), target_q, reduce=False) + \
+		F.mse_loss(self.critic2(
 			torch.cat([batch.c_in_cur, batch.act],-1)
 		)[0].flatten(), target_q, reduce=False)
 		critic_loss = (critic_loss * batch.valid_mask.flatten()).mean()
