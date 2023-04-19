@@ -1024,8 +1024,13 @@ class RNN_MLP_Net(nn.Module):
 		# In short, the tensor's shape in training phase is longer than which
 		# in evaluation phase. 
 		if self.rnn_layer_num: 
-			assert len(obs.shape) == 3 or len(obs.shape) == 2, "obs.shape: {}".format(obs.shape)
+			to_unsqueeze_from_1 = False
 			to_unsqueeze = False
+			if len(obs.shape) == 1: 
+				obs = obs.unsqueeze(0)
+				to_unsqueeze_from_1 = True
+			assert len(obs.shape) == 3 or len(obs.shape) == 2, "obs.shape: {}".format(obs.shape)
+			
 			if len(obs.shape) == 2: 
 				to_unsqueeze = True
 				obs = obs.unsqueeze(-2) # make seq_len dim
@@ -1040,6 +1045,8 @@ class RNN_MLP_Net(nn.Module):
 				after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
 			if to_unsqueeze: 
 				after_rnn = after_rnn.squeeze(-2)
+			if to_unsqueeze_from_1:
+				after_rnn = after_rnn.squeeze(0)
 		else: # skip rnn
 			after_rnn = obs
 		### forward mlp
@@ -1236,7 +1243,7 @@ class CustomRecurrentActorProb(nn.Module):
 	def forward(
 		self,
 		actor_input: Union[np.ndarray, torch.Tensor],
-		state: Optional[Dict[str, torch.Tensor]] = None,
+		state: Optional[Dict[str, torch.Tensor]],
 		info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		"""Almost the same as :class:`~tianshou.utils.net.common.Recurrent`."""
@@ -1652,7 +1659,10 @@ class EnvCollector:
 			# info: {
 			# 	"rwds": list of total rewards of each episode,
 			# }
-		Policy can be function or string "random".
+		Policy can be function or string "random". 
+			function: 
+				input: batch, state output: a, state
+				state is {"hidden": xxx, "hidden_pre": xxx}
 		n_step and n_episode should be provided one and only one.
 		Will continue from the last state of the env if reset=False.
 		"""
@@ -1703,9 +1713,10 @@ class EnvCollector:
 			env_step_cur = 0
 			rwd_sum_cur = 0.
 			s, info = self.env.reset(), {"is_first_step": True}
+			last_state = None
 
 			while True:
-				a = self._select_action(Batch(obs=s, info=info))
+				a, last_state = self._select_action(Batch(obs=s, info=info), last_state)
 				# if a is tensor, turn to numpy array
 				if isinstance(a, torch.Tensor):
 					a = a.detach()
@@ -1733,11 +1744,11 @@ class EnvCollector:
 				env_step_cur += 1
 				s = s_
 
-	def _select_action(self, s):
+	def _select_action(self, s, state):
 		if self.act_func == "random":
-			return self.env.action_space.sample()
+			return self.env.action_space.sample(), None
 		else:
-			return self.act_func(s)
+			return self.act_func(s, state)
 
 	def reset(self):
 		self.to_reset = True
@@ -1872,8 +1883,10 @@ class OfflineRLRunner(DefaultRLRunner):
 		self.actor_old = deepcopy(self.actor)
 		self.critic1_old = deepcopy(self.critic1)
 		self.critic2_old = deepcopy(self.critic2)
-		self.critic1_old.eval()
-		self.critic2_old.eval()
+		self.critic1.train()
+		self.critic2.train()
+		self.critic1_old.train()
+		self.critic2_old.train()
 		self.actor_old.eval()
 		self.buf = cfg.buffer
 		self.train_collector = EnvCollector(env)
@@ -2013,8 +2026,7 @@ class OfflineRLRunner(DefaultRLRunner):
 
 class TD3Runner(OfflineRLRunner):
 
-	def select_act_for_env(self, batch, mode=None):
-		# ! TODO state is not supported
+	def select_act_for_env(self, batch, state, mode=None):
 		a_in = batch.obs
 		process_online_batch_info = {}
 		# if first step when act is none
@@ -2056,28 +2068,23 @@ class TD3Runner(OfflineRLRunner):
 				encode_output, encode_info = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			raise NotImplementedError
-			if len(batch.act.shape) == 0: # first step (zero cat)
+			if "is_first_step" in batch.info:
 				if self.global_cfg.actor_input.obs_pred.turn_on:
+					raise NotImplementedError
 					new_dim = self.pred_net.input_dim
 				elif self.global_cfg.actor_input.obs_encode.turn_on:
+					raise NotImplementedError
 					new_dim = self.encode_net.normal_encode_dim
 				else:
 					new_dim = self.actor.net.input_dim
-				a_in = np.zeros([a_in.shape[0], new_dim])
+				a_in = np.zeros([new_dim])
 			else: # normal step
-				if (len(batch.info["historical_act"].shape) == 1 and batch.info["historical_act"].shape[0] == 1): # when historical_num == 0, would return False as historical_act
-					assert batch.info["historical_act"][0] == False
-					a_in = np.concatenate([
-						self.get_obs_base(batch, "actor", "next"), # (B, obs_dim) # TODO change network init
-					], axis=-1)
-				elif (len(batch.info["historical_act"].shape) == 2 and batch.info["historical_act"].shape[0] == 1):
-					latest_act = batch.info["historical_act"][:, -self.actor.act_num:]
-					a_in = np.concatenate([
-						self.get_obs_base(batch, "actor", "next"), # (B, obs_dim)
-						latest_act # (B, act_num)
-					], axis=-1)
-				else: raise ValueError("historical_act shape not implemented")
+				assert "historical_act" in batch.info, "must have historical act"
+				assert self.global_cfg.actor_input.history_num > 0, "stack rnn must len > 0"
+				if self.global_cfg.actor_input.obs_type == "normal": a_in = batch.obs
+				elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
+				latest_act = batch.info["historical_act"][-self.actor.act_num:]
+				a_in = np.concatenate([a_in, latest_act], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				pred_output, pred_info = self.pred_net(a_in, None if state is None else {"hidden": state["hidden_obs_pred_rnn"]}) # ! TODO check should
 				process_online_batch_info["hidden_obs_pred_rnn"] = pred_info["state"]["hidden"]
@@ -2101,17 +2108,18 @@ class TD3Runner(OfflineRLRunner):
 			a_in = torch.tensor(a_in, dtype=torch.float32).to(self.cfg.device)
 		
 		# train eval diff
-		a_ori = self.actor(a_in)[0][0]
+		a_ori, res_state = self.actor(a_in, state)
+		a_ori = a_ori[0]
 		if mode == "train":
 			noise = torch.tensor(self._noise(a_ori.shape), device=self.cfg.device)
 			if self.cfg.policy.noise_clip > 0.0:
 				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
 			res = a_ori + noise
 		elif mode == "eval":
-			res = self.actor(a_in)[0][0]
+			res = self.actor(a_in, state)[0][0]
 		else:
 			raise NotImplementedError
-		return res
+		return res, res_state
 
 	def on_collect_end(self, **kwargs):
 		"""called after a step of data collection"""
@@ -2162,28 +2170,28 @@ class TD3Runner(OfflineRLRunner):
 				else: raise ValueError("trace_direction should be next or prev")
 				# obs_pred & obs_encode
 				if self.global_cfg.actor_input.obs_pred.turn_on:
-					batch_end.pred_input_cur = batch_end.actor_input_cur
-					batch_end.pred_input_next = batch_end.actor_input_next
+					batch_end.pred_input_cur = batch_end.a_in_cur
+					batch_end.pred_input_next = batch_end.a_in_next
 					batch_end.pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
 					batch_end.pred_output_next, pred_info_next = self.pred_net(batch_end.pred_input_next)
 					if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-						batch_end.actor_input_cur = batch_end.pred_output_cur
-						batch_end.actor_input_next = batch_end.pred_output_next
+						batch_end.a_in_cur = batch_end.pred_output_cur
+						batch_end.a_in_next = batch_end.pred_output_next
 					elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
-						batch_end.actor_input_cur = pred_info_cur["feats"]
-						batch_end.actor_input_next = pred_info_next["feats"]
+						batch_end.a_in_cur = pred_info_cur["feats"]
+						batch_end.a_in_next = pred_info_next["feats"]
 					else:
 						raise NotImplementedError
 					# detach
 					if self.global_cfg.actor_input.obs_pred.middle_detach: 
-						batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
-						batch_end.actor_input_next = batch_end.actor_input_next.detach()
+						batch_end.a_in_cur = batch_end.a_in_cur.detach()
+						batch_end.a_in_next = batch_end.a_in_next.detach()
 					if self.global_cfg.actor_input.obs_pred.net_type == "vae":
 						batch_end.pred_info_cur_mu = pred_info_cur["mu"]
 						batch_end.pred_info_cur_logvar = pred_info_cur["logvar"]
 				if self.global_cfg.actor_input.obs_encode.turn_on:
-					batch_end.encode_obs_input_cur = batch_end.actor_input_cur
-					batch_end.encode_obs_input_next = batch_end.actor_input_next
+					batch_end.encode_obs_input_cur = batch_end.a_in_cur
+					batch_end.encode_obs_input_next = batch_end.a_in_next
 					batch_end.encode_obs_output_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_input_cur)
 					batch_end.encode_obs_output_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_input_next)
 					batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
@@ -2193,18 +2201,18 @@ class TD3Runner(OfflineRLRunner):
 					batch_end.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
 					batch_end.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
 					if self.global_cfg.actor_input.obs_encode.train_eval_async == True:
-						batch_end.actor_input_cur = batch_end.encode_oracle_obs_output_cur
-						batch_end.actor_input_next = batch_end.encode_oracle_obs_output_next
+						batch_end.a_in_cur = batch_end.encode_oracle_obs_output_cur
+						batch_end.a_in_next = batch_end.encode_oracle_obs_output_next
 					elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
-						batch_end.actor_input_cur = batch_end.encode_obs_output_cur
-						batch_end.actor_input_next = batch_end.encode_obs_output_next
+						batch_end.a_in_cur = batch_end.encode_obs_output_cur
+						batch_end.a_in_next = batch_end.encode_obs_output_next
 					else:
 						raise ValueError("batch_end error")
 					if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
 						batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_output_cur)
 					if self.global_cfg.actor_input.obs_encode.before_policy_detach:
-						batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
-						batch_end.actor_input_next = batch_end.actor_input_next.detach()
+						batch_end.a_in_cur = batch_end.a_in_cur.detach()
+						batch_end.a_in_next = batch_end.a_in_next.detach()
 				# end
 				indices = idx_end
 				batch = batch_end
@@ -2217,7 +2225,7 @@ class TD3Runner(OfflineRLRunner):
 				batch.a_in_next = self.get_obs_base(batch, "actor", "next")
 				batch.valid_mask = torch.ones([len(batch)], device=self.actor.device).int()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			raise NotImplementedError
+			buffer = self.buf
 			assert self.global_cfg.actor_input.history_num > 1, "stack_rnn requires history_num > 1, ususally, it would be 20,40,... since we process long history when running online."
 			assert self.global_cfg.actor_input.history_num > self.global_cfg.actor_input.burnin_num, "stack_rnn requires history_num > burnin_num, ususally, it could be a little larger than burnin_num"
 			idx_stack = utils.idx_stack(indices, buffer, self.global_cfg.actor_input.history_num, direction=self.global_cfg.actor_input.trace_direction) # (B, T)
@@ -2227,13 +2235,13 @@ class TD3Runner(OfflineRLRunner):
 			batch_stack = buffer[idx_stack] # (B, T, *)
 			batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, *)
 			batch_stack.info["obs_nodelay"] = buffer[buffer.prev(idx_stack)].info["obs_next_nodelay"] # (B, T, *)
-			batch_stack.actor_input_cur = torch.cat([
+			batch_stack.a_in_cur = torch.cat([
 				torch.tensor(self.get_obs_base(buffer[idx_stack], "actor", "cur"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
 				self.get_historical_act(idx_end, self.global_cfg.actor_input.history_num, buffer, "stack", self.actor.device) \
 				if not self.global_cfg.actor_input.noise_act_debug else \
 				torch.normal(size=stacked_batch_prev["act"].reshape(batch_end.obs.shape[0],-1).shape, mean=0., std=1.,device=self.actor.device), # TODO
 			], dim=-1) # (B, T, obs_dim+act_dim)
-			batch_stack.actor_input_next = torch.cat([
+			batch_stack.a_in_next = torch.cat([
 				torch.tensor(self.get_obs_base(buffer[idx_stack], "actor", "next"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
 				self.get_historical_act(buffer.next(idx_end), self.global_cfg.actor_input.history_num, buffer, "stack", self.actor.device) \
 				if not self.global_cfg.actor_input.noise_act_debug else \
@@ -2268,30 +2276,30 @@ class TD3Runner(OfflineRLRunner):
 			batch_stack.valid_mask[:,:burn_in_num] = 0
 			# obs_pred & obs_encode
 			if self.global_cfg.actor_input.obs_pred.turn_on:
-				batch_stack.pred_input_cur = batch_stack.actor_input_cur
-				batch_stack.pred_input_next = batch_stack.actor_input_next # TODO the following
+				batch_stack.pred_input_cur = batch_stack.a_in_cur
+				batch_stack.pred_input_next = batch_stack.a_in_next # TODO the following
 				batch_stack.pred_output_cur, pred_info_cur = self.pred_net(batch_stack.pred_input_cur, state=None)
 				batch_stack.pred_output_next, pred_info_next = self.pred_net(batch_stack.pred_input_next, state=None)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-					batch_stack.actor_input_cur = batch_stack.pred_output_cur # (B*T, *)
-					batch_stack.actor_input_next = batch_stack.pred_output_next # (B*T, *)
+					batch_stack.a_in_cur = batch_stack.pred_output_cur # (B*T, *)
+					batch_stack.a_in_next = batch_stack.pred_output_next # (B*T, *)
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
-					batch_stack.actor_input_cur = pred_info_cur["feats"] # (B*T, *)
-					batch_stack.actor_input_next = pred_info_next["feats"]
+					batch_stack.a_in_cur = pred_info_cur["feats"] # (B*T, *)
+					batch_stack.a_in_next = pred_info_next["feats"]
 				else:
 					raise NotImplementedError
 				# detach
 				if self.global_cfg.actor_input.obs_pred.middle_detach: 
-					batch_stack.actor_input_cur = batch_stack.actor_input_cur.detach()
-					batch_stack.actor_input_next = batch_stack.actor_input_next.detach()
+					batch_stack.a_in_cur = batch_stack.a_in_cur.detach()
+					batch_stack.a_in_next = batch_stack.a_in_next.detach()
 				if self.global_cfg.actor_input.obs_pred.net_type == "vae":
 					raise NotImplementedError("vae for rnn is not implemented yet")
 					batch_stack.pred_info_cur_mu = pred_info_cur["mu"]
 					batch_stack.pred_info_cur_logvar = pred_info_cur["logvar"]
 			if self.global_cfg.actor_input.obs_encode.turn_on:
 				raise NotImplementedError("obs_encode is not implemented yet")
-				batch_end.encode_obs_input_cur = batch_end.actor_input_cur
-				batch_end.encode_obs_input_next = batch_end.actor_input_next
+				batch_end.encode_obs_input_cur = batch_end.a_in_cur
+				batch_end.encode_obs_input_next = batch_end.a_in_next
 				batch_end.encode_obs_output_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_input_cur)
 				batch_end.encode_obs_output_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_input_next)
 				batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
@@ -2301,24 +2309,25 @@ class TD3Runner(OfflineRLRunner):
 				batch_end.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
 				batch_end.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
 				if self.global_cfg.actor_input.obs_encode.train_eval_async == True:
-					batch_end.actor_input_cur = batch_end.encode_oracle_obs_output_cur
-					batch_end.actor_input_next = batch_end.encode_oracle_obs_output_next
+					batch_end.a_in_cur = batch_end.encode_oracle_obs_output_cur
+					batch_end.a_in_next = batch_end.encode_oracle_obs_output_next
 				elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
-					batch_end.actor_input_cur = batch_end.encode_obs_output_cur
-					batch_end.actor_input_next = batch_end.encode_obs_output_next
+					batch_end.a_in_cur = batch_end.encode_obs_output_cur
+					batch_end.a_in_next = batch_end.encode_obs_output_next
 				else:
 					raise ValueError("batch_end error")
 				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
 					batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_output_cur)
 				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
-					batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
-					batch_end.actor_input_next = batch_end.actor_input_next.detach()
+					batch_end.a_in_cur = batch_end.a_in_cur.detach()
+					batch_end.a_in_next = batch_end.actor_input_next.detach()
 			# end
-			if "from_target_q" in batch: batch_stack.from_target_q = batch.from_target_q
-			if "is_preprocessed" in batch: batch_stack.is_preprocessed = batch.is_preprocessed
-			# indices = idx_stack
+			indices = idx_stack
 			batch = batch_stack
-			batch.to_torch(device=self.actor.device)
+			batch.obs_nodelay = self.buf[self.buf.prev(indices)].info["obs_next_nodelay"]
+			batch.obs_nodelay = torch.tensor(batch.obs_nodelay, device=self.cfg.device)
+			batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
+			batch.to_torch(device=self.cfg.device, dtype=torch.float32)
 		else: raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
 		# critic input
 		if self.cfg.global_cfg.critic_input.obs_type == "normal":
@@ -2328,6 +2337,11 @@ class TD3Runner(OfflineRLRunner):
 			batch.c_in_cur = batch.obs_nodelay
 			batch.c_in_next = batch.obs_next_nodelay
 		else: raise NotImplementedError
+
+		# only keep res keys
+		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_next", "done", "terminated", "truncated", "rew", "act", "valid_mask"]
+		for k in list(batch.keys()): 
+			if k not in keeped_keys: batch.pop(k)
 		return batch, indices
 
 	def update_once(self, batch, indices):
@@ -2348,24 +2362,25 @@ class TD3Runner(OfflineRLRunner):
 
 	def update_critic(self, batch, indices):
 
-		batch.a_next = self.actor_old(batch.a_in_next)[0][0]
-		noise = torch.randn(size=batch.a_next.shape, device=batch.a_next.device) * self.cfg.policy.noise_clip
+		batch.a_next_online = self.actor_old(batch.a_in_next, state=None)[0][0]
+		noise = torch.randn(size=batch.a_next_online.shape, device=batch.a_next_online.device) * self.cfg.policy.noise_clip
 		if self.cfg.policy.noise_clip > 0.0:
 			noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
-		batch.a_next += noise
+		batch.a_next_online += noise
 		
-		target_q = batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+		target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
 			torch.min(
-				self.critic1_old(torch.cat([batch.c_in_next, batch.a_next],-1))[0],
-				self.critic2_old(torch.cat([batch.c_in_next, batch.a_next],-1))[0]
-			).flatten()
+				self.critic1_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0],
+				self.critic2_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0]
+			).squeeze(-1)
+		).flatten().detach()
 		
 		critic_loss = F.mse_loss(self.critic1(
 			torch.cat([batch.c_in_cur, batch.act],-1)
 		)[0].flatten(), target_q, reduce=False) + F.mse_loss(self.critic2(
 			torch.cat([batch.c_in_cur, batch.act],-1)
 		)[0].flatten(), target_q, reduce=False)
-		critic_loss = (critic_loss * batch.valid_mask).mean()
+		critic_loss = (critic_loss * batch.valid_mask.flatten()).mean()
 
 		self.critic1_optim.zero_grad()
 		self.critic2_optim.zero_grad()
@@ -2379,8 +2394,12 @@ class TD3Runner(OfflineRLRunner):
 
 	def update_actor(self, batch, indices):
 		res_info = {}
-		actor_loss, _ = self.critic1(torch.cat([batch.c_in_cur, self.actor(batch.a_in_cur)[0][0]],-1))
-		actor_loss = (actor_loss * batch.valid_mask).mean()
+		actor_loss, _ = self.critic1(torch.cat([
+			batch.c_in_cur, 
+			self.actor(batch.a_in_cur, state=None)[0][0]
+		],-1))
+		actor_loss = actor_loss.flatten()
+		actor_loss = (actor_loss * batch.valid_mask.flatten()).mean()
 		actor_loss = -actor_loss.mean()
 		self.actor_optim.zero_grad()
 		actor_loss.backward()
@@ -2400,7 +2419,6 @@ class TD3Runner(OfflineRLRunner):
 		self.record("eval/rwd_mean", kwargs["rwd_mean"])
 		self.record("eval/len_mean", kwargs["len_mean"])
 		self.record("epoch", self.epoch_cnt)
-
 
 
 

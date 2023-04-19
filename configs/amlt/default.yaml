@@ -29,8 +29,8 @@ storage:
 search:
   job_template:
     name: RL_Delayed_{experiment_name:s}_{auto:5s}
-    sku: 24G1-P40
-    # sku: G1
+    # sku: 24G1-P40
+    sku: G1
     command:
     - python src/entry.py
       -m
@@ -75,12 +75,12 @@ search:
     - name: actor_input_obs_type
       values: [normal]
     - name: actor_input_history_merge_method
-      values: [cat_mlp]
+      values: [stack_rnn]
     - name: actor_input_trace_direction
-      values: [next]
+      values: [next,prev]
     - name: seed
       values: ["0,1,2,3"]
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["custom_td3_catMlp_traceNext"] 
+      values: ["custom_td3_stackRnn"] 

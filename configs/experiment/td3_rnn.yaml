@@ -1,0 +1,72 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - td3.yaml
+  - _self_
+
+global_cfg: # would be passed to actor, critic1, critic2, policy, env
+  actor_input:
+    history_merge_method: "stack_rnn" # cat_mlp or stack_rnn or none
+    obs_type: "normal" # normal or oracle
+    seq_mask: false 
+    history_num: 40 # always > 2
+    burnin_num: 0.25 # only works for stack_rnn
+    obs_pred: 
+      turn_on: false
+      input_type: "obs" # obs or feat
+      net_type: rnn # vae or mlp
+      net:
+        encoder_net: 
+          rnn_layer_num: 1
+          rnn_hidden_layer_size: 512
+    obs_encode:
+      turn_on: false
+      feat_dim: 256
+      train_eval_async: true # true is VLOG, false is normal training. only affect the training input
+      before_policy_detach: true # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
+      norm_kl_loss_weight: 0.01
+      auto_kl_target: 50
+      pred_loss_weight: 0.
+      optim:
+        _target_: torch.optim.Adam
+        _partial_: true
+        lr: ${actor_optim.lr}
+      auto_kl_optim:
+        _target_: torch.optim.Adam
+        _partial_: true
+        lr: ${actor_optim.lr}
+      net:
+        _target_: src.runner.ObsEncodeNet
+        _partial_: true
+        feat_dim: ${global_cfg.actor_input.obs_encode.feat_dim}
+        device: ${device}
+        encoder_net: 
+          _target_: src.runner.RNN_MLP_Net
+          _partial_: true
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [512,512]
+          mlp_softmax: false
+          dropout: 0.0
+        decoder_net:
+          _target_: src.runner.RNN_MLP_Net
+          _partial_: true
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [512,512]
+          mlp_softmax: false
+          dropout: 0.0
+  critic_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "oracle" # normal or oracle
+trainer:
+  batch_size: 32
+actor:
+  net: 
+    rnn_layer_num: 1
+    rnn_hidden_layer_size: 256
+    mlp_hidden_sizes: [256]
+
