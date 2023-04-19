@@ -47,6 +47,7 @@ search:
       global_cfg.critic_input.obs_type={critic_input_obs_type}
       global_cfg.actor_input.obs_type={actor_input_obs_type}
       global_cfg.actor_input.history_merge_method={actor_input_history_merge_method}
+      global_cfg.actor_input.trace_direction={actor_input_trace_direction}
       trainer.batch_size={trainer_batch_size}
       buffer.size={buffer_size}
       tags=[{tag}]
@@ -72,12 +73,14 @@ search:
     - name: critic_input_obs_type
       values: [oracle]
     - name: actor_input_obs_type
-      values: [oracle]
+      values: [normal]
     - name: actor_input_history_merge_method
       values: [cat_mlp]
+    - name: actor_input_trace_direction
+      values: [next]
     - name: seed
       values: ["0,1,2,3"]
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["custom_td3_catMlp_OracleA"] 
+      values: ["custom_td3_catMlp_traceNext"] 
