@@ -65,7 +65,7 @@ search:
       # values: [Hopper-v4,HalfCheetah-v4]
       values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
-      values: [td3]
+      values: [td3_rnn]
     - name: trainer_batch_size
       values: [256]
     - name: buffer_size
