@@ -2130,6 +2130,7 @@ class TD3Runner(OfflineRLRunner):
 		if self.global_cfg.actor_input.history_merge_method == "none":
 			batch.a_in_cur = self.get_obs_base(batch, "actor", "cur")
 			batch.a_in_next = self.get_obs_base(batch, "actor", "next")
+			batch.valid_mask = torch.ones([len(batch)], device=self.actor.device).int()
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			buffer = self.buf
 			assert self.global_cfg.actor_input.history_num >= 0
@@ -2360,9 +2361,10 @@ class TD3Runner(OfflineRLRunner):
 		
 		critic_loss = F.mse_loss(self.critic1(
 			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].flatten(), target_q) + F.mse_loss(self.critic2(
+		)[0].flatten(), target_q, reduce=False) + F.mse_loss(self.critic2(
 			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].flatten(), target_q)
+		)[0].flatten(), target_q, reduce=False)
+		critic_loss = (critic_loss * batch.valid_mask).mean()
 
 		self.critic1_optim.zero_grad()
 		self.critic2_optim.zero_grad()
@@ -2377,6 +2379,7 @@ class TD3Runner(OfflineRLRunner):
 	def update_actor(self, batch, indices):
 		res_info = {}
 		actor_loss, _ = self.critic1(torch.cat([batch.c_in_cur, self.actor(batch.a_in_cur)[0][0]],-1))
+		actor_loss = (actor_loss * batch.valid_mask).mean()
 		actor_loss = -actor_loss.mean()
 		self.actor_optim.zero_grad()
 		actor_loss.backward()
