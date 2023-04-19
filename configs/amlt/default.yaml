@@ -46,7 +46,6 @@ search:
       experiment={experiment}
       global_cfg.critic_input.obs_type={critic_input_obs_type}
       global_cfg.actor_input.obs_type={actor_input_obs_type}
-      global_cfg.actor_input.history_merge_method={actor_input_history_merge_method}
       global_cfg.actor_input.trace_direction={actor_input_trace_direction}
       trainer.batch_size={trainer_batch_size}
       buffer.size={buffer_size}
@@ -65,7 +64,7 @@ search:
       # values: [Hopper-v4,HalfCheetah-v4]
       values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
-      values: [td3_rnn]
+      values: [td3]
     - name: trainer_batch_size
       values: [256]
     - name: buffer_size
@@ -74,8 +73,6 @@ search:
       values: [oracle]
     - name: actor_input_obs_type
       values: [normal]
-    - name: actor_input_history_merge_method
-      values: [stack_rnn]
     - name: actor_input_trace_direction
       values: [next,prev]
     - name: seed
@@ -83,4 +80,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["custom_td3_stackRnn"] 
+      values: ["custom_td3_mlpv3_bugTest"] 
