@@ -42,6 +42,7 @@ search:
       env.delay={env_delay}
       experiment={experiment}
       global_cfg.critic_input.obs_type={critic_input_obs_type}
+      global_cfg.actor_input.history_merge_method={actor_input_history_merge_method}
       trainer.batch_size={trainer_batch_size}
       buffer.size={buffer_size}
       tags=[{tag}]
@@ -66,10 +67,12 @@ search:
     - name: buffer_size
       values: [1000000]
     - name: critic_input_obs_type
-      values: [oracle,normal]
+      values: [oracle]
+    - name: actor_input_history_merge_method
+      values: [cat_mlp]
     - name: seed
       values: ["0,1,2,3"]
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["custom_td3_dummyAndOracleCritic"] 
+      values: ["custom_td3_catMlp"] 
