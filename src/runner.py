@@ -1029,6 +1029,12 @@ class RNN_MLP_Net(nn.Module):
 				# first step of online or offline
 				hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
 				after_rnn, hidden = self.nn(obs, hidden)
+
+				# # two step debug
+				# hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
+				# after_rnn, hidden = self.nn(obs[:,:-1,:], hidden)
+				# after_rnn, hidden = self.nn(obs[:,-1:,:], hidden)
+				# print(hidden[0,0])
 			else: 
 				# normal step of online
 				after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
