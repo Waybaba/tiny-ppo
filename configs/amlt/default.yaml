@@ -75,4 +75,4 @@ search:
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["custom_td3_catMlp"] 
+      values: ["custom_td3_catMlp_v2"] 
