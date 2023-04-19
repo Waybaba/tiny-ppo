@@ -2215,6 +2215,7 @@ class TD3Runner(OfflineRLRunner):
 			else:
 				batch.a_in_cur = self.get_obs_base(batch, "actor", "cur")
 				batch.a_in_next = self.get_obs_base(batch, "actor", "next")
+				batch.valid_mask = torch.ones([len(batch)], device=self.actor.device).int()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			raise NotImplementedError
 			assert self.global_cfg.actor_input.history_num > 1, "stack_rnn requires history_num > 1, ususally, it would be 20,40,... since we process long history when running online."
