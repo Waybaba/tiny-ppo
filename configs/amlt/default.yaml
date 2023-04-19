@@ -48,14 +48,13 @@ search:
       global_cfg.actor_input.obs_type={actor_input_obs_type}
       global_cfg.actor_input.history_num={actor_input_history_num}
       global_cfg.actor_input.trace_direction={actor_input_trace_direction}
-      trainer.batch_size={trainer_batch_size}
       buffer.size={buffer_size}
       tags=[{tag}]
   type: grid
   max_trials: 10000
   params:
     - name: env_delay
-      values: [0]
+      values: [0,1,2,4,8]
       # values: [4,2,1,8]
       # values: ["0,2","4,8","16,32"]
       # values: ["0,2,4,8,16,32"]
@@ -66,21 +65,19 @@ search:
       values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
     - name: experiment
       values: [td3_rnn]
-    - name: trainer_batch_size
-      values: [256]
     - name: buffer_size
       values: [1000000]
     - name: critic_input_obs_type
       values: [oracle]
     - name: actor_input_obs_type
-      values: [oracle]
+      values: [oracle,normal]
     - name: actor_input_trace_direction
       values: [next]
     - name: actor_input_history_num
-      values: [2,4,8,16]
+      values: [2,4,8]
     - name: seed
       values: ["0,1,2,3"]
     - name: n_jobs
       values: [5]
     - name: tag
-      values: ["custom_td3_rnnOracleDebug"] 
+      values: ["custom_td3_rnnOracleDebug_v2"] 
