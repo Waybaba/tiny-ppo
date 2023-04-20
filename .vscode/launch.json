@@ -151,23 +151,24 @@
 			],
 		},
 		// entry td3_tianshou
-		{
-			"name": "td3_tianshou",
-			"type": "python",
-			"request": "launch",
-			"program": "${workspaceFolder}/src/entry.py",
-			"console": "integratedTerminal",
-			"justMyCode": true,
-			"args": [
-				"experiment=td3_tianshou",
-				"env.name=HalfCheetah-v4",
-				// "env.name=Hopper-v4",
-				// "env.name=Pendulum-v1",
-				// "env.name=DummyNum-v0",
-				"env.delay=0",
-				"start_timesteps=100",
-			],
-		},
+        {
+            "name": "launch_amlt",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/launch_amlt.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "amlt.search.job_template.sku=G1",
+                "python","src/entry.py","-m",
+                "hydra/launcher=wsl_parallel",
+                "++trainer.log_upload_interval=100000",
+                "n_jobs=5",
+                "seed=#1,2,3,4#",
+                "env.delay=0,1,2,4,8",
+                "tags=test_tag"
+            ]
+        },
 		{
 			"name": "ppo_continuous",
 			"type": "python",

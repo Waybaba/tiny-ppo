@@ -1,0 +1,83 @@
+description: AMLT
+
+target:
+  service: singularity
+  name: msrresrchvc    # more GPUs 
+
+environment:
+  image: waybaba/rl:v3
+  username: waybaba
+  setup:
+    - echo "setup start..."
+    - export UPRJDIR=/mnt/default/
+    - export UDATADIR=/mnt/storage/data
+    - export UOUTDIR=/mnt/storage/output
+    - mkdir -p /mnt/storage/output /mnt/storage/data
+    - echo "setup finished!"
+
+
+code:
+  local_dir: $CONFIG_DIR/../../
+
+storage:
+  input:
+    storage_account_name: resrchvc4data
+    container_name: v-wangwei1
+    mount_dir: /mnt/storage
+    local_dir: /home/v-wangwei1/storage
+
+search:
+  job_template:
+    name: RL_Delayed_{experiment_name:s}_{auto:5s}
+    # sku: 24G1-P40
+    sku: G1
+    command:
+    - python src/entry.py
+      -m
+      hydra/launcher=wsl_parallel
+      ++trainer.log_upload_interval=100000
+      trainer.progress_bar=false
+      trainer.max_epoch=200
+      trainer.step_per_epoch=5000
+      n_jobs={n_jobs}
+      seed={seed}
+      env.name={env_name}
+      env.delay={env_delay}
+      experiment={experiment}
+      global_cfg.critic_input.obs_type={critic_input_obs_type}
+      global_cfg.actor_input.obs_type={actor_input_obs_type}
+      global_cfg.actor_input.history_num={actor_input_history_num}
+      global_cfg.actor_input.trace_direction={actor_input_trace_direction}
+      buffer.size={buffer_size}
+      tags=[{tag}]
+  type: grid
+  max_trials: 10000
+  params:
+    - name: env_delay
+      values: [0,1,2,4,8]
+      # values: [4,2,1,8]
+      # values: ["0,2","4,8","16,32"]
+      # values: ["0,2,4,8,16,32"]
+      # values: [4,1,2,8,12,0]
+    - name: env_name
+      # values: [HalfCheetah-v4]
+      # values: [Hopper-v4,HalfCheetah-v4]
+      values: [Hopper-v4,HalfCheetah-v4,Ant-v4,Walker2d-v4]
+    - name: experiment
+      values: [td3_rnn]
+    - name: buffer_size
+      values: [1000000]
+    - name: critic_input_obs_type
+      values: [oracle]
+    - name: actor_input_obs_type
+      values: [oracle,normal]
+    - name: actor_input_trace_direction
+      values: [next]
+    - name: actor_input_history_num
+      values: [2,4,8]
+    - name: seed
+      values: ["0,1,2,3"]
+    - name: n_jobs
+      values: [5]
+    - name: tag
+      values: ["custom_td3_rnnOracleDebug_v2"] 
