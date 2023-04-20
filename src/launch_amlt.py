@@ -216,6 +216,24 @@ def replace_with_dot_keys(source_dict, dot_keys):
 
     return source_dict
 
+def parse_string_list(input_string):
+    # Using regex to match elements separated by commas
+    elements = re.findall(r'(\[.*?\]|".*?"|\'.*?\'|[^,\s]+)', input_string)
+    parsed_elements = []
+
+    for elem in elements:
+        if "[" in elem and "]" in elem:
+            # Keep nested lists as strings
+            parsed_elements.append(elem)
+        else:
+            parsed_elem = elem.strip('"\'')
+            if parsed_elem.isnumeric():
+                parsed_elem = int(parsed_elem)
+            elif re.match(r'^-?\d+\.\d+$', parsed_elem):
+                parsed_elem = float(parsed_elem)
+            parsed_elements.append(parsed_elem)
+
+    return parsed_elements
 
 class CmdJob:
     def __init__(self, entry_file, args, kwargs):
@@ -378,14 +396,7 @@ class AmltLauncher:
 
     def process_sweep(self, arg):
         key, values = arg.split("=", 1)
-        values = re.findall(r'(\[.*?\]|\d+|[^,]+)', values)
-        processed_values = []
-        for val in values:
-            if "[" in val and "]" in val:
-                processed_values.append([x.strip() for x in val.strip("[]").split(",")])
-            else:
-                processed_values.append(val.strip())
-        self.args["sweep"][key] = processed_values
+        self.args["sweep"][key] = parse_string_list(values)
 
     def process_parallel(self, arg):
         key, values = arg.split("=", 1)
