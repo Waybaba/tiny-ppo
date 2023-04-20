@@ -333,7 +333,7 @@ class AmltLauncher:
 		if choice in ["n", "N", "e", "E"]: return
 		if choice in ["r", "R", "L", "l"]:
 			cmd = f"amlt run -t local {CONFIG_OUTPUT_PATH}"
-		elif choice in ["s", "S"]:
+		elif choice in ["","s", "S"]:
 			name = self.args["normal"]["tags"]
 			name += "-"+"".join(random.choices(string.ascii_uppercase + string.digits, k=4))
 			cmd = f"amlt run {CONFIG_OUTPUT_PATH} {name}"
