@@ -85,7 +85,6 @@ import itertools
 import random
 import string
 import subprocess
-import getch
 
 
 AMLT_CONFIG_TEMPLATE = """
@@ -316,19 +315,22 @@ class AmltLauncher:
 			yaml.dump(self.config_file_dict, f)
 		# print summary and ask to run
 		print(yaml.dump(self.config_file_dict))
-		# numbers
 		num_jobs = 1
 		for k, v in self.args["sweep"].items():
 			num_jobs *= len(v)
+		print(f"tags: {self.args['normal']['tags']}")
 		print(f"number of jobs: {num_jobs}")
-		# sweeped args
 		print("sweeped args:")
 		for k, v in self.args["sweep"].items():
 			print(f"    {k}: {v}")
 		# ask to run
-		print("Submit, Run locally or Exit? (S/l/n): ")
-		choice = input()
-		if choice in ["n", "N"]: return
+		print("Submit(s), Run locally(l) or Exit(n)? (S/l/n): ")
+		try:
+			choice = input()
+		except KeyboardInterrupt:
+			print("KeyboardInterrupt")
+			exit()
+		if choice in ["n", "N", "e", "E"]: return
 		if choice in ["r", "R", "L", "l"]:
 			cmd = f"amlt run -t local {CONFIG_OUTPUT_PATH}"
 		elif choice in ["s", "S"]:
