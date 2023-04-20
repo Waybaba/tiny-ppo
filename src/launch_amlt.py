@@ -315,8 +315,6 @@ class AmltLauncher:
         cmd_str += " " + " ".join([k+"={"+k.replace(".","_")+"}" for k, v in self.args["sweep"].items()])
         for k, v in self.args["sweep"].items():
             params.append({"name": k.replace(".","_"), "values": v})
-        # print(cmd_str)
-        # print(params)
         # set config file
         self.config_file_dict["search"]["job_template"]["command"] = [cmd_str]
         self.config_file_dict["search"]["params"] = params
@@ -346,7 +344,7 @@ class AmltLauncher:
         if choice in ["r", "R", "L", "l"]:
             cmd = f"amlt run -t local {CONFIG_OUTPUT_PATH}"
         elif choice in ["","s", "S"]:
-            name = self.args["normal"]["tags"]
+            name = self.args["normal"]["tags"].strip("[]\"").replace(" ", "_")
             name += "-"+"".join(random.choices(string.ascii_uppercase + string.digits, k=4))
             cmd = f"amlt run {CONFIG_OUTPUT_PATH} {name}"
         else:
@@ -414,62 +412,6 @@ def main():
     amlt_launcher.parse_cmd_args(args)
     # amlt_launcher.show_info()
     amlt_launcher.launch()
-
-def old():
-    # Read the template YAML file
-    with open("configs/amlt/template.yaml", "r") as f:
-        template_dict = yaml.safe_load(f)
-
-    # Parse arguments to update the content of the template
-    args = sys.argv[1:]
-
-    type_cur = 1
-    amlt_arg = {}
-    normal_arg = {}
-    sweep_arg = {}
-    parallel_arg = {}
-    others = []
-
-    # parse_value
-    for arg in args:
-        # 1. Start with amlt.: change the value in the template
-        if arg.startswith("amlt."):
-            assert type_cur == 1, "type should be 1"
-            key, value = arg.split("=", 1)
-            key = key.replace("amlt.", "")
-            amlt_arg[key] = value
-
-        # 2. Python, entry file .py: follows the type 1
-        elif arg.endswith(".py") or arg == "python":
-            if arg == "python": continue
-            assert type_cur == 1, "type should be 1"
-            template_dict["code"]["command"] = arg
-            type_cur = 2
-        # 3. Contains no "," and "#": keep the same in the template normal_arg
-        # 4. Contains "," but no "#": hparams, will be sweeped
-        # 5. Contains "," and "#": parallel key, # will be removed, and the remaining will be the same in the template
-        # 6. other such as "-m", just keep it
-        else:
-            assert type_cur in [2, 3], "type should be 2 or 3"
-            type_cur = 3
-            if "," not in arg and "#" not in arg:
-                if "=" not in arg: 
-                    others.append(arg)
-                    continue
-                key, value = arg.split("=", 1)
-                normal_arg[key] = value
-            elif "," in arg and "#" not in arg:
-                key, values = arg.split("=", 1)
-                values = [x.strip() for x in values.split(",")]
-                sweep_arg[key] = values
-            elif "," in arg and "#" in arg:
-                key, values = arg.split("=", 1)
-                values = re.sub(r"[#]", "", values)
-                parallel_arg[key] = [int(x) for x in values.split(",")]
-            else:
-                raise KeyError
-            
-
 
 if __name__ == "__main__":
     main()
