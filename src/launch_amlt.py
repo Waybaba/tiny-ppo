@@ -327,7 +327,7 @@ class AmltLauncher:
 			print(f"    {k}: {v}")
 		# ask to run
 		print("Submit, Run locally or Exit? (S/l/n): ")
-		choice = getch.getch()
+		choice = input()
 		if choice in ["n", "N"]: return
 		if choice in ["r", "R", "L", "l"]:
 			cmd = f"amlt run -t local {CONFIG_OUTPUT_PATH}"
