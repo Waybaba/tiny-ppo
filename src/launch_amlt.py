@@ -6,7 +6,7 @@ Usage:
 	run cmd line in shell (see template below)
 	>>> read from configs/amlt/template.yaml
 	>>> fill content based on template and command line input
-	>>> replace the default file in configs/amlt/latest.yaml
+	>>> replace the default file in {CONFIG_OUTPUT_PATH}
 	>>> output about the sweeped parameters and job numbers, file directory and other informations
 	>>> enter y to launch
 
@@ -52,7 +52,7 @@ The arguments has following types:
 	
 would generate the following config file
 
-=========================== configs/amlt/latest.yaml >>>>>>>>>>>>>>>>
+=========================== {CONFIG_OUTPUT_PATH} >>>>>>>>>>>>>>>>
 description: AMLT
 target:
   service: singularity
@@ -74,7 +74,7 @@ search:
 	- name: seed
 	  values: [1,2,3,4]
 
-=========================== configs/amlt/latest.yaml <<<<<<<<<<<<<<<<
+=========================== {CONFIG_OUTPUT_PATH} <<<<<<<<<<<<<<<<
 
 """
 import yaml
@@ -311,7 +311,7 @@ class AmltLauncher:
 		self.config_file_dict["search"]["job_template"]["command"] = [cmd_str]
 		self.config_file_dict["search"]["params"] = params
 		# write config file
-		with open("configs/amlt/latest.yaml", "w") as f:
+		with open(f"{CONFIG_OUTPUT_PATH}", "w") as f:
 			yaml.dump(self.config_file_dict, f)
 		# print summary and ask to run
 		print(yaml.dump(self.config_file_dict))
@@ -328,11 +328,11 @@ class AmltLauncher:
 		choice = input("Submit, Run locally or Exit? (S/l/n): ")
 		if choice in ["n", "N"]: return
 		if choice in ["r", "R", "L", "l"]:
-			cmd = f"amlt run -t local configs/amlt/latest.yaml"
+			cmd = f"amlt run -t local {CONFIG_OUTPUT_PATH}"
 		elif choice in ["s", "S"]:
 			name = self.args["normal"]["tags"]
 			name += "-"+"".join(random.choices(string.ascii_uppercase + string.digits, k=4))
-			cmd = f"amlt run configs/amlt/latest.yaml {name}"
+			cmd = f"amlt run {CONFIG_OUTPUT_PATH} {name}"
 		print(cmd)
 		execute_command(cmd)
 
