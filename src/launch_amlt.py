@@ -84,6 +84,7 @@ import os
 import itertools
 import random
 import string
+from functools import reduce
 import subprocess
 
 
@@ -245,9 +246,6 @@ class CmdJob:
         return f"python {self.entry_file} " + " ".join(self.args) + " " + " ".join([f"{k}={v}" for k, v in self.kwargs.items()])
 
 class AmltLauncher:
-    """
-    TODO format check: e.g. amlt args should be a list
-    """
     def __init__(self):
         self.entry_file = None
 
@@ -303,36 +301,42 @@ class AmltLauncher:
     def launch(self):
         assert self._pre_launch_check(), "pre launch check failed"
         print("pre launch check passed")
+        
         # modify config file keys
         self.config_file_dict = replace_with_dot_keys(self.config_file_dict, self.launcher_args)
-        # make jobs
+        
+        # create command string
         cmd_str = ""
-        params = []
         cmd_str += f"python {self.entry_file}"
         cmd_str += " " + " ".join(self.args["others"])
         cmd_str += " " + " ".join([f"{k}={v}" for k, v in self.args["normal"].items()])
         cmd_str += " " + " ".join([f"{k}={v}" for k, v in self.args["parallel"].items()])
-        cmd_str += " " + " ".join([k+"={"+k.replace(".","_")+"}" for k, v in self.args["sweep"].items()])
-        for k, v in self.args["sweep"].items():
-            params.append({"name": k.replace(".","_"), "values": v})
+        cmd_str += " " + " ".join([k+"={"+k.replace(".","_")+"_"+"}" for k, v in self.args["sweep"].items()])
+    
+        # create params list
+        params = [{"name": k.replace(".", "_")+"_", "values": v} for k, v in self.args["sweep"].items()]
+        
         # set config file
         self.config_file_dict["search"]["job_template"]["command"] = [cmd_str]
         self.config_file_dict["search"]["params"] = params
+        
         # write config file
-        with open(f"{CONFIG_OUTPUT_PATH}", "w") as f:
+        with open(CONFIG_OUTPUT_PATH, "w") as f:
             yaml.dump(self.config_file_dict, f)
+        
         # print summary and ask to run
         print(yaml.dump(self.config_file_dict))
-        num_jobs = 1
-        for k, v in self.args["sweep"].items():
-            num_jobs *= len(v)
-        print("\n"+"="*20)
+        
+        num_jobs = reduce(lambda x, y: x*y, map(len, self.args['sweep'].values()), 1)
+        
+        print("\n" + "="*20)
         print(f"\nTags: {self.args['normal']['tags']}")
         print(f"\nCommand: {cmd_str}")
         print("\nSweeped args:")
         for k, v in self.args["sweep"].items():
-            print(f"    {k}: {str(v)}")
+            print(f"    {k}: {v}")
         print(f"\nNumber of jobs: {num_jobs}")
+        
         # ask to run
         print("\nSubmit(s), Run locally(l) or Exit(n)? (S/l/n): ")
         try:
@@ -340,15 +344,19 @@ class AmltLauncher:
         except KeyboardInterrupt:
             print("KeyboardInterrupt")
             exit()
-        if choice in ["n", "N", "e", "E"]: return
-        if choice in ["r", "R", "L", "l"]:
+        
+        if choice.lower() == "n":
+            return
+        
+        if choice.lower() == "l":
             cmd = f"amlt run -t local {CONFIG_OUTPUT_PATH}"
-        elif choice in ["","s", "S"]:
+        elif choice.lower() in ["", "s"]:
             name = self.args["normal"]["tags"].strip("[]\"").replace(" ", "_")
-            name += "-"+"".join(random.choices(string.ascii_uppercase + string.digits, k=4))
+            name += "-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
             cmd = f"amlt run {CONFIG_OUTPUT_PATH} {name}"
         else:
-            raise ValueError("invalid choice {choice}")
+            raise ValueError(f"invalid choice {choice}")
+        
         print(cmd)
         execute_command(cmd)
 
