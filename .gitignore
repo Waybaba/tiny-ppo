@@ -28,5 +28,6 @@ __pycache__/
 /.env
 /tmp
 a.out
+/configs/amlt/latest.yaml
 
 .devcontainer/mujoco/*
