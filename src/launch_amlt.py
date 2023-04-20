@@ -175,6 +175,8 @@ search:
 
 """
 
+CONFIG_OUTPUT_PATH = "configs/amlt/latest.yaml"
+
 def execute_command(command_str):
     command_args = command_str.split()
     try:
@@ -327,12 +329,10 @@ class AmltLauncher:
 		if choice in ["n", "N"]: return
 		if choice in ["r", "R", "L", "l"]:
 			cmd = f"amlt run -t local configs/amlt/latest.yaml"
-			# cmd = "echo 123"
 		elif choice in ["s", "S"]:
 			name = self.args["normal"]["tags"]
 			name += "-"+"".join(random.choices(string.ascii_uppercase + string.digits, k=4))
 			cmd = f"amlt run configs/amlt/latest.yaml {name}"
-			cmd = "echo 1231"
 		print(cmd)
 		execute_command(cmd)
 
