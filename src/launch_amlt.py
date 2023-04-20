@@ -311,7 +311,7 @@ class AmltLauncher:
         cmd_str += f"python {self.entry_file}"
         cmd_str += " " + " ".join(self.args["others"])
         cmd_str += " " + " ".join([f"{k}={v}" for k, v in self.args["normal"].items()])
-        cmd_str += " " + " ".join([f"{k}={','.join([str(v_) for v_ in v])}" for k, v in self.args["parallel"].items()])
+        cmd_str += " " + " ".join([f"{k}={v}" for k, v in self.args["parallel"].items()])
         cmd_str += " " + " ".join([k+"={"+k.replace(".","_")+"}" for k, v in self.args["sweep"].items()])
         for k, v in self.args["sweep"].items():
             params.append({"name": k.replace(".","_"), "values": v})
@@ -330,6 +330,7 @@ class AmltLauncher:
             num_jobs *= len(v)
         print("\n"+"="*20)
         print(f"\nTags: {self.args['normal']['tags']}")
+        print(f"\nCommand: {cmd_str}")
         print("\nSweeped args:")
         for k, v in self.args["sweep"].items():
             print(f"    {k}: {str(v)}")
@@ -401,7 +402,7 @@ class AmltLauncher:
     def process_parallel(self, arg):
         key, values = arg.split("=", 1)
         values = re.sub(r"[#]", "", values)
-        self.args["parallel"][key] = [int(x) for x in values.split(",")]
+        self.args["parallel"][key] = values
 
     def process_others(self, arg):
         self.args["others"].append(arg)
