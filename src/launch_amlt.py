@@ -85,6 +85,7 @@ import itertools
 import random
 import string
 import subprocess
+import getch
 
 
 AMLT_CONFIG_TEMPLATE = """
@@ -325,7 +326,8 @@ class AmltLauncher:
 		for k, v in self.args["sweep"].items():
 			print(f"    {k}: {v}")
 		# ask to run
-		choice = input("Submit, Run locally or Exit? (S/l/n): ")
+		print("Submit, Run locally or Exit? (S/l/n): ")
+		choice = getch.getch()
 		if choice in ["n", "N"]: return
 		if choice in ["r", "R", "L", "l"]:
 			cmd = f"amlt run -t local {CONFIG_OUTPUT_PATH}"
@@ -333,6 +335,8 @@ class AmltLauncher:
 			name = self.args["normal"]["tags"]
 			name += "-"+"".join(random.choices(string.ascii_uppercase + string.digits, k=4))
 			cmd = f"amlt run {CONFIG_OUTPUT_PATH} {name}"
+		else:
+			raise ValueError("invalid choice {choice}")
 		print(cmd)
 		execute_command(cmd)
 
