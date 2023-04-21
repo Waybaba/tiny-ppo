@@ -49,12 +49,10 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_type: "normal" # normal or oracle
     trace_direction: "next" # prev or next
     custom_return_cal: false 
-    seq_mask: false 
-    history_num: ${env.delay} # ! TODO for case 0 and 1
-    burnin_num: 0.25 # only works for stack_rnn
+    history_num: ${env.delay}
     noise_act_debug: false
     obs_pred:
-      turn_on: false 
+      turn_on: true 
       feat_dim: 256
       middle_detach: false 
       input_type: "feat" # obs or feat
@@ -80,7 +78,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           _target_: src.runner.RNN_MLP_Net
           _partial_: true
           rnn_layer_num: 0
-          rnn_hidden_layer_size: 256
+          rnn_hidden_layer_size: 512 
           mlp_hidden_sizes: [512,512]
           mlp_softmax: false
           dropout: 0.1
@@ -92,7 +90,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           mlp_hidden_sizes: [256]
           mlp_softmax: false
     obs_encode:
-      turn_on: true
+      turn_on: false
       feat_dim: 256
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
       before_policy_detach: false # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
@@ -131,8 +129,6 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
-    history_num: ${global_cfg.actor_input.history_num}
-    burnin_num: ${global_cfg.actor_input.burnin_num}
   log_interval: 100
   log_instant_commit: true # false would make the wandb sync only once per epoch
 actor:

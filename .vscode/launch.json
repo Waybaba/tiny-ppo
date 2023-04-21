@@ -143,8 +143,8 @@
 			"justMyCode": true,
 			"args": [
 				"experiment=td3_rnn",
-				// "env.name=Hopper-v4",
-				"env.name=HalfCheetah-v4",
+				"env.name=Hopper-v4",
+				// "env.name=HalfCheetah-v4",
 				"buffer.size=1e+6",
 				"env.delay=4",
 				"start_timesteps=10000",

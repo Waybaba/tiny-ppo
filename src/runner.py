@@ -31,6 +31,28 @@ from rich.progress import track
 from rich.console import Console
 
 
+def distill_state(state, key_maps):
+	"""
+	e.g. key_maps = {"hidden_pred_net_encoder": "hidden_encoder", "hidden_pred_net_decoder": "hidden_decoder"}
+	"""
+	if state is None: return None
+	res = {}
+	for k, v in key_maps.items():
+		if k in state: res[v] = state[k]
+	return res if res else None
+
+def update_state(state_dict, state_for_update, key_maps):
+	"""
+	e.g. key_maps = {"hidden_encoder": "hidden_pred_net_encoder", "hidden_decoder": "hidden_pred_net_decoder"}
+	"""
+	assert state_dict is not None, "state should not be None"
+	res = state_dict
+	if state_for_update is None: state_for_update = {}
+	for k, v in key_maps.items():
+		if k in state_for_update: res[v] = state_for_update[k]
+	return res
+
+
 def kl_divergence(mu1, logvar1, mu2, logvar2):
 	"""
 	mu1, logvar1: mean and log variance of the first Gaussian distribution
@@ -1303,7 +1325,9 @@ class ObsPredNet(nn.Module):
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
 		info = {}
-		encoder_outputs, state_ = self.encoder_net(input)
+		res_state = {}
+		
+		encoder_outputs, encoder_state = self.encoder_net(input, state=distill_state(state, {"hidden_encoder": "hidden"}))
 		if self.hps["net_type"] == "vae":
 			mu, logvar = encoder_outputs
 			feats = self.vae_sampling(mu, logvar)
@@ -1313,9 +1337,11 @@ class ObsPredNet(nn.Module):
 			feats = encoder_outputs[0]
 		elif self.hps["net_type"] == "rnn":
 			feats = encoder_outputs[0]
-		output, _ = self.decoder_net(feats, state)
+		output, decoder_state = self.decoder_net(feats, state=distill_state(state, {"hidden_decoder": "hidden"}))
 		output = output[0]
-		info["state"] = state_
+		res_state = update_state(res_state, encoder_state, {"hidden": "hidden_encoder"})
+		res_state = update_state(res_state, decoder_state, {"hidden": "hidden_decoder"})
+		info["state"] = res_state if res_state else None
 		info["feats"] = feats
 		return output, info
 
@@ -1820,7 +1846,7 @@ class WaybabaRecorder:
 			aligned_info.append(f"{left_aligned_key} {right_aligned_value}")
 
 		return "\n".join(aligned_info)
-	
+
 
 class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
@@ -2068,6 +2094,7 @@ class TD3Runner(OfflineRLRunner):
 				)], device=self.actor.device)
 	
 	def select_act_for_env(self, batch, state, mode=None):
+		res_state = {}
 		a_in = batch.obs
 		process_online_batch_info = {}
 		# if first step when act is none
@@ -2105,15 +2132,16 @@ class TD3Runner(OfflineRLRunner):
 					a_in = pred_out.cpu()
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 					a_in = pred_info["feats"].cpu()
-				else:
-					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
+				else: raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
+				if "is_first_step" not in batch.info:
+					pred_abs_error_online = ((pred_out - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
+					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
 			elif self.global_cfg.actor_input.obs_encode.turn_on:
 				encode_output, encode_info = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if "is_first_step" in batch.info:
 				if self.global_cfg.actor_input.obs_pred.turn_on:
-					raise NotImplementedError
 					new_dim = self.pred_net.input_dim
 				elif self.global_cfg.actor_input.obs_encode.turn_on:
 					raise NotImplementedError
@@ -2129,15 +2157,17 @@ class TD3Runner(OfflineRLRunner):
 				latest_act = batch.info["historical_act"][-self.actor.act_num:]
 				a_in = np.concatenate([a_in, latest_act], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
-				pred_out, pred_info = self.pred_net(a_in, None if state is None else {"hidden": state["hidden_obs_pred_rnn"]}) # ! TODO check should
-				process_online_batch_info["hidden_obs_pred_rnn"] = pred_info["state"]["hidden"]
+				state_for_obs_pred = distill_state(state, {"hidden_pred_net_encoder": "hidden_encoder", "hidden_pred_net_decoder": "hidden_decoder"})
+				pred_out, pred_info = self.pred_net(a_in, state=state_for_obs_pred)
+				res_state = update_state(res_state, state_for_obs_pred, {"hidden_encoder": "hidden_pred_net_encoder", "hidden_decoder": "hidden_pred_net_decoder"})
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
 					a_in = pred_out.cpu()
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 					a_in = pred_info["feats"].cpu()
-				else:
-					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
-				process_online_batch_info["pred_output"] = pred_out
+				else: raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
+				if "is_first_step" not in batch.info:
+					pred_abs_error_online = ((pred_out - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
+					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
 			elif self.global_cfg.actor_input.obs_encode.turn_on:
 				raise NotImplementedError("stack_rnn + obs_encode not implemented")
 				encode_output, res_state = self.encode_net.normal_encode(a_in)
@@ -2151,7 +2181,9 @@ class TD3Runner(OfflineRLRunner):
 			a_in = torch.tensor(a_in, dtype=torch.float32).to(self.cfg.device)
 		
 		# train eval diff
-		a_ori, res_state = self.actor(a_in, state)
+		state_for_a = distill_state(state, {"hidden": "hidden"})
+		a_ori, actor_state = self.actor(a_in, state_for_a)
+		res_state = update_state(res_state, actor_state, {"hidden": "hidden"})
 		a_ori = a_ori[0]
 		if mode == "train":
 			noise = torch.tensor(self._noise(a_ori.shape), device=self.cfg.device)
@@ -2162,8 +2194,8 @@ class TD3Runner(OfflineRLRunner):
 			res = a_ori
 		else:
 			raise NotImplementedError
-		return res, res_state
-
+		return res, res_state if res_state else None
+	
 	def on_collect_end(self, **kwargs):
 		"""called after a step of data collection"""
 		if "rwd_sum_list" in kwargs and kwargs["rwd_sum_list"]:
@@ -2280,6 +2312,11 @@ class TD3Runner(OfflineRLRunner):
 			assert self.global_cfg.actor_input.history_num > 1, "stack_rnn requires history_num > 1, ususally, it would be 20,40,... since we process long history when running online."
 			assert self.global_cfg.actor_input.history_num > self.global_cfg.actor_input.burnin_num, "stack_rnn requires history_num > burnin_num, ususally, it could be a little larger than burnin_num"
 			idx_stack = utils.idx_stack(indices, buffer, self.global_cfg.actor_input.history_num, direction=self.global_cfg.actor_input.trace_direction) # (B, T)
+			if self.global_cfg.actor_input.rnn_idx_adjust_dis_to_start:
+				adjust_dis = self.global_cfg.actor_input.rnn_idx_adjust_dis_to_start 
+				adjust_dis = int(adjust_dis * self.global_cfg.actor_input.history_num) \
+				if isinstance(adjust_dis, float) else adjust_dis
+				idx_stack = self.adjust_idx_stack(idx_stack, adjust_dis, buffer)
 			del indices
 			idx_end = idx_stack[:,-1] # (B, )
 			batch_end = buffer[idx_end] # (B, *)
@@ -2320,21 +2357,29 @@ class TD3Runner(OfflineRLRunner):
 				reach_end = idx_stack == buffer.next(idx_stack) # (B, T)
 				batch_stack.valid_mask[reach_start==1] = 0
 				batch_stack.valid_mask[reach_end==1] = 0
-
 			else: raise ValueError("seq_mask should be True or False")
-			burn_in_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num) \
+			burnin_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num) \
 			if type(self.global_cfg.actor_input.burnin_num) == float \
 			else self.global_cfg.actor_input.burnin_num
-			batch_stack.valid_mask[:,:burn_in_num] = 0
-			# if trace direction == next
-			# if reach_start, all seq = true
+			
+			if self.global_cfg.actor_input.burnin_short_unlock_num: # burnin_short_unlock
+				burnin_unlock_num = int(self.global_cfg.actor_input.burnin_short_unlock_num * self.global_cfg.actor_input.history_num) \
+				if type(self.global_cfg.actor_input.burnin_short_unlock_num) == float \
+				else self.global_cfg.actor_input.burnin_short_unlock_num
+				# if idx start from < burnin_unlock_num, then unlock the whole sequence
+				idx_start = idx_stack[:,0] # (B, )
+				for _ in range(burnin_unlock_num): idx_start = buffer.prev(idx_start)
+				idx_burnin_unlock = idx_start == buffer.prev(idx_start) # (B, )
+			batch_stack.valid_mask[idx_burnin_unlock!=1,:burnin_num] = 0
+			
 			if self.global_cfg.actor_input.trace_direction == "next":
 				seq_reach_start = idx_stack[:,0] == buffer.prev(idx_stack[:,0])
 				batch_stack.valid_mask[seq_reach_start] = True
 			# obs_pred & obs_encode
 			if self.global_cfg.actor_input.obs_pred.turn_on:
+				keeped_keys += ["pred_out_cur", "obs_nodelay"]
 				batch_stack.pred_in_cur = batch_stack.a_in_cur
-				batch_stack.pred_in_next = batch_stack.a_in_next # TODO the following
+				batch_stack.pred_in_next = batch_stack.a_in_next
 				batch_stack.pred_out_cur, pred_info_cur = self.pred_net(batch_stack.pred_in_cur, state=None)
 				batch_stack.pred_out_next, pred_info_next = self.pred_net(batch_stack.pred_in_next, state=None)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
@@ -2597,6 +2642,26 @@ class TD3Runner(OfflineRLRunner):
 			historical_act = historical_act.reshape(historical_act.shape[0], -1) # (B, step*act_dim)
 		historical_act = torch.tensor(historical_act, device=device)
 		return historical_act
+
+	def adjust_idx_stack(self, idx_stack, adjust_dis, buffer):
+		"""
+		:param idx_stack: (B, T)
+		:param adjust_dis: int
+		:param buffer: the buffer
+		if the idx_stack start is < adjust_dis to the start of the buffer, then adjust it to the start
+		"""
+		idx_start = idx_stack[:, 0]
+		for _ in range(adjust_dis):
+			idx_start = buffer.prev(idx_start)
+		idx_to_adjust = idx_start == buffer.prev(idx_start)
+		idx_start_to_stack_list = []
+		idx_start_to_stack = idx_start.copy()
+		for i in range(idx_stack.shape[1]):
+			idx_start_to_stack_list.append(idx_start_to_stack)
+			idx_start_to_stack = buffer.next(idx_start_to_stack)
+		idx_stack_all_adjusted = np.stack(idx_start_to_stack_list, axis=1)
+		idx_stack[idx_to_adjust] = idx_stack_all_adjusted[idx_to_adjust]
+		return idx_stack
 
 
 

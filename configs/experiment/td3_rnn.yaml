@@ -10,18 +10,20 @@ defaults:
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
     history_merge_method: "stack_rnn" # cat_mlp or stack_rnn or none
-    obs_type: "oracle" # normal or oracle
-    seq_mask: false 
-    history_num: 5 # always > 2
+    history_num: 40 # always > 2
     burnin_num: 0.25 # only works for stack_rnn
+    burnin_short_unlock_num: 0.25 # when the history is shorter than this, the burnin will be unlocked, use 0 to do nothing, use float would times the history_num
+    rnn_idx_adjust_dis_to_start: 0.5 # only for rnn, when the idx_stack start is < this, the idx_stack will be adjusted to the start, use 0 to do nothing, use float would times the history_num
+    seq_mask: false 
     obs_pred: 
-      turn_on: false
+      turn_on: true 
       input_type: "obs" # obs or feat
       net_type: rnn # vae or mlp
       net:
         encoder_net: 
           rnn_layer_num: 1
           rnn_hidden_layer_size: 512
+          mlp_hidden_sizes: [512]
     obs_encode:
       turn_on: false
       feat_dim: 256
@@ -61,12 +63,13 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           dropout: 0.0
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
-    obs_type: "oracle" # normal or oracle
+    history_num: ${global_cfg.actor_input.history_num}
+    burnin_num: ${global_cfg.actor_input.burnin_num}
 trainer:
   batch_size: 128
 actor:
   net: 
-    rnn_layer_num: 1
+    rnn_layer_num: 0
     rnn_hidden_layer_size: 256
     mlp_hidden_sizes: [256]
 
