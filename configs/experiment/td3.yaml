@@ -45,8 +45,8 @@ env_max_step: 5000
 
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
-    history_merge_method: "none" # cat_mlp or stack_rnn or none
-    obs_type: "oracle" # normal or oracle
+    history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
+    obs_type: "normal" # normal or oracle
     trace_direction: "next" # prev or next
     custom_return_cal: false 
     seq_mask: false 
@@ -54,11 +54,11 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     burnin_num: 0.25 # only works for stack_rnn
     noise_act_debug: false
     obs_pred: 
-      turn_on: false
+      turn_on: true 
       feat_dim: 256
-      middle_detach: true
-      input_type: "feat" # obs or feat
-      net_type: vae # vae or mlp
+      middle_detach: false 
+      input_type: "obs" # obs or feat
+      net_type: mlp # vae or mlp
       norm_kl_loss_weight: 0.01
       auto_kl_target: 50
       pred_loss_weight: 0.1

@@ -379,7 +379,7 @@ class CustomSACPolicy(SACPolicy):
 
 		### pred/encode loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
-			pred_loss = (batch.pred_output_cur - batch.info["obs_nodelay"]) ** 2
+			pred_loss = (batch.pred_out_cur - batch.info["obs_nodelay"]) ** 2
 			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
 			pred_loss = pred_loss.mean()
 			combined_loss = actor_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
@@ -519,12 +519,12 @@ class CustomSACPolicy(SACPolicy):
 				# obs_pred & obs_encode
 				if self.global_cfg.actor_input.obs_pred.turn_on:
 					batch_end.pred_input_cur = batch_end.actor_input_cur
-					batch_end.pred_input_next = batch_end.actor_input_next
-					batch_end.pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
-					batch_end.pred_output_next, pred_info_next = self.pred_net(batch_end.pred_input_next)
+					batch_end.pred_in_next = batch_end.actor_input_next
+					batch_end.pred_out_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
+					batch_end.pred_out_next, pred_info_next = self.pred_net(batch_end.pred_in_next)
 					if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-						batch_end.actor_input_cur = batch_end.pred_output_cur
-						batch_end.actor_input_next = batch_end.pred_output_next
+						batch_end.actor_input_cur = batch_end.pred_out_cur
+						batch_end.actor_input_next = batch_end.pred_out_next
 					elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 						batch_end.actor_input_cur = pred_info_cur["feats"]
 						batch_end.actor_input_next = pred_info_next["feats"]
@@ -611,12 +611,12 @@ class CustomSACPolicy(SACPolicy):
 			# obs_pred & obs_encode
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				batch_stack.pred_input_cur = batch_stack.actor_input_cur
-				batch_stack.pred_input_next = batch_stack.actor_input_next # TODO the following
-				batch_stack.pred_output_cur, pred_info_cur = self.pred_net(batch_stack.pred_input_cur, state=None)
-				batch_stack.pred_output_next, pred_info_next = self.pred_net(batch_stack.pred_input_next, state=None)
+				batch_stack.pred_in_next = batch_stack.actor_input_next # TODO the following
+				batch_stack.pred_out_cur, pred_info_cur = self.pred_net(batch_stack.pred_input_cur, state=None)
+				batch_stack.pred_out_next, pred_info_next = self.pred_net(batch_stack.pred_in_next, state=None)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-					batch_stack.actor_input_cur = batch_stack.pred_output_cur # (B*T, *)
-					batch_stack.actor_input_next = batch_stack.pred_output_next # (B*T, *)
+					batch_stack.actor_input_cur = batch_stack.pred_out_cur # (B*T, *)
+					batch_stack.actor_input_next = batch_stack.pred_out_next # (B*T, *)
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 					batch_stack.actor_input_cur = pred_info_cur["feats"] # (B*T, *)
 					batch_stack.actor_input_next = pred_info_next["feats"]
@@ -1827,7 +1827,7 @@ class OfflineRLRunner(DefaultRLRunner):
 		super().start(cfg)
 
 		self.log("Init Components ...")
-		self.init_components()
+		self._init_components()
 
 		self.log("Initial Exploration ...")
 		self._initial_exploration()
@@ -1865,7 +1865,7 @@ class OfflineRLRunner(DefaultRLRunner):
 
 		self._end_all()
 
-	def init_components(self):
+	def _init_components(self):
 		cfg = self.cfg
 		env = self.env
 		self.global_cfg = cfg.global_cfg
@@ -1894,6 +1894,7 @@ class OfflineRLRunner(DefaultRLRunner):
 			self.progress.start()
 		self._noise = self.cfg.policy.exploration_noise
 		self._noise_clip = self.cfg.policy.noise_clip
+		if hasattr(self, "init_components"): self.init_components()
 
 	def _initial_exploration(self):
 		"""exploration before training and add to self.buf"""
@@ -2024,7 +2025,48 @@ class OfflineRLRunner(DefaultRLRunner):
 
 
 class TD3Runner(OfflineRLRunner):
-
+	
+	def init_components(self):
+		assert not (self.global_cfg.actor_input.obs_pred.turn_on and self.global_cfg.actor_input.obs_encode.turn_on), "obs_pred and obs_encode cannot be used at the same time"
+		
+		if self.global_cfg.actor_input.obs_pred.turn_on:
+			self.pred_net = self.global_cfg.actor_input.obs_pred.net(
+				state_shape=self.env.observation_space.shape,
+				action_shape=self.env.action_space.shape,
+				global_cfg=self.global_cfg,
+			)
+			self._pred_optim = self.global_cfg.actor_input.obs_pred.optim(
+				self.pred_net.parameters(),
+			)
+			if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				)], device=self.actor.device, requires_grad=True)
+				self._auto_kl_optim = self.global_cfg.actor_input.obs_pred.auto_kl_optim([self.kl_weight_log])
+			else:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				)], device=self.actor.device)
+		
+		if self.global_cfg.actor_input.obs_encode.turn_on:
+			self.encode_net = self.global_cfg.actor_input.obs_encode.net(
+				state_shape=self.env.observation_space.shape,
+				action_shape=self.env.action_space.shape,
+				global_cfg=self.global_cfg,
+			)
+			self._encode_optim = self.global_cfg.actor_input.obs_encode.optim(
+				self.encode_net.parameters(),
+			)
+			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+				)], device=self.actor.device, requires_grad=True)
+				self._auto_kl_optim = self.global_cfg.actor_input.obs_encode.auto_kl_optim([self.kl_weight_log])
+			else:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+				)], device=self.actor.device)
+	
 	def select_act_for_env(self, batch, state, mode=None):
 		a_in = batch.obs
 		process_online_batch_info = {}
@@ -2058,15 +2100,15 @@ class TD3Runner(OfflineRLRunner):
 						np.random.normal(size=batch.info["historical_act"].shape, loc=0, scale=1),
 					], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
-				pred_output, pred_info = self.pred_net(a_in)
+				pred_out, pred_info = self.pred_net(a_in)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-					a_in = pred_output.cpu()
+					a_in = pred_out.cpu()
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 					a_in = pred_info["feats"].cpu()
 				else:
 					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
-				process_online_batch_info["pred_output"] = pred_output
 			elif self.global_cfg.actor_input.obs_encode.turn_on:
+				raise NotImplementedError
 				encode_output, encode_info = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
@@ -2088,15 +2130,15 @@ class TD3Runner(OfflineRLRunner):
 				latest_act = batch.info["historical_act"][-self.actor.act_num:]
 				a_in = np.concatenate([a_in, latest_act], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
-				pred_output, pred_info = self.pred_net(a_in, None if state is None else {"hidden": state["hidden_obs_pred_rnn"]}) # ! TODO check should
+				pred_out, pred_info = self.pred_net(a_in, None if state is None else {"hidden": state["hidden_obs_pred_rnn"]}) # ! TODO check should
 				process_online_batch_info["hidden_obs_pred_rnn"] = pred_info["state"]["hidden"]
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-					a_in = pred_output.cpu()
+					a_in = pred_out.cpu()
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 					a_in = pred_info["feats"].cpu()
 				else:
 					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
-				process_online_batch_info["pred_output"] = pred_output
+				process_online_batch_info["pred_output"] = pred_out
 			elif self.global_cfg.actor_input.obs_encode.turn_on:
 				raise NotImplementedError("stack_rnn + obs_encode not implemented")
 				encode_output, res_state = self.encode_net.normal_encode(a_in)
@@ -2131,6 +2173,7 @@ class TD3Runner(OfflineRLRunner):
 			for i in range(len(kwargs["ep_len_list"])): self.record("collect/ep_len", kwargs["ep_len_list"][i])
 
 	def pre_update_process(self, batch, indices):
+		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_next", "done", "terminated", "truncated", "rew", "act", "valid_mask"]
 		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
 		# obs_nodelay # TODO ! bug fisrt step should use original
 		batch.obs_nodelay = self.buf[self.buf.prev(indices)].info["obs_next_nodelay"]
@@ -2172,13 +2215,15 @@ class TD3Runner(OfflineRLRunner):
 				else: raise ValueError("trace_direction should be next or prev")
 				# obs_pred & obs_encode
 				if self.global_cfg.actor_input.obs_pred.turn_on:
-					batch_end.pred_input_cur = batch_end.a_in_cur
-					batch_end.pred_input_next = batch_end.a_in_next
-					batch_end.pred_output_cur, pred_info_cur = self.pred_net(batch_end.pred_input_cur)
-					batch_end.pred_output_next, pred_info_next = self.pred_net(batch_end.pred_input_next)
+					keeped_keys += ["pred_out_cur", "obs_nodelay"]
+					batch_end.obs_nodelay = batch_end.info["obs_nodelay"]
+					batch_end.pred_in_cur = batch_end.a_in_cur
+					batch_end.pred_in_next = batch_end.a_in_next
+					batch_end.pred_out_cur, pred_info_cur = self.pred_net(batch_end.pred_in_cur)
+					batch_end.pred_out_next, pred_info_next = self.pred_net(batch_end.pred_in_next)
 					if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-						batch_end.a_in_cur = batch_end.pred_output_cur
-						batch_end.a_in_next = batch_end.pred_output_next
+						batch_end.a_in_cur = batch_end.pred_out_cur
+						batch_end.a_in_next = batch_end.pred_out_next
 					elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 						batch_end.a_in_cur = pred_info_cur["feats"]
 						batch_end.a_in_next = pred_info_next["feats"]
@@ -2189,6 +2234,7 @@ class TD3Runner(OfflineRLRunner):
 						batch_end.a_in_cur = batch_end.a_in_cur.detach()
 						batch_end.a_in_next = batch_end.a_in_next.detach()
 					if self.global_cfg.actor_input.obs_pred.net_type == "vae":
+						keeped_keys += ["pred_info_cur_mu", "pred_info_cur_logvar"]
 						batch_end.pred_info_cur_mu = pred_info_cur["mu"]
 						batch_end.pred_info_cur_logvar = pred_info_cur["logvar"]
 				if self.global_cfg.actor_input.obs_encode.turn_on:
@@ -2284,13 +2330,13 @@ class TD3Runner(OfflineRLRunner):
 				batch_stack.valid_mask[seq_reach_start] = True
 			# obs_pred & obs_encode
 			if self.global_cfg.actor_input.obs_pred.turn_on:
-				batch_stack.pred_input_cur = batch_stack.a_in_cur
-				batch_stack.pred_input_next = batch_stack.a_in_next # TODO the following
-				batch_stack.pred_output_cur, pred_info_cur = self.pred_net(batch_stack.pred_input_cur, state=None)
-				batch_stack.pred_output_next, pred_info_next = self.pred_net(batch_stack.pred_input_next, state=None)
+				batch_stack.pred_in_cur = batch_stack.a_in_cur
+				batch_stack.pred_in_next = batch_stack.a_in_next # TODO the following
+				batch_stack.pred_out_cur, pred_info_cur = self.pred_net(batch_stack.pred_in_cur, state=None)
+				batch_stack.pred_out_next, pred_info_next = self.pred_net(batch_stack.pred_in_next, state=None)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-					batch_stack.a_in_cur = batch_stack.pred_output_cur # (B*T, *)
-					batch_stack.a_in_next = batch_stack.pred_output_next # (B*T, *)
+					batch_stack.a_in_cur = batch_stack.pred_out_cur # (B*T, *)
+					batch_stack.a_in_next = batch_stack.pred_out_next # (B*T, *)
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 					batch_stack.a_in_cur = pred_info_cur["feats"] # (B*T, *)
 					batch_stack.a_in_next = pred_info_next["feats"]
@@ -2347,7 +2393,6 @@ class TD3Runner(OfflineRLRunner):
 		else: raise NotImplementedError
 
 		# only keep res keys
-		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_next", "done", "terminated", "truncated", "rew", "act", "valid_mask"]
 		for k in list(batch.keys()): 
 			if k not in keeped_keys: batch.pop(k)
 		return batch, indices
@@ -2362,6 +2407,11 @@ class TD3Runner(OfflineRLRunner):
 			actor_info_ = self.update_actor(batch, indices)
 			self.record("learn/actor_loss", actor_info_["actor_loss"])
 			self.exploration_noise *= self.cfg.policy.noise_decay_rate
+		
+		# update pred/encode
+		if self.global_cfg.actor_input.obs_pred.turn_on: self.update_pred_net(batch, indices)
+		if self.global_cfg.actor_input.obs_encode.turn_on: self.update_encode_net(batch, indices)
+		
 		self.soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
 		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
 		self.soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
@@ -2413,11 +2463,68 @@ class TD3Runner(OfflineRLRunner):
 		actor_loss = (actor_loss * batch.valid_mask.flatten()).mean()
 		actor_loss = -actor_loss.mean()
 		self.actor_optim.zero_grad()
-		actor_loss.backward()
+		# keep graph if there is a pred loss or encode loss
+		retain_graph = self.global_cfg.actor_input.obs_pred.turn_on or self.global_cfg.actor_input.obs_encode.turn_on
+		actor_loss.backward(retain_graph=retain_graph)
 		self.actor_optim.step()
 		return {
 			"actor_loss": actor_loss.cpu().item()
 		}
+
+	def update_pred_net(self, batch, indices):
+		pred_loss = (batch.pred_out_cur - batch.obs_nodelay) ** 2
+		pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1) * self.global_cfg.actor_input.obs_pred.pred_loss_weight
+		pred_loss = pred_loss.mean()
+		self.record("learn/obs_pred/pred_loss", pred_loss.item())
+		self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
+		if self.global_cfg.actor_input.obs_pred.net_type == "vae":
+			kl_loss = kl_divergence(
+				batch.pred_info_cur_mu,
+				batch.pred_info_cur_logvar,
+				torch.zeros_like(batch.pred_info_cur_mu),
+				torch.zeros_like(batch.pred_info_cur_logvar),
+			)
+			kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
+			kl_loss = kl_loss.mean()
+			combined_loss = combined_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+			self.record("learn/obs_pred/loss_kl", kl_loss.item())
+			if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+				kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+				self._auto_kl_optim.zero_grad()
+				kl_weight_loss.backward()
+				self._auto_kl_optim.step()
+				self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().numpy())
+				self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().numpy())
+		self._pred_optim.zero_grad()
+		pred_loss.backward()
+		self._pred_optim.step()
+	
+	def update_encode_net(self, batch, indices):
+		kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
+		kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
+		kl_loss = kl_loss.mean()
+		combined_loss = actor_loss + kl_loss * torch.exp(self.kl_weight_log).detach()
+		to_logs["learn/obs_encode/loss_kl"] = kl_loss.item()
+		if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+			batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_output_cur)
+			pred_loss = (batch.pred_obs_output_cur - batch.info["obs_nodelay"]) ** 2
+			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
+			pred_loss = pred_loss.mean()
+			to_logs["learn/obs_encode/loss_pred"] = pred_loss.item()
+			to_logs["learn/obs_encode/abs_error_pred"] = pred_loss.item() ** 0.5
+			combined_loss = actor_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
+		self.actor_optim.zero_grad()
+		self._encode_optim.zero_grad()
+		combined_loss.backward()
+		self.actor_optim.step()
+		self._encode_optim.step()
+		if self.global_cfg.actor_input.obs_encode.auto_kl_target:
+			kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+			self._auto_kl_optim.zero_grad()
+			kl_weight_loss.backward()
+			self._auto_kl_optim.step()
+			to_logs["learn/obs_encode/kl_weight_log"] = self.kl_weight_log.detach().cpu().numpy()
+			to_logs["learn/obs_encode/kl_weight"] = torch.exp(self.kl_weight_log).detach().cpu().numpy()
 
 	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
 		"""Softly update the parameters of target module towards the parameters \
@@ -2430,8 +2537,6 @@ class TD3Runner(OfflineRLRunner):
 		self.record("eval/rwd_mean", kwargs["rwd_mean"])
 		self.record("eval/len_mean", kwargs["len_mean"])
 		self.record("epoch", self.epoch_cnt)
-
-
 
 	def get_obs_base(self, batch, a_or_c, stage):
 		""" return the obs base for actor and critic
