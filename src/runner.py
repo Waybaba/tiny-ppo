@@ -2510,7 +2510,6 @@ class TD3Runner(OfflineRLRunner):
 		combined_loss = combined_loss + kl_loss * torch.exp(self.kl_weight_log).detach()
 		self.record("learn/obs_encode/loss_kl", kl_loss.item())
 		if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-			batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_out_cur)
 			pred_loss = (batch.pred_obs_output_cur - batch.obs_nodelay) ** 2
 			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
 			pred_loss = pred_loss.mean()
