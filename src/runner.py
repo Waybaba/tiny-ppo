@@ -415,13 +415,13 @@ class CustomSACPolicy(SACPolicy):
 			combined_loss = actor_loss + kl_loss * torch.exp(self.kl_weight_log).detach()
 			to_logs["learn/obs_encode/loss_kl"] = kl_loss.item()
 			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-				batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_output_cur)
+				batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_out_cur)
 				pred_loss = (batch.pred_obs_output_cur - batch.info["obs_nodelay"]) ** 2
 				pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
 				pred_loss = pred_loss.mean()
 				to_logs["learn/obs_encode/loss_pred"] = pred_loss.item()
 				to_logs["learn/obs_encode/abs_error_pred"] = pred_loss.item() ** 0.5
-				combined_loss = actor_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
+				combined_loss = combined_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
 			self.actor_optim.zero_grad()
 			self._encode_optim.zero_grad()
 			combined_loss.backward()
@@ -538,10 +538,10 @@ class CustomSACPolicy(SACPolicy):
 						batch_end.pred_info_cur_mu = pred_info_cur["mu"]
 						batch_end.pred_info_cur_logvar = pred_info_cur["logvar"]
 				if self.global_cfg.actor_input.obs_encode.turn_on:
-					batch_end.encode_obs_input_cur = batch_end.actor_input_cur
-					batch_end.encode_obs_input_next = batch_end.actor_input_next
-					batch_end.encode_obs_output_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_input_cur)
-					batch_end.encode_obs_output_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_input_next)
+					batch_end.encode_obs_in_cur = batch_end.actor_input_cur
+					batch_end.encode_obs_in_next = batch_end.actor_input_next
+					batch_end.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_in_cur)
+					batch_end.encode_obs_out_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_in_next)
 					batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
 					batch_end.encode_oracle_obs_output_next, encode_oracle_obs_info_next = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
 					batch_end.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
@@ -552,12 +552,12 @@ class CustomSACPolicy(SACPolicy):
 						batch_end.actor_input_cur = batch_end.encode_oracle_obs_output_cur
 						batch_end.actor_input_next = batch_end.encode_oracle_obs_output_next
 					elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
-						batch_end.actor_input_cur = batch_end.encode_obs_output_cur
-						batch_end.actor_input_next = batch_end.encode_obs_output_next
+						batch_end.actor_input_cur = batch_end.encode_obs_out_cur
+						batch_end.actor_input_next = batch_end.encode_obs_out_next
 					else:
 						raise ValueError("batch_end error")
 					if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-						batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_output_cur)
+						batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_out_cur)
 					if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 						batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
 						batch_end.actor_input_next = batch_end.actor_input_next.detach()
@@ -632,10 +632,10 @@ class CustomSACPolicy(SACPolicy):
 					batch_stack.pred_info_cur_logvar = pred_info_cur["logvar"]
 			if self.global_cfg.actor_input.obs_encode.turn_on:
 				raise NotImplementedError("obs_encode is not implemented yet")
-				batch_end.encode_obs_input_cur = batch_end.actor_input_cur
-				batch_end.encode_obs_input_next = batch_end.actor_input_next
-				batch_end.encode_obs_output_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_input_cur)
-				batch_end.encode_obs_output_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_input_next)
+				batch_end.encode_obs_in_cur = batch_end.actor_input_cur
+				batch_end.encode_obs_in_next = batch_end.actor_input_next
+				batch_end.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_in_cur)
+				batch_end.encode_obs_out_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_in_next)
 				batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
 				batch_end.encode_oracle_obs_output_next, encode_oracle_obs_info_next = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
 				batch_end.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
@@ -646,12 +646,12 @@ class CustomSACPolicy(SACPolicy):
 					batch_end.actor_input_cur = batch_end.encode_oracle_obs_output_cur
 					batch_end.actor_input_next = batch_end.encode_oracle_obs_output_next
 				elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
-					batch_end.actor_input_cur = batch_end.encode_obs_output_cur
-					batch_end.actor_input_next = batch_end.encode_obs_output_next
+					batch_end.actor_input_cur = batch_end.encode_obs_out_cur
+					batch_end.actor_input_next = batch_end.encode_obs_out_next
 				else:
 					raise ValueError("batch_end error")
 				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-					batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_output_cur)
+					batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_out_cur)
 				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 					batch_end.actor_input_cur = batch_end.actor_input_cur.detach()
 					batch_end.actor_input_next = batch_end.actor_input_next.detach()
@@ -2108,7 +2108,6 @@ class TD3Runner(OfflineRLRunner):
 				else:
 					raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
 			elif self.global_cfg.actor_input.obs_encode.turn_on:
-				raise NotImplementedError
 				encode_output, encode_info = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
@@ -2238,10 +2237,12 @@ class TD3Runner(OfflineRLRunner):
 						batch_end.pred_info_cur_mu = pred_info_cur["mu"]
 						batch_end.pred_info_cur_logvar = pred_info_cur["logvar"]
 				if self.global_cfg.actor_input.obs_encode.turn_on:
-					batch_end.encode_obs_input_cur = batch_end.a_in_cur
-					batch_end.encode_obs_input_next = batch_end.a_in_next
-					batch_end.encode_obs_output_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_input_cur)
-					batch_end.encode_obs_output_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_input_next)
+					keeped_keys += ["encode_oracle_info_cur_mu","encode_oracle_info_cur_logvar", "encode_normal_info_cur_mu", "encode_normal_info_cur_logvar"]
+					batch_end.obs_nodelay = batch_end.info["obs_nodelay"]
+					batch_end.encode_obs_in_cur = batch_end.a_in_cur
+					batch_end.encode_obs_in_next = batch_end.a_in_next
+					batch_end.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_in_cur)
+					batch_end.encode_obs_out_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_in_next)
 					batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
 					batch_end.encode_oracle_obs_output_next, encode_oracle_obs_info_next = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
 					batch_end.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
@@ -2252,12 +2253,14 @@ class TD3Runner(OfflineRLRunner):
 						batch_end.a_in_cur = batch_end.encode_oracle_obs_output_cur
 						batch_end.a_in_next = batch_end.encode_oracle_obs_output_next
 					elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
-						batch_end.a_in_cur = batch_end.encode_obs_output_cur
-						batch_end.a_in_next = batch_end.encode_obs_output_next
+						batch_end.a_in_cur = batch_end.encode_obs_out_cur
+						batch_end.a_in_next = batch_end.encode_obs_out_next
 					else:
 						raise ValueError("batch_end error")
 					if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-						batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_output_cur)
+						keeped_keys += ["obs_nodelay", "pred_obs_output_cur"]
+						batch_end.obs_nodelay = batch_end.info["obs_nodelay"]
+						batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_out_cur)
 					if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 						batch_end.a_in_cur = batch_end.a_in_cur.detach()
 						batch_end.a_in_next = batch_end.a_in_next.detach()
@@ -2352,10 +2355,10 @@ class TD3Runner(OfflineRLRunner):
 					batch_stack.pred_info_cur_logvar = pred_info_cur["logvar"]
 			if self.global_cfg.actor_input.obs_encode.turn_on:
 				raise NotImplementedError("obs_encode is not implemented yet")
-				batch_end.encode_obs_input_cur = batch_end.a_in_cur
-				batch_end.encode_obs_input_next = batch_end.a_in_next
-				batch_end.encode_obs_output_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_input_cur)
-				batch_end.encode_obs_output_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_input_next)
+				batch_end.encode_obs_in_cur = batch_end.a_in_cur
+				batch_end.encode_obs_in_next = batch_end.a_in_next
+				batch_end.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_in_cur)
+				batch_end.encode_obs_out_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_in_next)
 				batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
 				batch_end.encode_oracle_obs_output_next, encode_oracle_obs_info_next = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
 				batch_end.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
@@ -2366,12 +2369,12 @@ class TD3Runner(OfflineRLRunner):
 					batch_end.a_in_cur = batch_end.encode_oracle_obs_output_cur
 					batch_end.a_in_next = batch_end.encode_oracle_obs_output_next
 				elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
-					batch_end.a_in_cur = batch_end.encode_obs_output_cur
-					batch_end.a_in_next = batch_end.encode_obs_output_next
+					batch_end.a_in_cur = batch_end.encode_obs_out_cur
+					batch_end.a_in_next = batch_end.encode_obs_out_next
 				else:
 					raise ValueError("batch_end error")
 				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-					batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_output_cur)
+					batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_out_cur)
 				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 					batch_end.a_in_cur = batch_end.a_in_cur.detach()
 					batch_end.a_in_next = batch_end.actor_input_next.detach()
@@ -2500,31 +2503,30 @@ class TD3Runner(OfflineRLRunner):
 		self._pred_optim.step()
 	
 	def update_encode_net(self, batch, indices):
+		combined_loss = 0.
 		kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
 		kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
 		kl_loss = kl_loss.mean()
-		combined_loss = actor_loss + kl_loss * torch.exp(self.kl_weight_log).detach()
-		to_logs["learn/obs_encode/loss_kl"] = kl_loss.item()
+		combined_loss = combined_loss + kl_loss * torch.exp(self.kl_weight_log).detach()
+		self.record("learn/obs_encode/loss_kl", kl_loss.item())
 		if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-			batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_output_cur)
-			pred_loss = (batch.pred_obs_output_cur - batch.info["obs_nodelay"]) ** 2
+			batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_out_cur)
+			pred_loss = (batch.pred_obs_output_cur - batch.obs_nodelay) ** 2
 			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
 			pred_loss = pred_loss.mean()
-			to_logs["learn/obs_encode/loss_pred"] = pred_loss.item()
-			to_logs["learn/obs_encode/abs_error_pred"] = pred_loss.item() ** 0.5
-			combined_loss = actor_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
-		self.actor_optim.zero_grad()
+			self.record("learn/obs_encode/loss_pred", pred_loss.item())
+			self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
+			combined_loss = combined_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
 		self._encode_optim.zero_grad()
 		combined_loss.backward()
-		self.actor_optim.step()
 		self._encode_optim.step()
 		if self.global_cfg.actor_input.obs_encode.auto_kl_target:
 			kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
 			self._auto_kl_optim.zero_grad()
 			kl_weight_loss.backward()
 			self._auto_kl_optim.step()
-			to_logs["learn/obs_encode/kl_weight_log"] = self.kl_weight_log.detach().cpu().numpy()
-			to_logs["learn/obs_encode/kl_weight"] = torch.exp(self.kl_weight_log).detach().cpu().numpy()
+			self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+			self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
 
 	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
 		"""Softly update the parameters of target module towards the parameters \
