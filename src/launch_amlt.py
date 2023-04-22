@@ -286,6 +286,7 @@ class AmltLauncher:
                 type_cur = 2
 
             else: # args
+                # ! case actor.net.mlp_hidden_sizes=[256,256] would be treated as sweep 
                 if "," not in arg and "#" not in arg:
                     if "=" not in arg: 
                         self.process_others(arg)

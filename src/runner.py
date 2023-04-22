@@ -2274,9 +2274,9 @@ class TD3Runner(OfflineRLRunner):
 					batch_end.encode_obs_in_cur = batch_end.a_in_cur
 					batch_end.encode_obs_in_next = batch_end.a_in_next
 					batch_end.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_in_cur)
-					batch_end.encode_obs_out_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_in_next)
+					batch_end.encode_obs_out_next, _ = self.encode_net.normal_encode(batch_end.encode_obs_in_next)
 					batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
-					batch_end.encode_oracle_obs_output_next, encode_oracle_obs_info_next = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
+					batch_end.encode_oracle_obs_output_next, _ = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
 					batch_end.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
 					batch_end.encode_normal_info_cur_logvar = encode_obs_info_cur["logvar"]
 					batch_end.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
@@ -2457,8 +2457,8 @@ class TD3Runner(OfflineRLRunner):
 			self.exploration_noise *= self.cfg.policy.noise_decay_rate
 		
 		# update pred/encode
-		if self.global_cfg.actor_input.obs_pred.turn_on: self.update_pred_net(batch, indices)
-		if self.global_cfg.actor_input.obs_encode.turn_on: self.update_encode_net(batch, indices)
+		# if self.global_cfg.actor_input.obs_pred.turn_on: self.update_pred_net(batch, indices)
+		# if self.global_cfg.actor_input.obs_encode.turn_on: self.update_encode_net(batch, indices)
 		
 		self.soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
 		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
@@ -2511,66 +2511,67 @@ class TD3Runner(OfflineRLRunner):
 		actor_loss = (actor_loss * batch.valid_mask.flatten()).mean()
 		actor_loss = -actor_loss.mean()
 		self.actor_optim.zero_grad()
-		# keep graph if there is a pred loss or encode loss
-		retain_graph = self.global_cfg.actor_input.obs_pred.turn_on or self.global_cfg.actor_input.obs_encode.turn_on
-		actor_loss.backward(retain_graph=retain_graph)
-		self.actor_optim.step()
-		return {
-			"actor_loss": actor_loss.cpu().item()
-		}
-
-	def update_pred_net(self, batch, indices):
-		pred_loss = (batch.pred_out_cur - batch.obs_nodelay) ** 2
-		pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1) * self.global_cfg.actor_input.obs_pred.pred_loss_weight
-		pred_loss = pred_loss.mean()
-		self.record("learn/obs_pred/pred_loss", pred_loss.item())
-		self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
-		if self.global_cfg.actor_input.obs_pred.net_type == "vae":
-			kl_loss = kl_divergence(
-				batch.pred_info_cur_mu,
-				batch.pred_info_cur_logvar,
-				torch.zeros_like(batch.pred_info_cur_mu),
-				torch.zeros_like(batch.pred_info_cur_logvar),
-			)
+		combined_loss = 0. + actor_loss
+		# add pred loss
+		if self.global_cfg.actor_input.obs_pred.turn_on:
+			pred_loss = (batch.pred_out_cur - batch.obs_nodelay) ** 2
+			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1) 
+			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
+			self.record("learn/obs_pred/pred_loss", pred_loss.item())
+			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
+			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
+				kl_loss = kl_divergence(
+					batch.pred_info_cur_mu,
+					batch.pred_info_cur_logvar,
+					torch.zeros_like(batch.pred_info_cur_mu),
+					torch.zeros_like(batch.pred_info_cur_logvar),
+				)
+				kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
+				kl_loss = kl_loss.mean()
+				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				self.record("learn/obs_pred/loss_kl", kl_loss.item())
+				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+					self._auto_kl_optim.zero_grad()
+					kl_weight_loss.backward()
+					self._auto_kl_optim.step()
+					self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		# add encode loss
+		elif self.global_cfg.actor_input.obs_encode.turn_on:
+			combined_loss = 0. + actor_loss
+			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
 			kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
 			kl_loss = kl_loss.mean()
-			combined_loss = combined_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
-			self.record("learn/obs_pred/loss_kl", kl_loss.item())
-			if self.global_cfg.actor_input.obs_pred.auto_kl_target:
-				kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
+			self.record("learn/obs_encode/loss_kl", kl_loss.item())
+			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+				pred_loss = (batch.pred_obs_output_cur - batch.obs_nodelay) ** 2
+				pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
+				pred_loss = pred_loss.mean()
+				self.record("learn/obs_encode/loss_pred", pred_loss.item())
+				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
+				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
+			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
+				kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
-				self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().numpy())
-				self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().numpy())
-		self._pred_optim.zero_grad()
-		pred_loss.backward()
-		self._pred_optim.step()
-	
-	def update_encode_net(self, batch, indices):
-		combined_loss = 0.
-		kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
-		kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
-		kl_loss = kl_loss.mean()
-		combined_loss = combined_loss + kl_loss * torch.exp(self.kl_weight_log).detach()
-		self.record("learn/obs_encode/loss_kl", kl_loss.item())
-		if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-			pred_loss = (batch.pred_obs_output_cur - batch.obs_nodelay) ** 2
-			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
-			pred_loss = pred_loss.mean()
-			self.record("learn/obs_encode/loss_pred", pred_loss.item())
-			self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
-			combined_loss = combined_loss + pred_loss * self.global_cfg.actor_input.obs_pred.pred_loss_weight
-		self._encode_optim.zero_grad()
+				self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+				self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		
+		# backward and optim
+		self.actor_optim.zero_grad()
+		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.zero_grad()
+		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.zero_grad()
 		combined_loss.backward()
-		self._encode_optim.step()
-		if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-			kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
-			self._auto_kl_optim.zero_grad()
-			kl_weight_loss.backward()
-			self._auto_kl_optim.step()
-			self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-			self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.step()
+		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.step()
+		self.actor_optim.step()
+
+		return {
+			"actor_loss": actor_loss.cpu().item()
+		}
 
 	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
 		"""Softly update the parameters of target module towards the parameters \
