@@ -57,7 +57,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       middle_detach: false 
       input_type: "feat" # obs or feat
       net_type: mlp # vae or mlp
-      norm_kl_loss_weight: 0.01
+      norm_kl_loss_weight: 10.0
       auto_kl_target: 50
       pred_loss_weight: 0.1
       auto_kl_optim:
@@ -94,9 +94,9 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       feat_dim: 256
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
       before_policy_detach: false # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
-      norm_kl_loss_weight: 0.01
+      norm_kl_loss_weight: 0.1
       auto_kl_target: 50
-      pred_loss_weight: 0.
+      pred_loss_weight: 0.1
       optim:
         _target_: torch.optim.Adam
         _partial_: true

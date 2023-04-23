@@ -66,6 +66,18 @@ def kl_divergence(mu1, logvar1, mu2, logvar2):
 	kl = 0.5 * (logvar2 - logvar1 + (torch.exp(logvar1) + (mu1 - mu2).pow(2)) / torch.exp(logvar2) - 1)
 	return kl.sum(dim=-1)
 
+def apply_mask(tensor, mask):
+    # Ensure the mask tensor and the input tensor have the same starting dimensions
+    assert mask.shape == tensor.shape[:len(mask.shape)], "Mask and tensor dimensions mismatch"
+
+    # Reshape the mask tensor to have the same number of dimensions as the input tensor
+    mask_reshaped = mask.view(*mask.shape, *([1] * (tensor.dim() - len(mask.shape))))
+
+    # Multiply the input tensor by the reshaped mask
+    masked_tensor = tensor * mask_reshaped
+
+    return masked_tensor
+
 # policy
 class AsyncACDDPGPolicy(DDPGPolicy):
 	@staticmethod
@@ -2489,7 +2501,8 @@ class TD3Runner(OfflineRLRunner):
 		F.mse_loss(self.critic2(
 			torch.cat([batch.c_in_cur, batch.act],-1)
 		)[0].flatten(), target_q, reduce=False)
-		critic_loss = (critic_loss * batch.valid_mask.flatten()).mean()
+		# use app
+		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
 
 		self.critic1_optim.zero_grad()
 		self.critic2_optim.zero_grad()
@@ -2507,15 +2520,12 @@ class TD3Runner(OfflineRLRunner):
 			batch.c_in_cur, 
 			self.actor(batch.a_in_cur, state=None)[0][0]
 		],-1))
-		actor_loss = actor_loss.flatten()
-		actor_loss = (actor_loss * batch.valid_mask.flatten()).mean()
-		actor_loss = -actor_loss.mean()
-		self.actor_optim.zero_grad()
+		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss = 0. + actor_loss
 		# add pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
 			pred_loss = (batch.pred_out_cur - batch.obs_nodelay) ** 2
-			pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1) 
+			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
 			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
 			self.record("learn/obs_pred/pred_loss", pred_loss.item())
 			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
@@ -2526,7 +2536,7 @@ class TD3Runner(OfflineRLRunner):
 					torch.zeros_like(batch.pred_info_cur_mu),
 					torch.zeros_like(batch.pred_info_cur_logvar),
 				)
-				kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
+				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
 				kl_loss = kl_loss.mean()
 				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
 				self.record("learn/obs_pred/loss_kl", kl_loss.item())
@@ -2539,16 +2549,14 @@ class TD3Runner(OfflineRLRunner):
 					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
 		# add encode loss
 		elif self.global_cfg.actor_input.obs_encode.turn_on:
-			combined_loss = 0. + actor_loss
 			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
-			kl_loss = kl_loss * batch.valid_mask.unsqueeze(-1)
+			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
 			kl_loss = kl_loss.mean()
 			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
 			self.record("learn/obs_encode/loss_kl", kl_loss.item())
 			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
 				pred_loss = (batch.pred_obs_output_cur - batch.obs_nodelay) ** 2
-				pred_loss = pred_loss * batch.valid_mask.unsqueeze(-1)
-				pred_loss = pred_loss.mean()
+				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
 				self.record("learn/obs_encode/loss_pred", pred_loss.item())
 				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
 				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
