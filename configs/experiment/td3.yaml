@@ -11,10 +11,11 @@ defaults:
 # common - for all tasks (task_name, tags, output_dir, device)
 
 buffer: 
-  _target_: tianshou.data.ReplayBuffer
+  _target_: src.runner.ReplayBuffer
   size: 1000000
+  seq_len: ${global_cfg.actor_input.history_num}
 trainer:
-  batch_size: 2048 
+  batch_size: 64
   test_in_train: false
   episode_per_test: 10
   max_epoch: 200
@@ -49,7 +50,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_type: "normal" # normal or oracle
     trace_direction: "prev" # prev or next
     custom_return_cal: false 
-    history_num: ${env.delay}
+    history_num: 32
     noise_act_debug: false
     obs_pred:
       turn_on: false 

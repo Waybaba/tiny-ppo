@@ -66,7 +66,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     history_num: ${global_cfg.actor_input.history_num}
     burnin_num: ${global_cfg.actor_input.burnin_num}
 trainer:
-  batch_size: 128
+  batch_size: 64 
 actor:
   net: 
     rnn_layer_num: 0

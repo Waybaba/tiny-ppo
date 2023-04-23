@@ -8,7 +8,7 @@ import torch
 import wandb
 import numpy as np
 from tianshou.policy import SACPolicy
-from typing import Any, Dict, Optional, Sequence, Tuple, Type, Union, Callable
+from typing import Any, Dict, Optional, Sequence, Tuple, Type, Union, Callable, List
 import numpy as np
 import torch
 from torch import nn
@@ -52,7 +52,6 @@ def update_state(state_dict, state_for_update, key_maps):
 		if k in state_for_update: res[v] = state_for_update[k]
 	return res
 
-
 def kl_divergence(mu1, logvar1, mu2, logvar2):
 	"""
 	mu1, logvar1: mean and log variance of the first Gaussian distribution
@@ -67,16 +66,92 @@ def kl_divergence(mu1, logvar1, mu2, logvar2):
 	return kl.sum(dim=-1)
 
 def apply_mask(tensor, mask):
-    # Ensure the mask tensor and the input tensor have the same starting dimensions
-    assert mask.shape == tensor.shape[:len(mask.shape)], "Mask and tensor dimensions mismatch"
+	# Ensure the mask tensor and the input tensor have the same starting dimensions
+	assert mask.shape == tensor.shape[:len(mask.shape)], "Mask and tensor dimensions mismatch"
 
-    # Reshape the mask tensor to have the same number of dimensions as the input tensor
-    mask_reshaped = mask.view(*mask.shape, *([1] * (tensor.dim() - len(mask.shape))))
+	# Reshape the mask tensor to have the same number of dimensions as the input tensor
+	mask_reshaped = mask.view(*mask.shape, *([1] * (tensor.dim() - len(mask.shape))))
 
-    # Multiply the input tensor by the reshaped mask
-    masked_tensor = tensor * mask_reshaped
+	# Multiply the input tensor by the reshaped mask
+	masked_tensor = tensor * mask_reshaped
 
-    return masked_tensor
+	return masked_tensor
+
+class ReplayBuffer(tianshou.data.ReplayBuffer):
+	def __init__(
+		self,
+		size: int,
+		stack_num: int = 1,
+		ignore_obs_next: bool = False,
+		save_only_last_obs: bool = False,
+		sample_avail: bool = False,
+		seq_len: int = 0, # for ReMaster
+		**kwargs: Any,  # otherwise PrioritizedVectorReplayBuffer will cause TypeError
+	) -> None:
+		super().__init__(size, stack_num, ignore_obs_next, save_only_last_obs, sample_avail, **kwargs)
+		assert seq_len > 0, "seq_len should be non-negative"
+		self._seq_len = seq_len
+		self._remaster_idx_buf = []
+		self._remaster_idx_buf += [None for _ in range(self._seq_len - 1)]
+	
+	def add(
+		self,
+		batch: Batch,
+		buffer_ids: Optional[Union[np.ndarray, List[int]]] = None
+	) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+		idx = self._index
+		res = super().add(batch, buffer_ids)
+		batch = self[idx]
+		self._remaster_idx_buf.append(idx)
+		if batch.done:
+			self._remaster_idx_buf += [None for _ in range(self._seq_len - 1)]
+		return res
+
+	def sample_indices(self, batch_size: int) -> np.ndarray:
+		# raise ValueError("For ReMaster Buffer, please use sample_indices_remaster() instead")
+		return super().sample_indices(batch_size)
+
+	def sample_indices_remaster(self, batch_size: int, seq_len: int) -> Tuple[np.ndarray, np.ndarray]:
+		"""
+		Args:
+			batch_size: number of sequences to sample
+			seq_len: length of each sequence
+		"""
+		assert seq_len == self._seq_len, "seq_len should be equal to self._seq_len"
+		buf = np.array(self._remaster_idx_buf)
+		idx_start = np.random.randint(0, len(buf) - seq_len, batch_size) # B
+		idx_stack = np.array([np.arange(idx_start[i], idx_start[i] + seq_len) for i in range(batch_size)]) # B, L
+		valid_mask = buf[idx_stack] != None # B, L
+
+		# this must be at least one valid index in each sequence
+		assert np.all(valid_mask.sum(axis=1) > 0), "There is at least one sequence without valid index"
+
+		# Find the first valid index in each sequence
+		first_valid_indices = np.argmax(valid_mask, axis=1)
+
+		# Shift the sequences and masks to the left to start with the first valid index
+		idx_stack_shifted = np.array([np.roll(idx_stack[i], -first_valid_indices[i]) for i in range(batch_size)])
+		valid_mask_shifted = np.array([np.roll(valid_mask[i], -first_valid_indices[i]) for i in range(batch_size)])
+
+		# Turn to the original indices (replace None with 0)
+		idx_stack_res = buf[idx_stack_shifted]
+		idx_stack_res[~valid_mask_shifted] = 0
+		return idx_stack_res.astype(np.int), valid_mask_shifted
+
+	
+	def get(
+		self,
+		index: Union[int, List[int], np.ndarray],
+		key: str,
+		default_value: Any = None,
+		stack_num: Optional[int] = None,
+	) -> Union[Batch, np.ndarray]:
+		return super().get(index, key, default_value, stack_num)
+
+	def reset(self, keep_statistics: bool = False) -> None:
+		# raise ValueError("ReplayBuffer.reset() is not supported for ReMaster Buffer")
+		return super().reset(keep_statistics)
+
 
 # policy
 class AsyncACDDPGPolicy(DDPGPolicy):
@@ -1674,6 +1749,8 @@ class SACRunner(DefaultRLRunner):
 		self.log("SACRunner init end!")
 
 
+"""new implementation"""
+
 class EnvCollector:
 	"""
 	Use policy to collect data from env.
@@ -1858,7 +1935,6 @@ class WaybabaRecorder:
 
 		return "\n".join(aligned_info)
 
-
 class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
 		super().start(cfg)
@@ -1881,6 +1957,9 @@ class OfflineRLRunner(DefaultRLRunner):
 			if self._should_update(): 
 				for _ in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
 					batch, indices = self.buf.sample(self.cfg.trainer.batch_size) # sample
+					indices, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.global_cfg.actor_input.history_num)
+					batch = self.buf[indices]
+					batch.valid_mask = valid_mask
 					self.update_once(batch, indices)
 			
 			# evaluate
@@ -2059,7 +2138,6 @@ class OfflineRLRunner(DefaultRLRunner):
 
 	def _should_end(self):
 		return self.env_step_global >= self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
-
 
 class TD3Runner(OfflineRLRunner):
 	
@@ -2327,13 +2405,15 @@ class TD3Runner(OfflineRLRunner):
 			buffer = self.buf
 			assert self.global_cfg.actor_input.history_num > 1, "stack_rnn requires history_num > 1, ususally, it would be 20,40,... since we process long history when running online."
 			assert self.global_cfg.actor_input.history_num > self.global_cfg.actor_input.burnin_num, "stack_rnn requires history_num > burnin_num, ususally, it could be a little larger than burnin_num"
-			idx_stack = utils.idx_stack(indices, buffer, self.global_cfg.actor_input.history_num, direction=self.global_cfg.actor_input.trace_direction) # (B, T)
-			if self.global_cfg.actor_input.rnn_idx_adjust_dis_to_start:
-				adjust_dis = self.global_cfg.actor_input.rnn_idx_adjust_dis_to_start 
-				adjust_dis = int(adjust_dis * self.global_cfg.actor_input.history_num) \
-				if isinstance(adjust_dis, float) else adjust_dis
-				idx_stack = self.adjust_idx_stack(idx_stack, adjust_dis, buffer)
-			del indices
+			assert self.global_cfg.actor_input.trace_direction == "prev", "stack_rnn requires trace_direction == prev"
+			idx_stack = indices
+			# idx_stack = utils.idx_stack(indices, buffer, self.global_cfg.actor_input.history_num, direction=self.global_cfg.actor_input.trace_direction) # (B, T)
+			# if self.global_cfg.actor_input.rnn_idx_adjust_dis_to_start:
+			# 	adjust_dis = self.global_cfg.actor_input.rnn_idx_adjust_dis_to_start 
+			# 	adjust_dis = int(adjust_dis * self.global_cfg.actor_input.history_num) \
+			# 	if isinstance(adjust_dis, float) else adjust_dis
+			# 	idx_stack = self.adjust_idx_stack(idx_stack, adjust_dis, buffer)
+			# del indices
 			idx_end = idx_stack[:,-1] # (B, )
 			batch_end = buffer[idx_end] # (B, *)
 			batch_stack = buffer[idx_stack] # (B, T, *)
@@ -2341,15 +2421,11 @@ class TD3Runner(OfflineRLRunner):
 			batch_stack.info["obs_nodelay"] = buffer[buffer.prev(idx_stack)].info["obs_next_nodelay"] # (B, T, *)
 			batch_stack.a_in_cur = torch.cat([
 				torch.tensor(self.get_obs_base(batch_stack, "actor", "cur"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
-				self.get_historical_act(idx_end, self.global_cfg.actor_input.history_num, buffer, "stack", self.actor.device) \
-				if not self.global_cfg.actor_input.noise_act_debug else \
-				torch.normal(size=stacked_batch_prev["act"].reshape(batch_end.obs.shape[0],-1).shape, mean=0., std=1.,device=self.actor.device), # TODO
+				self.get_historical_act(idx_stack, 1, buffer, "cat", self.actor.device) # (B, T, act_dim)
 			], dim=-1) # (B, T, obs_dim+act_dim)
 			batch_stack.a_in_next = torch.cat([
 				torch.tensor(self.get_obs_base(batch_stack, "actor", "next"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
-				self.get_historical_act(buffer.next(idx_end), self.global_cfg.actor_input.history_num, buffer, "stack", self.actor.device) \
-				if not self.global_cfg.actor_input.noise_act_debug else \
-				torch.normal(size=stacked_batch_cur["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device), # TODO
+				self.get_historical_act(buffer.next(idx_stack), 1, buffer, "cat", self.actor.device)
 			], dim=-1) # (B, T, obs_dim+act_dim)
 			# make mask
 			# if self.global_cfg.actor_input.trace_direction == "next":
@@ -2362,21 +2438,23 @@ class TD3Runner(OfflineRLRunner):
 
 			# if the start of the idx reach start or end of the idx reach end, then the whole episode is invalid
 			# idx_stack: B, T
-			batch_stack.valid_mask = np.ones_like(idx_stack) # (B, T)
-			if self.global_cfg.actor_input.seq_mask == True:
-				reach_start = idx_stack[:,0] == buffer.prev(idx_stack[:,0]) # (B, )
-				reach_end = idx_stack[:,-1] == buffer.next(idx_stack[:,-1]) # (B, )
-				batch_stack.valid_mask[reach_start==1,:] = 0
-				batch_stack.valid_mask[reach_end==1,:] = 0
-			elif self.global_cfg.actor_input.seq_mask == False:
-				reach_start = idx_stack == buffer.prev(idx_stack) # (B, T)
-				reach_end = idx_stack == buffer.next(idx_stack) # (B, T)
-				batch_stack.valid_mask[reach_start==1] = 0
-				batch_stack.valid_mask[reach_end==1] = 0
-			else: raise ValueError("seq_mask should be True or False")
+			# if self.global_cfg.actor_input.seq_mask == True:
+			# 	reach_start = idx_stack[:,0] == buffer.prev(idx_stack[:,0]) # (B, )
+			# 	reach_end = idx_stack[:,-1] == buffer.next(idx_stack[:,-1]) # (B, )
+			# 	batch_stack.valid_mask[reach_start==1,:] = 0
+			# 	batch_stack.valid_mask[reach_end==1,:] = 0
+			# elif self.global_cfg.actor_input.seq_mask == False:
+			# 	reach_start = idx_stack == buffer.prev(idx_stack) # (B, T)
+			# 	reach_end = idx_stack == buffer.next(idx_stack) # (B, T)
+			# 	batch_stack.valid_mask[reach_start==1] = 0
+			# 	batch_stack.valid_mask[reach_end==1] = 0
+			# else: raise ValueError("seq_mask should be True or False")
 			burnin_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num) \
 			if type(self.global_cfg.actor_input.burnin_num) == float \
 			else self.global_cfg.actor_input.burnin_num
+			# make burnin input
+			burnin_a_in_cur = None
+			burnin_a_in_next = None
 			
 			if self.global_cfg.actor_input.burnin_short_unlock_num: # burnin_short_unlock
 				burnin_unlock_num = int(self.global_cfg.actor_input.burnin_short_unlock_num * self.global_cfg.actor_input.history_num) \
@@ -2631,7 +2709,7 @@ class TD3Runner(OfflineRLRunner):
 				if stage == "cur": return batch.info["obs_nodelay"]
 				elif stage == "next": return batch.info["obs_next_nodelay"]
 
-	def get_historical_act(self, indices, step, buffer, type=None, device=None):
+	def _get_historical_act(self, indices, step, buffer, type=None, device=None):
 		""" get historical act
 		input [t_0, t_1, ...]
 		output [
@@ -2646,6 +2724,7 @@ class TD3Runner(OfflineRLRunner):
 		:param buffer: the buffer. 
 		:return: historical act (B, step)
 		"""
+		raise ValueError("Deprecated")
 		assert type in ["cat", "stack"], "type must be cat or stack"
 		# [t_0-step, t_0-step+1, ... t_0-1, t_0]
 		idx_stack_plus1 = utils.idx_stack(indices, buffer, step+1, direction="prev")
@@ -2680,6 +2759,44 @@ class TD3Runner(OfflineRLRunner):
 		idx_stack_all_adjusted = np.stack(idx_start_to_stack_list, axis=1)
 		idx_stack[idx_to_adjust] = idx_stack_all_adjusted[idx_to_adjust]
 		return idx_stack
+
+	def get_historical_act(self, indices, step, buffer, type=None, device=None):
+		# Get the action dimension from the buffer
+		act_dim = buffer[0].act.shape[0]
+
+		# Determine the output shape based on the type
+		if type == "stack":
+			output_shape = (*indices.shape, step, act_dim)
+		elif type == "cat":
+			output_shape = (*indices.shape, step * act_dim)
+		else:
+			raise ValueError("Invalid type: choose 'stack' or 'cat'")
+
+		# Create an empty tensor with the output shape
+		res = np.zeros(output_shape)
+
+		# Iterate through the input indices and retrieve previous actions
+		for i in range(step - 1, -1, -1):  # Reverse loop using a single line
+			prev_indices = buffer.prev(indices)
+			idx_start = prev_indices == indices
+			res_batch_act = buffer[prev_indices].act
+
+			# Handle the case when the requested action is at the start of the buffer
+			res_batch_act[idx_start] = 0.
+
+			# Fill the output tensor with the retrieved actions
+			if type == "stack":
+				res[..., i, :] = res_batch_act
+			elif type == "cat":
+				res[..., i * act_dim:(i + 1) * act_dim] = res_batch_act
+
+			indices = prev_indices
+		
+		# Convert the output tensor to a torch tensor
+		res = torch.tensor(res, device=device)
+
+		return res
+
 
 
 
