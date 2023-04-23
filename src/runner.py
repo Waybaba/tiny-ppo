@@ -2570,7 +2570,7 @@ class TD3Runner(OfflineRLRunner):
 				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
 				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss_normed - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
