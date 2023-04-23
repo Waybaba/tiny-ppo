@@ -967,9 +967,6 @@ class CustomSACPolicy(SACPolicy):
 		return historical_act
 
 
-
-
-
 # net
 
 class RNN_MLP_Net(nn.Module):
@@ -1422,6 +1419,8 @@ class ObsEncodeNet(nn.Module):
 		std = torch.exp(0.5*log_var)
 		eps = torch.randn_like(std)
 		return eps.mul(std).add_(mu)
+		# use reparameterization trick to push the sampling out as input (pytorch)
+		from torch.distributions import Normal
 
 	def decode(
 			self,
@@ -2151,6 +2150,10 @@ class TD3Runner(OfflineRLRunner):
 			elif self.global_cfg.actor_input.obs_encode.turn_on:
 				encode_output, encode_info = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
+				if ("is_first_step" not in batch.info) and (self.global_cfg.actor_input.obs_encode.pred_loss_weight):
+					pred_obs_output_cur, _ = self.encode_net.decode(encode_output)
+					pred_abs_error_online = ((pred_obs_output_cur - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
+					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if "is_first_step" in batch.info:
 				if self.global_cfg.actor_input.obs_pred.turn_on:
@@ -2526,9 +2529,12 @@ class TD3Runner(OfflineRLRunner):
 		if self.global_cfg.actor_input.obs_pred.turn_on:
 			pred_loss = (batch.pred_out_cur - batch.obs_nodelay) ** 2
 			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
 			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
 			self.record("learn/obs_pred/pred_loss", pred_loss.item())
+			self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
 			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
+			self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
 			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
 				kl_loss = kl_divergence(
 					batch.pred_info_cur_mu,
@@ -2537,9 +2543,10 @@ class TD3Runner(OfflineRLRunner):
 					torch.zeros_like(batch.pred_info_cur_logvar),
 				)
 				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-				kl_loss = kl_loss.mean()
+				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
 				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
 				self.record("learn/obs_pred/loss_kl", kl_loss.item())
+				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
 				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
 					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
 					self._auto_kl_optim.zero_grad()
@@ -2551,9 +2558,10 @@ class TD3Runner(OfflineRLRunner):
 		elif self.global_cfg.actor_input.obs_encode.turn_on:
 			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
 			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-			kl_loss = kl_loss.mean()
+			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
 			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
 			self.record("learn/obs_encode/loss_kl", kl_loss.item())
+			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
 			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
 				pred_loss = (batch.pred_obs_output_cur - batch.obs_nodelay) ** 2
 				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
@@ -2561,7 +2569,7 @@ class TD3Runner(OfflineRLRunner):
 				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
 				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				kl_weight_loss = - (kl_loss.detach()/batch.valid_mask.mean() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()

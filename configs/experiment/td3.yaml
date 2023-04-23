@@ -14,7 +14,7 @@ buffer:
   _target_: tianshou.data.ReplayBuffer
   size: 1000000
 trainer:
-  batch_size: 256
+  batch_size: 2048 
   test_in_train: false
   episode_per_test: 10
   max_epoch: 200
