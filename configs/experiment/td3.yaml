@@ -47,7 +47,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
     history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
     obs_type: "normal" # normal or oracle
-    trace_direction: "next" # prev or next
+    trace_direction: "prev" # prev or next
     custom_return_cal: false 
     history_num: ${env.delay}
     noise_act_debug: false
@@ -78,8 +78,8 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           _target_: src.runner.RNN_MLP_Net
           _partial_: true
           rnn_layer_num: 0
-          rnn_hidden_layer_size: 512 
-          mlp_hidden_sizes: [512,512]
+          rnn_hidden_layer_size: 256 
+          mlp_hidden_sizes: [256,256]
           mlp_softmax: false
           dropout: 0.1
         decoder_net:
@@ -90,7 +90,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           mlp_hidden_sizes: [256]
           mlp_softmax: false
     obs_encode:
-      turn_on: true
+      turn_on: false
       feat_dim: 256
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
       before_policy_detach: false # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
@@ -115,7 +115,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           _partial_: true
           rnn_layer_num: 0
           rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [512,512]
+          mlp_hidden_sizes: [256,256]
           mlp_softmax: false
           dropout: 0.0
         decoder_net:
@@ -123,7 +123,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           _partial_: true
           rnn_layer_num: 0
           rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [512,512]
+          mlp_hidden_sizes: [256,256]
           mlp_softmax: false
           dropout: 0.0
   critic_input:

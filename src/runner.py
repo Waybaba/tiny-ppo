@@ -2253,6 +2253,7 @@ class TD3Runner(OfflineRLRunner):
 				], dim=-1) # (B, T, obs_dim + act_dim * history_num)
 				# make mask
 				if self.global_cfg.actor_input.trace_direction == "next":
+					raise ValueError("use next in cal_mlp would cause the start several steps never been learnt, which is fatal in Hopper since episode length is short")
 					# all that reach end of episode should be invalid
 					batch_end.valid_mask = torch.tensor(idx_end != buffer.next(idx_end), device=self.actor.device).int() # (B, T)
 				elif self.global_cfg.actor_input.trace_direction == "prev":
@@ -2569,7 +2570,7 @@ class TD3Runner(OfflineRLRunner):
 				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
 				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss.detach()/batch.valid_mask.mean() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				kl_weight_loss = - (kl_loss_normed - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
