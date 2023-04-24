@@ -353,6 +353,8 @@ class AmltLauncher:
             cmd = f"amlt run -t local {CONFIG_OUTPUT_PATH}"
         elif choice.lower() in ["", "s"]:
             name = self.args["normal"]["tags"].strip("[]\"").replace(" ", "_")
+            if "search.job_template.sku" in self.launcher_args: # add sku name
+                name += f"-{self.launcher_args['search.job_template.sku']}"
             name += "-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
             cmd = f"amlt run {CONFIG_OUTPUT_PATH} {name}"
         else:
