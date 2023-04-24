@@ -2193,10 +2193,11 @@ class TD3Runner(OfflineRLRunner):
 
 		assert len(batch.obs.shape) == 1, "for online batch, batch size must be 1"
 
-		# basic
+		# obs basic
 		if self.global_cfg.actor_input.obs_type == "normal": a_in = batch.obs
 		elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
 
+		# obs processing
 		if self.global_cfg.actor_input.history_merge_method == "none":
 			pass
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
@@ -2275,8 +2276,10 @@ class TD3Runner(OfflineRLRunner):
 			for i in range(len(kwargs["ep_len_list"])): self.record("collect/ep_len", kwargs["ep_len_list"][i])
 
 	def update_once(self):
-		indices = self._sample_indices()
+		# indices = self.buf.sample_indices(self.cfg.trainer.batch_size)
+		indices, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.global_cfg.actor_input.history_num)
 		batch = self._indices_to_batch(indices)
+		batch.valid_mask = valid_mask
 		batch = self._pre_update_process(batch)
 		return
 		batch = self._sample_batch(indices)
@@ -2300,10 +2303,6 @@ class TD3Runner(OfflineRLRunner):
 		self.record("learn/critic_loss", critic_info_["critic_loss"])
 		self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
 		self.update_cnt += 1
-
-	def _sample_indices(self):
-		indices = self.buf.sample_indices(self.cfg.trainer.batch_size)
-		return indices
 	
 	def _indices_to_batch(self, indices):
 		""" sample batch from buffer with indices
