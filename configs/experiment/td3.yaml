@@ -13,9 +13,10 @@ defaults:
 buffer: 
   _target_: src.runner.ReplayBuffer
   size: 1000000
-  seq_len: ${global_cfg.actor_input.history_num}
+  seq_len: ${trainer.batch_seq_len} # would affect the remaster buffer gap len
 trainer:
-  batch_size: 64
+  batch_size: 32 
+  batch_seq_len: 64 # would be used in buffer.seq_len 
   test_in_train: false
   episode_per_test: 10
   max_epoch: 200
@@ -50,7 +51,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_type: "normal" # normal or oracle
     trace_direction: "prev" # prev or next
     custom_return_cal: false 
-    history_num: 40 # decide the info["historical_act"] length
+    history_num: ${env.delay} # decide the info["historical_act"] length # would use ${env.delay}
     noise_act_debug: false
     obs_pred:
       turn_on: false 
@@ -91,13 +92,13 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           mlp_hidden_sizes: [256]
           mlp_softmax: false
     obs_encode:
-      turn_on: false 
+      turn_on: true 
       feat_dim: 256
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
       before_policy_detach: false # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
       norm_kl_loss_weight: 0.1
       auto_kl_target: 50
-      pred_loss_weight: 1.0
+      pred_loss_weight: 0.0
       optim:
         _target_: torch.optim.Adam
         _partial_: true

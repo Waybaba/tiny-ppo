@@ -2213,13 +2213,12 @@ class TD3Runner(OfflineRLRunner):
 				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
 					a_in = pred_info["feats"].cpu()
 				else: raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
-				if "is_first_step" not in batch.info:
-					pred_abs_error_online = ((pred_out - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
-					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
+				pred_abs_error_online = ((pred_out - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
+				self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
 			elif self.global_cfg.actor_input.obs_encode.turn_on:
 				encode_output, encode_info = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
-				if ("is_first_step" not in batch.info) and (self.global_cfg.actor_input.obs_encode.pred_loss_weight):
+				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
 					pred_obs_output_cur, _ = self.encode_net.decode(encode_output)
 					pred_abs_error_online = ((pred_obs_output_cur - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
 					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
@@ -2277,19 +2276,19 @@ class TD3Runner(OfflineRLRunner):
 
 	def update_once(self):
 		# indices = self.buf.sample_indices(self.cfg.trainer.batch_size)
-		indices, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.global_cfg.actor_input.history_num)
+		indices, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.trainer.batch_seq_len)
 		batch = self._indices_to_batch(indices)
 		batch.valid_mask = valid_mask
 		batch = self._pre_update_process(batch)
-		return
-		batch = self._sample_batch(indices)
-		batch = self._pre_update_process(batch)
+		# return # TODO tidy up
+		# batch = self._sample_batch(indices)
+		# batch = self._pre_update_process(batch)
 		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
 		# update cirtic
-		critic_info_ = self.update_critic(batch, indices)
+		critic_info_ = self.update_critic(batch)
 		if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
 			# update actor
-			actor_info_ = self.update_actor(batch, indices)
+			actor_info_ = self.update_actor(batch)
 			self.record("learn/actor_loss", actor_info_["actor_loss"])
 			self.exploration_noise *= self.cfg.policy.noise_decay_rate
 		
@@ -2325,22 +2324,124 @@ class TD3Runner(OfflineRLRunner):
 		batch.ahis_cur = batch.info["historical_act"]
 		batch.ahis_next = self.buf[self.buf.next(indices)].info["historical_act"]
 		for k in list(batch.keys()): 
-			if k not in ["dobs", "d_obs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done"]:
+			if k not in ["dobs", "dobs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done"]:
 				batch.pop(k)
 		return batch
 
 	def _pre_update_process(self, batch):
+		"""
+		only keep keys used in update
+		"""
 		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_next", "done", "terminated", "truncated", "rew", "act", "valid_mask"]
 		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
-		# obs_nodelay # TODO ! bug fisrt step should use original
-		batch.obs_nodelay = self.buf[self.buf.prev(indices)].info["obs_next_nodelay"]
-		batch.obs_nodelay = torch.tensor(batch.obs_nodelay, device=self.cfg.device)
-		batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
-		# actor input
+
+		# actor - obs base
+		if self.global_cfg.actor_input.obs_type == "normal": 
+			batch.a_in_cur = batch.dobs
+			batch.a_in_next = batch.dobs_next
+		elif self.global_cfg.actor_input.obs_type == "oracle": 
+			batch.a_in_cur  = batch.oobs
+			batch.a_in_next = batch.oobs_next
+		else:
+			raise ValueError("unknown obs_type: {}".format(self.global_cfg.actor_input.obs_type))
+
+		# actor - others ! TODO batch
 		if self.global_cfg.actor_input.history_merge_method == "none":
-			batch.a_in_cur = self.get_obs_base(batch, "actor", "cur")
-			batch.a_in_next = self.get_obs_base(batch, "actor", "next")
-			batch.valid_mask = torch.ones([len(batch)], device=self.actor.device).int()
+			pass
+		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
+			if self.global_cfg.actor_input.history_num > 0: 
+				batch.a_in_cur = torch.cat([batch.a_in_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
+				batch.a_in_next = torch.cat([batch.a_in_next, batch.ahis_next.flatten(start_dim=-2)], dim=-1)
+			
+			if self.global_cfg.actor_input.obs_pred.turn_on:
+				keeped_keys += ["pred_out_cur", "oobs"]
+				batch.pred_in_cur = batch.a_in_cur
+				batch.pred_in_next = batch.a_in_next
+				batch.pred_out_cur, pred_info_cur = self.pred_net(batch.pred_in_cur)
+				batch.pred_out_next, pred_info_next = self.pred_net(batch.pred_in_next)
+				
+				if self.global_cfg.actor_input.obs_pred.input_type == "obs": # a input
+					batch.a_in_cur = batch.pred_out_cur
+					batch.a_in_next = batch.pred_out_next
+				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
+					batch.a_in_cur = pred_info_cur["feats"]
+					batch.a_in_next = pred_info_next["feats"]
+				else:
+					raise NotImplementedError
+				
+				if self.global_cfg.actor_input.obs_pred.middle_detach: # detach
+					batch.a_in_cur = batch.a_in_cur.detach()
+					batch.a_in_next = batch.a_in_next.detach()
+				
+				if self.global_cfg.actor_input.obs_pred.net_type == "vae": # vae
+					keeped_keys += ["pred_info_cur_mu", "pred_info_cur_logvar"]
+					batch.pred_info_cur_mu = pred_info_cur["mu"]
+					batch.pred_info_cur_logvar = pred_info_cur["logvar"]
+				
+			if self.global_cfg.actor_input.obs_encode.turn_on:
+				keeped_keys += ["encode_oracle_info_cur_mu","encode_oracle_info_cur_logvar", "encode_normal_info_cur_mu", "encode_normal_info_cur_logvar"]
+				
+				batch.encode_obs_in_cur = batch.a_in_cur
+				batch.encode_obs_in_next = batch.a_in_next
+
+				batch.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch.encode_obs_in_cur)
+				batch.encode_obs_out_next, _ = self.encode_net.normal_encode(batch.encode_obs_in_next)
+				batch.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch.oobs)
+				batch.encode_oracle_obs_output_next, _ = self.encode_net.oracle_encode(batch.oobs_next)
+				
+				batch.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
+				batch.encode_normal_info_cur_logvar = encode_obs_info_cur["logvar"]
+				batch.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
+				batch.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
+				
+				if self.global_cfg.actor_input.obs_encode.train_eval_async == True:
+					batch.a_in_cur = batch.encode_oracle_obs_output_cur
+					batch.a_in_next = batch.encode_oracle_obs_output_next
+				elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
+					batch.a_in_cur = batch.encode_obs_out_cur
+					batch.a_in_next = batch.encode_obs_out_next
+				else:
+					raise ValueError("batch error")
+				
+				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+					keeped_keys += ["oobs", "pred_obs_output_cur"]
+					batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_out_cur)
+				
+				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
+					batch.a_in_cur = batch.a_in_cur.detach()
+					batch.a_in_next = batch.a_in_next.detach()
+		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
+			raise NotImplementedError
+		else: 
+			raise ValueError("history_merge_method error")
+
+		# critic - obs base
+		if self.global_cfg.critic_input.obs_type == "normal": 
+			batch.c_in_cur = batch.dobs
+			batch.c_in_next = batch.dobs_next
+		elif self.global_cfg.critic_input.obs_type == "oracle": 
+			batch.c_in_cur  = batch.oobs
+			batch.c_in_next = batch.oobs_next
+		else:
+			raise ValueError("unknown obs_type: {}".format(self.global_cfg.critic_input.obs_type))
+		
+		# critic - others  ! TODO batch
+		if self.cfg.global_cfg.critic_input.history_merge_method == "none":
+			pass
+		elif self.cfg.global_cfg.critic_input.history_merge_method == "cat_mlp":
+			raise NotImplementedError
+		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			raise NotImplementedError
+		
+		# only keep res keys
+		for k in list(batch.keys()): 
+			if k not in keeped_keys: batch.pop(k)
+		
+		return batch
+
+		# 
+		if 1:
+			pass
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			buffer = self.buf
 			assert self.global_cfg.actor_input.history_num >= 0
@@ -2373,58 +2474,6 @@ class TD3Runner(OfflineRLRunner):
 					batch_end.valid_mask = torch.ones(idx_end.shape, device=self.actor.device).int() # (B, T)
 				else: raise ValueError("trace_direction should be next or prev")
 				# obs_pred & obs_encode
-				if self.global_cfg.actor_input.obs_pred.turn_on:
-					keeped_keys += ["pred_out_cur", "obs_nodelay"]
-					batch_end.obs_nodelay = batch_end.info["obs_nodelay"]
-					batch_end.pred_in_cur = batch_end.a_in_cur
-					batch_end.pred_in_next = batch_end.a_in_next
-					batch_end.pred_out_cur, pred_info_cur = self.pred_net(batch_end.pred_in_cur)
-					batch_end.pred_out_next, pred_info_next = self.pred_net(batch_end.pred_in_next)
-					if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-						batch_end.a_in_cur = batch_end.pred_out_cur
-						batch_end.a_in_next = batch_end.pred_out_next
-					elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
-						batch_end.a_in_cur = pred_info_cur["feats"]
-						batch_end.a_in_next = pred_info_next["feats"]
-					else:
-						raise NotImplementedError
-					# detach
-					if self.global_cfg.actor_input.obs_pred.middle_detach: 
-						batch_end.a_in_cur = batch_end.a_in_cur.detach()
-						batch_end.a_in_next = batch_end.a_in_next.detach()
-					if self.global_cfg.actor_input.obs_pred.net_type == "vae":
-						keeped_keys += ["pred_info_cur_mu", "pred_info_cur_logvar"]
-						batch_end.pred_info_cur_mu = pred_info_cur["mu"]
-						batch_end.pred_info_cur_logvar = pred_info_cur["logvar"]
-				if self.global_cfg.actor_input.obs_encode.turn_on:
-					keeped_keys += ["encode_oracle_info_cur_mu","encode_oracle_info_cur_logvar", "encode_normal_info_cur_mu", "encode_normal_info_cur_logvar"]
-					batch_end.obs_nodelay = batch_end.info["obs_nodelay"]
-					batch_end.encode_obs_in_cur = batch_end.a_in_cur
-					batch_end.encode_obs_in_next = batch_end.a_in_next
-					batch_end.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_in_cur)
-					batch_end.encode_obs_out_next, _ = self.encode_net.normal_encode(batch_end.encode_obs_in_next)
-					batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
-					batch_end.encode_oracle_obs_output_next, _ = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
-					batch_end.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
-					batch_end.encode_normal_info_cur_logvar = encode_obs_info_cur["logvar"]
-					batch_end.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
-					batch_end.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
-					if self.global_cfg.actor_input.obs_encode.train_eval_async == True:
-						batch_end.a_in_cur = batch_end.encode_oracle_obs_output_cur
-						batch_end.a_in_next = batch_end.encode_oracle_obs_output_next
-					elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
-						batch_end.a_in_cur = batch_end.encode_obs_out_cur
-						batch_end.a_in_next = batch_end.encode_obs_out_next
-					else:
-						raise ValueError("batch_end error")
-					if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-						keeped_keys += ["obs_nodelay", "pred_obs_output_cur"]
-						batch_end.obs_nodelay = batch_end.info["obs_nodelay"]
-						batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_out_cur)
-					if self.global_cfg.actor_input.obs_encode.before_policy_detach:
-						batch_end.a_in_cur = batch_end.a_in_cur.detach()
-						batch_end.a_in_next = batch_end.a_in_next.detach()
-				# end
 				indices = idx_end
 				batch = batch_end
 				batch.obs_nodelay = self.buf[self.buf.prev(indices)].info["obs_next_nodelay"]
@@ -2559,22 +2608,12 @@ class TD3Runner(OfflineRLRunner):
 			batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
 			batch.to_torch(device=self.cfg.device, dtype=torch.float32)
 		else: raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
-		# critic input
-		if self.cfg.global_cfg.critic_input.obs_type == "normal":
-			batch.c_in_cur = self.get_obs_base(batch, "actor", "cur")
-			batch.c_in_next = self.get_obs_base(batch, "actor", "next")
-		elif self.cfg.global_cfg.critic_input.obs_type == "oracle":
-			batch.c_in_cur = batch.obs_nodelay
-			batch.c_in_next = batch.obs_next_nodelay
-		else: raise NotImplementedError
 
-		# only keep res keys
-		for k in list(batch.keys()): 
-			if k not in keeped_keys: batch.pop(k)
+
 		return batch, indices
 
-	def update_critic(self, batch, indices):
-
+	def update_critic(self, batch):
+		pre_sz = list(batch.done.shape)
 		with torch.no_grad():
 			batch.a_next_online = self.actor_old(batch.a_in_next, state=None)[0][0]
 			noise = torch.randn(size=batch.a_next_online.shape, device=batch.a_next_online.device) * self.cfg.policy.noise_clip
@@ -2587,14 +2626,14 @@ class TD3Runner(OfflineRLRunner):
 					self.critic1_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0],
 					self.critic2_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0]
 				).squeeze(-1)
-			).flatten()
+			).reshape(*pre_sz,-1)
 		
 		critic_loss = F.mse_loss(self.critic1(
 			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].flatten(), target_q, reduce=False) + \
+		)[0].reshape(*pre_sz,-1), target_q, reduce=False) + \
 		F.mse_loss(self.critic2(
 			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].flatten(), target_q, reduce=False)
+		)[0].reshape(*pre_sz,-1), target_q, reduce=False)
 		# use app
 		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
 
@@ -2608,7 +2647,7 @@ class TD3Runner(OfflineRLRunner):
 			"critic_loss": critic_loss.cpu().item()
 		}
 
-	def update_actor(self, batch, indices):
+	def update_actor(self, batch):
 		res_info = {}
 		actor_loss, _ = self.critic1(torch.cat([
 			batch.c_in_cur, 
@@ -2618,7 +2657,7 @@ class TD3Runner(OfflineRLRunner):
 		combined_loss = 0. + actor_loss
 		# add pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
-			pred_loss = (batch.pred_out_cur - batch.obs_nodelay) ** 2
+			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
 			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
 			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
 			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
@@ -2654,7 +2693,7 @@ class TD3Runner(OfflineRLRunner):
 			self.record("learn/obs_encode/loss_kl", kl_loss.item())
 			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
 			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-				pred_loss = (batch.pred_obs_output_cur - batch.obs_nodelay) ** 2
+				pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
 				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
 				self.record("learn/obs_encode/loss_pred", pred_loss.item())
 				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
@@ -2703,6 +2742,8 @@ class TD3Runner(OfflineRLRunner):
 		"""
 		assert stage in ["cur", "next"]
 		assert a_or_c in ["actor", "critic"]
+		raise DeprecationWarning("get_obs_base is deprecated, use get_obs instead")
+		assert False
 		assert self.global_cfg.actor_input.obs_type in ["normal", "oracle"]
 		if a_or_c == "actor":
 			if self.global_cfg.actor_input.obs_type == "normal":

@@ -10,7 +10,7 @@ defaults:
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
     history_merge_method: "stack_rnn" # cat_mlp or stack_rnn or none
-    history_num: 40 # always > 2
+    history_num: 1 # always > 2
     burnin_num: 0.25 # only works for stack_rnn
     burnin_short_unlock_num: 0.25 # when the history is shorter than this, the burnin will be unlocked, use 0 to do nothing, use float would times the history_num
     rnn_idx_adjust_dis_to_start: 0.5 # only for rnn, when the idx_stack start is < this, the idx_stack will be adjusted to the start, use 0 to do nothing, use float would times the history_num
