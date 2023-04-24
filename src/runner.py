@@ -1701,7 +1701,7 @@ class DefaultRLRunner:
 		self.env = utils.make_env(cfg.env) # to get obs_space and act_space
 		self.console = Console()
 		self.log = self.console.log
-		self.log("RLRunner end!")
+		self.log("Logger init done!")
 
 
 class SACRunner(DefaultRLRunner):
@@ -1957,9 +1957,9 @@ class OfflineRLRunner(DefaultRLRunner):
 			if self._should_update(): 
 				for _ in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
 					batch, indices = self.buf.sample(self.cfg.trainer.batch_size) # sample
-					indices, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.global_cfg.actor_input.history_num)
-					batch = self.buf[indices]
-					batch.valid_mask = valid_mask
+					# indices, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.global_cfg.actor_input.history_num)
+					# batch = self.buf[indices]
+					# batch.valid_mask = valid_mask
 					self.update_once(batch, indices)
 			
 			# evaluate
@@ -1985,6 +1985,7 @@ class OfflineRLRunner(DefaultRLRunner):
 		cfg = self.cfg
 		env = self.env
 		self.global_cfg = cfg.global_cfg
+		self.log("Init networks ...")
 		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
 		self.actor_optim = cfg.actor_optim(self.actor.parameters())
 		self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
@@ -1999,9 +2000,11 @@ class OfflineRLRunner(DefaultRLRunner):
 		self.critic1_old.train()
 		self.critic2_old.train()
 		self.actor_old.eval()
+		self.log("Init buffer & collector ...")
 		self.buf = cfg.buffer
 		self.train_collector = EnvCollector(env)
 		self.test_collector = EnvCollector(env)
+		self.log("Init others ...")
 		self.exploration_noise = cfg.policy.initial_exploration_noise
 		self.record = WaybabaRecorder()
 		self._start_time = time()
