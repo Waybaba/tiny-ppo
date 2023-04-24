@@ -1766,7 +1766,7 @@ class EnvCollector:
 		Return 
 			res: a list of Batch(obs, act, rew, done, obs_next, info).
 			# info: {
-			# 	"rwds": list of total rewards of each episode,
+			# 	"rews": list of total rewards of each episode,
 			# }
 		Policy can be function or string "random". 
 			function: 
@@ -1784,7 +1784,7 @@ class EnvCollector:
 		self.env_max_step = env_max_step
 		res_list = []
 		res_info = {
-			"rwd_sum_list": [],
+			"rew_sum_list": [],
 			"ep_len_list": []
 		}
 
@@ -1801,7 +1801,7 @@ class EnvCollector:
 			if (batch.terminated or batch.truncated).any(): 
 				episode_cnt += 1
 				if progress_bar is not None: progress.update(task, advance=1)
-				res_info["rwd_sum_list"].append(env_loop_info["rwd_sum"])
+				res_info["rew_sum_list"].append(env_loop_info["rew_sum"])
 				res_info["ep_len_list"].append(env_loop_info["ep_len"])
 
 			if n_step is not None:
@@ -1820,8 +1820,9 @@ class EnvCollector:
 		"""
 		while True:
 			env_step_cur = 0
-			rwd_sum_cur = 0.
-			s, info = self.env.reset(), {"is_first_step": True}
+			rew_sum_cur = 0.
+			s, info = self.env.reset()
+			info["is_first_step"] = True
 			last_state = None
 
 			while True:
@@ -1833,13 +1834,13 @@ class EnvCollector:
 						a = a.cpu()
 					a = a.numpy()
 				s_, r, terminated, info = self.env.step(a)
-				rwd_sum_cur += r
+				rew_sum_cur += r
 
 				truncated = env_step_cur == self.env_max_step
 				batch = Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info)
 				
 				yield batch, {
-					"rwd_sum": rwd_sum_cur,
+					"rew_sum": rew_sum_cur,
 					"ep_len": env_step_cur,
 				}
 
@@ -1956,11 +1957,11 @@ class OfflineRLRunner(DefaultRLRunner):
 			# update
 			if self._should_update(): 
 				for _ in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
-					batch, indices = self.buf.sample(self.cfg.trainer.batch_size) # sample
+					# batch, indices = self.buf.sample(self.cfg.trainer.batch_size) # sample
 					# indices, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.global_cfg.actor_input.history_num)
 					# batch = self.buf[indices]
 					# batch.valid_mask = valid_mask
-					self.update_once(batch, indices)
+					self.update_once()
 			
 			# evaluate
 			if self._should_evaluate():
@@ -2035,9 +2036,9 @@ class OfflineRLRunner(DefaultRLRunner):
 		for batch in batches: self.buf.add(batch)
 
 		# store history
-		if not hasattr(self, "rwd_sum_history"): self.rwd_sum_history = []
+		if not hasattr(self, "rew_sum_history"): self.rew_sum_history = []
 		if not hasattr(self, "ep_len_history"): self.ep_len_history = []
-		self.rwd_sum_history += info_["rwd_sum_list"]
+		self.rew_sum_history += info_["rew_sum_list"]
 		self.ep_len_history += info_["ep_len_list"]
 		res_info = {
 			"batches": batches,
@@ -2049,7 +2050,7 @@ class OfflineRLRunner(DefaultRLRunner):
 		"""called after a step of data collection"""
 		self.on_collect_end(**kwargs)
 	
-	def update_once(self, batch, indices):
+	def update_once(self):
 		raise NotImplementedError
 
 	def _evaluate(self):
@@ -2068,17 +2069,17 @@ class OfflineRLRunner(DefaultRLRunner):
 			progress_bar="Evaluating ..." if self.cfg.trainer.progress_bar else None,
 			rich_progress=self.progress if self.cfg.trainer.progress_bar else None,
 		)
-		eval_rwds = [0. for _ in range(self.cfg.trainer.episode_per_test)]
+		eval_rews = [0. for _ in range(self.cfg.trainer.episode_per_test)]
 		eval_lens = [0 for _ in range(self.cfg.trainer.episode_per_test)]
 		cur_ep = 0
 		for i, batch in enumerate(eval_batches): 
-			eval_rwds[cur_ep] += batch.rew
+			eval_rews[cur_ep] += batch.rew
 			eval_lens[cur_ep] += 1
 			if batch.terminated or batch.truncated:
 				cur_ep += 1
 		self.epoch_cnt += 1
 		res_info = {
-			"rwd_mean": np.mean(eval_rwds),
+			"rew_mean": np.mean(eval_rews),
 			"len_mean": np.mean(eval_lens)
 		}
 		self._on_evaluate_end(**res_info)
@@ -2189,35 +2190,21 @@ class TD3Runner(OfflineRLRunner):
 		res_state = {}
 		a_in = batch.obs
 		process_online_batch_info = {}
-		# if first step when act is none
+
 		assert len(batch.obs.shape) == 1, "for online batch, batch size must be 1"
+
+		# basic
+		if self.global_cfg.actor_input.obs_type == "normal": a_in = batch.obs
+		elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
+
 		if self.global_cfg.actor_input.history_merge_method == "none":
-			if "is_first_step" in batch.info: # first step (zero cat)
-				a_in = batch.obs
-			else: # normal step
-				if self.global_cfg.actor_input.obs_type == "normal":
-					a_in = batch.obs
-				elif self.global_cfg.actor_input.obs_type == "oracle":
-					a_in = batch.info["obs_next_nodelay"]
+			pass
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			if "is_first_step" in batch.info: # first step (zero cat)
-				if self.global_cfg.actor_input.obs_pred.turn_on:
-					new_dim = self.pred_net.input_dim
-				elif self.global_cfg.actor_input.obs_encode.turn_on:
-					new_dim = self.encode_net.normal_encode_dim
-				else:
-					new_dim = self.actor.net.input_dim
-				a_in = np.zeros([new_dim])
-			else: # normal step
-				if self.global_cfg.actor_input.obs_type == "normal": a_in = batch.obs
-				elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
-				if self.global_cfg.actor_input.history_num > 0:
-					a_in = np.concatenate([
-						a_in,
-						batch.info["historical_act"] \
-						if not self.global_cfg.actor_input.noise_act_debug else \
-						np.random.normal(size=batch.info["historical_act"].shape, loc=0, scale=1),
-					], axis=-1)
+			if self.global_cfg.actor_input.history_num > 0: # only cat when > 0
+				a_in = np.concatenate([
+					a_in,
+					batch.info["historical_act"].flatten()
+				], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				pred_out, pred_info = self.pred_net(a_in)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
@@ -2236,22 +2223,10 @@ class TD3Runner(OfflineRLRunner):
 					pred_abs_error_online = ((pred_obs_output_cur - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
 					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			if "is_first_step" in batch.info:
-				if self.global_cfg.actor_input.obs_pred.turn_on:
-					new_dim = self.pred_net.input_dim
-				elif self.global_cfg.actor_input.obs_encode.turn_on:
-					raise NotImplementedError
-					new_dim = self.encode_net.normal_encode_dim
-				else:
-					new_dim = self.actor.net.input_dim
-				a_in = np.zeros([new_dim])
-			else: # normal step
-				assert "historical_act" in batch.info, "must have historical act"
-				assert self.global_cfg.actor_input.history_num > 0, "stack rnn must len > 0"
-				if self.global_cfg.actor_input.obs_type == "normal": a_in = batch.obs
-				elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
-				latest_act = batch.info["historical_act"][-self.actor.act_num:]
-				a_in = np.concatenate([a_in, latest_act], axis=-1)
+			assert "historical_act" in batch.info, "must have historical act"
+			assert self.global_cfg.actor_input.history_num > 0, "stack rnn must len > 0"
+			latest_act = batch.info["historical_act"][-1]
+			a_in = np.concatenate([a_in, latest_act], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				state_for_obs_pred = distill_state(state, {"hidden_pred_net_encoder": "hidden_encoder", "hidden_pred_net_decoder": "hidden_decoder"})
 				pred_out, pred_info = self.pred_net(a_in, state=state_for_obs_pred)
@@ -2294,12 +2269,68 @@ class TD3Runner(OfflineRLRunner):
 	
 	def on_collect_end(self, **kwargs):
 		"""called after a step of data collection"""
-		if "rwd_sum_list" in kwargs and kwargs["rwd_sum_list"]:
-			for i in range(len(kwargs["rwd_sum_list"])): self.record("collect/rwd_sum", kwargs["rwd_sum_list"][i])
+		if "rew_sum_list" in kwargs and kwargs["rew_sum_list"]:
+			for i in range(len(kwargs["rew_sum_list"])): self.record("collect/rew_sum", kwargs["rew_sum_list"][i])
 		if "ep_len_list" in kwargs and kwargs["ep_len_list"]:
 			for i in range(len(kwargs["ep_len_list"])): self.record("collect/ep_len", kwargs["ep_len_list"][i])
 
-	def pre_update_process(self, batch, indices):
+	def update_once(self):
+		indices = self._sample_indices()
+		batch = self._indices_to_batch(indices)
+		batch = self._pre_update_process(batch)
+		return
+		batch = self._sample_batch(indices)
+		batch = self._pre_update_process(batch)
+		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
+		# update cirtic
+		critic_info_ = self.update_critic(batch, indices)
+		if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
+			# update actor
+			actor_info_ = self.update_actor(batch, indices)
+			self.record("learn/actor_loss", actor_info_["actor_loss"])
+			self.exploration_noise *= self.cfg.policy.noise_decay_rate
+		
+		# update pred/encode
+		# if self.global_cfg.actor_input.obs_pred.turn_on: self.update_pred_net(batch, indices)
+		# if self.global_cfg.actor_input.obs_encode.turn_on: self.update_encode_net(batch, indices)
+		
+		self.soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
+		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
+		self.soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
+		self.record("learn/critic_loss", critic_info_["critic_loss"])
+		self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
+		self.update_cnt += 1
+
+	def _sample_indices(self):
+		indices = self.buf.sample_indices(self.cfg.trainer.batch_size)
+		return indices
+	
+	def _indices_to_batch(self, indices):
+		""" sample batch from buffer with indices
+		After sampling, indices are discarded. So we need to make sure that
+		all the information we need is in the batch.
+
+		TODO souce of historical act, now is from info["histo...], can also from act
+
+		Exaplanation of the batch keys:
+			` basic ones from the buffer: obs, act, obs_next, rew, done, terminated, truncated, policy`
+			dobs, dobs_next (*, obs_dim): delayed obs, delayed obs_next, inherited from obs, obs_next. To
+				avoid confusion, the obs, obs_next would be renamed to these two names.
+			oobs, oobs_next (*, obs_dim): oracle obs, oracle obs_next
+			act, rew, done (*, ): no changes (terminated and truncated are removed since we don't need them)
+			ahis_cur, ahis_next (*, history_len, act_dim): history of actions
+		"""
+		batch = self.buf[indices]
+		batch.dobs, batch.dobs_next = batch.obs, batch.obs_next
+		batch.oobs, batch.oobs_next = batch.info["obs_nodelay"], batch.info["obs_next_nodelay"]
+		batch.ahis_cur = batch.info["historical_act"]
+		batch.ahis_next = self.buf[self.buf.next(indices)].info["historical_act"]
+		for k in list(batch.keys()): 
+			if k not in ["dobs", "d_obs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done"]:
+				batch.pop(k)
+		return batch
+
+	def _pre_update_process(self, batch):
 		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_next", "done", "terminated", "truncated", "rew", "act", "valid_mask"]
 		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
 		# obs_nodelay # TODO ! bug fisrt step should use original
@@ -2319,6 +2350,7 @@ class TD3Runner(OfflineRLRunner):
 				# del indices
 				idx_end = idx_stack[:,-1] # (B, )
 				batch_end = buffer[idx_end] # (B, *)
+				assert (idx_end == indices).all(), f"{idx_end} {indices}"
 				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
 				batch_end.a_in_cur = torch.cat([
 					torch.tensor(self.get_obs_base(batch_end, "actor", "cur"),device=self.actor.device), # (B, T, *)
@@ -2542,28 +2574,6 @@ class TD3Runner(OfflineRLRunner):
 			if k not in keeped_keys: batch.pop(k)
 		return batch, indices
 
-	def update_once(self, batch, indices):
-		batch, indices = self.pre_update_process(batch, indices)
-		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
-		# update cirtic
-		critic_info_ = self.update_critic(batch, indices)
-		if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
-			# update actor
-			actor_info_ = self.update_actor(batch, indices)
-			self.record("learn/actor_loss", actor_info_["actor_loss"])
-			self.exploration_noise *= self.cfg.policy.noise_decay_rate
-		
-		# update pred/encode
-		# if self.global_cfg.actor_input.obs_pred.turn_on: self.update_pred_net(batch, indices)
-		# if self.global_cfg.actor_input.obs_encode.turn_on: self.update_encode_net(batch, indices)
-		
-		self.soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
-		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
-		self.soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
-		self.record("learn/critic_loss", critic_info_["critic_loss"])
-		self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
-		self.update_cnt += 1
-
 	def update_critic(self, batch, indices):
 
 		with torch.no_grad():
@@ -2679,7 +2689,7 @@ class TD3Runner(OfflineRLRunner):
 
 	def on_evaluate_end(self, **kwargs):
 		"""called after a step of evaluation"""
-		self.record("eval/rwd_mean", kwargs["rwd_mean"])
+		self.record("eval/rew_mean", kwargs["rew_mean"])
 		self.record("eval/len_mean", kwargs["len_mean"])
 		self.record("epoch", self.epoch_cnt)
 
