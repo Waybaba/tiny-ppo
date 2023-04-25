@@ -53,7 +53,7 @@ env_max_step: 5000
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   actor_input:
     history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
-    obs_type: "oracle" # normal or oracle
+    obs_type: "normal" # normal or oracle
     trace_direction: "prev" # prev or next
     custom_return_cal: false 
     history_num: ${env.delay} # decide the info["historical_act"] length # would use ${env.delay}
