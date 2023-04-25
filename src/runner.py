@@ -1980,6 +1980,7 @@ class OfflineRLRunner(DefaultRLRunner):
 			
 			# log
 			if self._should_log():
+				self._log_time()
 				self.record.upload_to_wandb(step=self.env_step_global, commit=False)
 			
 			# upload
@@ -2084,8 +2085,9 @@ class OfflineRLRunner(DefaultRLRunner):
 	def _on_evaluate_end(self, **kwargs):
 		# log time
 		cur_time = time()
-		self.record("misc/hours_left", (cur_time-self._start_time)/3600*(self.cfg.trainer.max_epoch-self.epoch_cnt))
+		self.record("misc/hours_left", (cur_time-self._start_time)/3600*((self.cfg.trainer.max_epoch-self.epoch_cnt)/self.cfg.trainer.max_epoch))
 		self.record("misc/hours_spent", (cur_time-self._start_time)/3600)
+		
 		to_print = self.record.__str__().replace("\n", "  ")
 		to_print = "[Epoch {: 5d}/{}] ### ".format(self.epoch_cnt-1, self.cfg.trainer.max_epoch) + to_print
 		if not self.cfg.trainer.hide_eval_info_print: print(to_print)
@@ -2093,6 +2095,15 @@ class OfflineRLRunner(DefaultRLRunner):
 	
 	def on_evaluate_end(self, **kwargs):
 		pass
+
+	def _log_time(self):
+		if self.env_step_global > 100:
+			cur_time = time()
+			hours_spent = (cur_time-self._start_time) / 3600
+			speed = self.env_step_global / hours_spent
+			hours_left = (self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch-self.env_step_global) / speed
+			self.record("misc/hours_spent", hours_spent)
+			self.record("misc/hours_left", hours_left)
 
 	def _end_all(self):
 		if self.cfg.trainer.progress_bar: self.progress.stop()
@@ -2818,10 +2829,6 @@ class SACRunner(TD3SACRunner):
 
 		# update alpha (use batch.log_prob_cur)
 		if self._is_auto_alpha:
-			# log_prob = log_prob_cur.detach() + self._target_entropy
-			# alpha_loss = (
-			# 	-(self._log_alpha.exp() * log_prob.flatten()) * batch.valid_mask.flatten()
-			# ).mean()
 			cur_entropy = - log_prob_cur.detach() # (*, 1)
 			alpha_loss = - self._log_alpha.exp() * apply_mask(self._target_entropy-cur_entropy, batch.valid_mask)
 			alpha_loss = alpha_loss.mean()
