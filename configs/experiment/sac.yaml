@@ -5,7 +5,6 @@
 
 defaults:
   - td3.yaml
-  - policy: null
 
 # common - for all tasks (task_name, tags, output_dir, device)
 policy:

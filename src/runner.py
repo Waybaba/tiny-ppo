@@ -92,8 +92,9 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 		super().__init__(size, stack_num, ignore_obs_next, save_only_last_obs, sample_avail, **kwargs)
 		assert seq_len > 0, "seq_len should be non-negative"
 		self._seq_len = seq_len
-		self._remaster_idx_buf = []
-		self._remaster_idx_buf += [None for _ in range(self._seq_len - 1)]
+		self._remaster_idx_buf = np.array([None for _ in range(size*10)])
+		self._remaster_idx_ptr = 0 + (self._seq_len - 1) # init gap
+
 	
 	def add(
 		self,
@@ -103,9 +104,10 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 		idx = self._index
 		res = super().add(batch, buffer_ids)
 		batch = self[idx]
-		self._remaster_idx_buf.append(idx)
+		self._remaster_idx_buf[self._remaster_idx_ptr] = idx
+		self._remaster_idx_ptr += 1
 		if batch.done:
-			self._remaster_idx_buf += [None for _ in range(self._seq_len - 1)]
+			self._remaster_idx_ptr += (self._seq_len - 1)
 		return res
 
 	def sample_indices(self, batch_size: int) -> np.ndarray:
@@ -119,8 +121,9 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 			seq_len: length of each sequence
 		"""
 		assert seq_len == self._seq_len, "seq_len should be equal to self._seq_len"
-		buf = np.array(self._remaster_idx_buf)
-		idx_start = np.random.randint(0, len(buf) - seq_len, batch_size) # B
+		assert self._remaster_idx_ptr < len(self._remaster_idx_buf), "ReMaster Buffer is full, not as expected, should  write related code"
+		buf = self._remaster_idx_buf
+		idx_start = np.random.randint(0, self._remaster_idx_ptr - seq_len, batch_size) # B
 		idx_stack = np.array([np.arange(idx_start[i], idx_start[i] + seq_len) for i in range(batch_size)]) # B, L
 		valid_mask = buf[idx_stack] != None # B, L
 
