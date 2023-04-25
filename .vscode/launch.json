@@ -31,6 +31,7 @@
 				// "env.name=DummyNum-v0",
 				"env.delay=4",
 				"start_timesteps=1000",
+				"buffer.size=1e+6",
 			],
 		},
 		// entry.py

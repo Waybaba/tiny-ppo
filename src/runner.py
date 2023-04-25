@@ -92,7 +92,7 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 		super().__init__(size, stack_num, ignore_obs_next, save_only_last_obs, sample_avail, **kwargs)
 		assert seq_len > 0, "seq_len should be non-negative"
 		self._seq_len = seq_len
-		self._remaster_idx_buf = np.array([None for _ in range(size*10)])
+		self._remaster_idx_buf = np.array([None for _ in range(self.maxsize*10)])
 		self._remaster_idx_ptr = 0 + (self._seq_len - 1) # init gap
 
 	
