@@ -65,11 +65,9 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     history_num: ${global_cfg.actor_input.history_num}
     burnin_num: ${global_cfg.actor_input.burnin_num}
-trainer:
-  batch_size: 64 
 actor:
   net: 
-    rnn_layer_num: 0
+    rnn_layer_num: 0 # 0 for obs pred using rnnn
     rnn_hidden_layer_size: 256
     mlp_hidden_sizes: [256]
 

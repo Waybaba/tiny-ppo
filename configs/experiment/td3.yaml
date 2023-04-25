@@ -12,7 +12,7 @@ defaults:
 
 buffer: 
   _target_: src.runner.ReplayBuffer
-  size: 1000000
+  size: 1200000
   seq_len: ${trainer.batch_seq_len} # would affect the remaster buffer gap len
 trainer:
   batch_size: 32 
