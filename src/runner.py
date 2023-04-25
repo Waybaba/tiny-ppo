@@ -483,7 +483,7 @@ class CustomSACPolicy(SACPolicy):
 
 		### actor loss
 		actor_loss = ((
-			self._alpha * batch.log_prob_cur.flatten() 
+			self._log_alpha.exp() * batch.log_prob_cur.flatten() 
 			- torch.min(current_q1a, current_q2a)
 		) * batch.valid_mask.flatten()
 		).mean()
@@ -560,7 +560,6 @@ class CustomSACPolicy(SACPolicy):
 			self._alpha_optim.zero_grad()
 			alpha_loss.backward()
 			self._alpha_optim.step()
-			self._alpha = self._log_alpha.detach().exp()
 		self.sync_weight()
 		to_logs["learn/loss_actor"] = actor_loss.item()
 		to_logs["learn/loss_critic1"] = critic1_loss.item()
@@ -569,7 +568,7 @@ class CustomSACPolicy(SACPolicy):
 			to_logs["learn/target_entropy"] = self._target_entropy
 			to_logs["learn/loss_alpha"] = alpha_loss.item()
 			to_logs["learn/_log_alpha"] = self._log_alpha.item()
-			to_logs["learn/alpha"] = self._alpha.item()  # type: ignore
+			to_logs["learn/alpha"] = self._log_alpha.exp().item()  # type: ignore
 		### log - learn
 		if not hasattr(self, "learn_step"): self.learn_step = 1
 		if not hasattr(self, "start_time"): self.start_time = time()
@@ -942,8 +941,8 @@ class CustomSACPolicy(SACPolicy):
 		dist = Independent(Normal(*logits), 1)
 		if self._deterministic_eval and not self.training: act = logits[0]
 		else: act = dist.rsample()
-		log_prob = dist.log_prob(act).unsqueeze(-1)
 		squashed_action = torch.tanh(act)
+		log_prob = dist.log_prob(act).unsqueeze(-1)
 		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
 										np.finfo(np.float32).eps.item()).sum(-1, keepdim=True)
 		# process hidden
@@ -1372,10 +1371,11 @@ class CustomRecurrentActorProb(nn.Module):
 		act, log_prob
 		"""
 		dist = Independent(Normal(mu, var), 1)
-		act = dist.rsample()
-		log_prob = dist.log_prob(act).unsqueeze(-1)
+		act = dist.rsample() # (*, act_dim)
 		squashed_action = torch.tanh(act)
-		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) + np.finfo(np.float32).eps.item()).sum(-1, keepdim=True)
+		log_prob = dist.log_prob(act).unsqueeze(-1)
+		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
+										np.finfo(np.float32).eps.item()).sum(-1, keepdim=True)
 		return squashed_action, log_prob
 	
 class ObsPredNet(nn.Module):
@@ -2291,12 +2291,11 @@ class TD3SACRunner(OfflineRLRunner):
 			if mode == "train":
 				assert isinstance(a_out, tuple) # (mean, logvar)
 				dist = Independent(Normal(*a_out), 1)
-				if self._deterministic_eval and not self.training: act = a_out[0]
-				else: act = dist.rsample()
-				log_prob = dist.log_prob(act).unsqueeze(-1)
+				act = dist.rsample()
 				squashed_action = torch.tanh(act)
-				log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
-												np.finfo(np.float32).eps.item()).sum(-1, keepdim=True) # TODO remove, seems not used 
+				# log_prob = dist.log_prob(act).unsqueeze(-1)
+				# log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
+				# 								np.finfo(np.float32).eps.item()).sum(-1, keepdim=True) # TODO remove, seems not used 
 				res = squashed_action
 			elif mode == "eval":
 				res = a_out[0]
@@ -2316,8 +2315,10 @@ class TD3SACRunner(OfflineRLRunner):
 		batch = self._indices_to_batch(indices)
 		batch.valid_mask = valid_mask
 		batch = self._pre_update_process(batch)
+
+		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
+		
 		if self.ALGORITHM == "td3":
-			if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
 			# update cirtic
 			critic_info_ = self.update_critic(batch)
 			if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
@@ -2328,8 +2329,6 @@ class TD3SACRunner(OfflineRLRunner):
 			self._soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
 			self._soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
 			self._soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
-			self.record("learn/critic_loss", critic_info_["critic_loss"])
-			self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
 		elif self.ALGORITHM == "sac":
 			self.update_critic(batch)
 			self.update_actor(batch)
@@ -2613,7 +2612,9 @@ class TD3Runner(TD3SACRunner):
 			)[0].reshape(*pre_sz,-1), target_q, reduce=False)
 			
 		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
-
+		self.record("learn/critic_loss", critic_loss.cpu().item())
+		self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
+		
 		self.critic1_optim.zero_grad()
 		self.critic2_optim.zero_grad()
 		critic_loss.backward()
@@ -2703,25 +2704,27 @@ class SACRunner(TD3SACRunner):
 		pre_sz = list(batch.done.shape)
 		with torch.no_grad():
 			(mu, var), _ = self.actor(batch.a_in_next, state=None)
-			a_next, log_prob_next = self.actor.sample(mu, var)
-			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
-				torch.min(
-					self.critic1_old(torch.cat([batch.c_in_next, a_next],-1))[0],
-					self.critic2_old(torch.cat([batch.c_in_next, a_next],-1))[0]
-				).squeeze(-1) - self._alpha * log_prob_next
-			).reshape(*pre_sz,-1)
+			a_next, log_prob_next = self.actor.sample_act(mu, var)
+			v_next = torch.min(
+				self.critic1_old(torch.cat([batch.c_in_next, a_next],-1))[0],
+				self.critic2_old(torch.cat([batch.c_in_next, a_next],-1))[0]
+			).reshape(*pre_sz) - self._log_alpha.exp() * log_prob_next.reshape(*pre_sz)
+			target_q = batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * v_next
 		
 		# critic loss
 		critic_loss = \
 		F.mse_loss(self.critic1(
 			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].reshape(*pre_sz,-1), target_q, reduce=False) + \
+		)[0].reshape(*pre_sz), target_q, reduce=False) + \
 		F.mse_loss(self.critic2(
 			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].reshape(*pre_sz,-1), target_q, reduce=False)
-		
+		)[0].reshape(*pre_sz), target_q, reduce=False)
+
 		# use mask
 		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
+		self.record("learn/loss_critic", critic_loss.item())
+		self.record("learn/loss_critic_normed", critic_loss.item()/batch.valid_mask.float().mean().item())
+		self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
 
 		self.critic1_optim.zero_grad()
 		self.critic2_optim.zero_grad()
@@ -2739,17 +2742,18 @@ class SACRunner(TD3SACRunner):
 		
 		### actor loss
 		(mu, var), _ = self.actor(batch.a_in_cur, state=None)
-		a_cur, log_prob_cur = self.actor.sample_act((mu, var))
+		a_cur, log_prob_cur = self.actor.sample_act(mu, var)
 		current_q1a, _ = self.critic1(torch.cat([
 			batch.c_in_cur, a_cur
-		],-1)) # TODO check shape
+		],-1))
 		current_q2a, _ = self.critic2(torch.cat([
 			batch.c_in_cur, a_cur
-		],-1)) # TODO check shape
-		actor_loss = self._alpha * log_prob_cur.flatten() \
-			- torch.min(current_q1a, current_q2a) # TODO check the shape
-		actor_loss =  apply_mask(actor_loss, batch.valid_mask).mean()
+		],-1))
+		actor_loss = self._log_alpha.exp() * log_prob_cur - torch.min(current_q1a, current_q2a)
+		actor_loss = apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss += actor_loss
+		self.record("learn/loss_actor", actor_loss.item())
+		self.record("learn/loss_actor_normed", actor_loss.item()/batch.valid_mask.float().mean().item())
 		
 		# add pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
@@ -2814,16 +2818,22 @@ class SACRunner(TD3SACRunner):
 
 		# update alpha (use batch.log_prob_cur)
 		if self._is_auto_alpha:
-			log_prob = batch.log_prob_cur.detach() + self._target_entropy
-			# please take a look at issue #258 if you'd like to change this line
-			alpha_loss = (
-				-(self._log_alpha * log_prob.flatten()) * batch.valid_mask.flatten()
-				).mean()
+			# log_prob = log_prob_cur.detach() + self._target_entropy
+			# alpha_loss = (
+			# 	-(self._log_alpha.exp() * log_prob.flatten()) * batch.valid_mask.flatten()
+			# ).mean()
+			cur_entropy = - log_prob_cur.detach() # (*, 1)
+			alpha_loss = - self._log_alpha.exp() * apply_mask(self._target_entropy-cur_entropy, batch.valid_mask)
+			alpha_loss = alpha_loss.mean()
 			self._alpha_optim.zero_grad()
 			alpha_loss.backward()
 			self._alpha_optim.step()
-			self._alpha = self._log_alpha.detach().exp()
-
+			self.record("learn/alpha_loss_normed", alpha_loss.item() / batch.valid_mask.float().mean().item())
+			self.record("learn/alpha", self._log_alpha.exp().detach().cpu().item())
+			self.record("learn/log_alpha", self._log_alpha.detach().cpu().item())
+			self.record("learn/entropy", (-log_prob_cur.detach()).mean().cpu().item())
+			self.record("learn/entropy_target", self._target_entropy)
+		
 		return {
 			"actor_loss": actor_loss.cpu().item()
 		}
@@ -2848,7 +2858,7 @@ class SACRunner(TD3SACRunner):
 
 	def _init_sac_alpha(self):
 		"""
-		init self._alpha, self._log_alpha, self._alpha_optim
+		init self._log_alpha, self._alpha_optim, self._is_auto_alpha, self._target_entropy
 		"""
 		cfg = self.cfg
 		if isinstance(cfg.policy.alpha, Iterable):
@@ -2859,14 +2869,13 @@ class SACRunner(TD3SACRunner):
 				act_num = self.actor.act_num
 				self._target_entropy = - act_num
 			elif type(self._target_entropy) == float:
-				pass
+				self._target_entropy = torch.tensor(self._target_entropy).to(self.device)
 			else: 
 				raise ValueError("Invalid target entropy type.")
 			assert cfg.policy.alpha[1].shape == torch.Size([1]) and cfg.policy.alpha[1].requires_grad
 			self._alpha_optim = self._alpha_optim([self._log_alpha])
-			self._alpha = self._log_alpha.detach().exp()
 		elif isinstance(cfg.policy.alpha, float):
 			self._is_auto_alpha = False
-			self._alpha = cfg.policy.alpha
+			self._log_alpha = cfg.policy.alpha # here, the cfg alpha is actually log_alpha
 		else: 
 			raise ValueError("Invalid alpha type.")
