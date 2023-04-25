@@ -2331,8 +2331,14 @@ class TD3Runner(OfflineRLRunner):
 	def _pre_update_process(self, batch):
 		"""
 		only keep keys used in update
+		input keys: ["dobs", "dobs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done"]
+		output keys:
+			"a_in_cur", "a_in_next", "c_in_cur", "c_in_next"
+			"done", "rew", "act", "valid_mask"
+			(obs_pred) "pred_out_cur", "oobs", 
+
 		"""
-		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_next", "done", "terminated", "truncated", "rew", "act", "valid_mask"]
+		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_next", "done", "rew", "act", "valid_mask"]
 		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
 
 		# actor - obs base
