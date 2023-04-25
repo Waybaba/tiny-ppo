@@ -2831,7 +2831,7 @@ class SACRunner(TD3SACRunner):
 			self.record("learn/alpha_loss_normed", alpha_loss.item() / batch.valid_mask.float().mean().item())
 			self.record("learn/alpha", self._log_alpha.exp().detach().cpu().item())
 			self.record("learn/log_alpha", self._log_alpha.detach().cpu().item())
-			self.record("learn/entropy", (-log_prob_cur.detach()).mean().cpu().item())
+			self.record("learn/entropy", cur_entropy.mean().cpu().item())
 			self.record("learn/entropy_target", self._target_entropy)
 		
 		return {
