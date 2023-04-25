@@ -12,6 +12,27 @@
 			"console": "integratedTerminal",
 			"justMyCode": true
 		},
+		// TD3_SAC
+		{
+			"name": "TD3_SAC",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/entry.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				// "experiment=td3",
+				// "experiment=td3_rnn",
+				"experiment=sac",
+				// "experiment=sac_rnn",
+				// "env.name=HalfCheetah-v4",
+				"env.name=Hopper-v4",
+				// "env.name=Pendulum-v1",
+				// "env.name=DummyNum-v0",
+				"env.delay=0",
+				"start_timesteps=1000",
+			],
+		},
 		// entry.py
 		{
 			"name": "entry",
@@ -106,95 +127,7 @@
 				"start_timesteps=1",
 			],
 		},
-		{
-			"name": "ddpg",
-			"type": "python",
-			"request": "launch",
-			"program": "${workspaceFolder}/agent/ddpg.py",
-			"console": "integratedTerminal",
-			"justMyCode": true
-		},
-		// entry td3
-		{
-			"name": "td3",
-			"type": "python",
-			"request": "launch",
-			"program": "${workspaceFolder}/src/entry.py",
-			"console": "integratedTerminal",
-			"justMyCode": true,
-			"args": [
-				"experiment=td3",
-				// "env.name=HalfCheetah-v4",
-				"env.name=Hopper-v4",
-				// "env.name=Pendulum-v1",
-				// "env.name=DummyNum-v0",
-				"buffer.size=1e+6",
-				"env.delay=0",
-				"start_timesteps=1000",
-			],
-		},
-		// entry td3_rnn
-		{
-			"name": "td3_rnn",
-			"type": "python",
-			"request": "launch",
-			"program": "${workspaceFolder}/src/entry.py",
-			"console": "integratedTerminal",
-			"justMyCode": true,
-			"args": [
-				"experiment=td3_rnn",
-				"env.name=Hopper-v4",
-				// "env.name=HalfCheetah-v4",
-				"buffer.size=1e+6",
-				"env.delay=4",
-				"start_timesteps=10000",
-			],
-		},
-		// entry td3_tianshou
-        {
-            "name": "launch_amlt",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/src/launch_amlt.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            "args": [
-                "amlt.search.job_template.sku=G1",
-                "python","src/entry.py","-m",
-                "hydra/launcher=wsl_parallel",
-                "++trainer.log_upload_interval=100000",
-                "n_jobs=5",
-                "seed=#1,2,3,4#",
-                "env.delay=0,1,2,4,8",
-                "tags=test_tag"
-            ]
-        },
-		{
-			"name": "ppo_continuous",
-			"type": "python",
-			"request": "launch",
-			"program": "${workspaceFolder}/agent/ppo_continuous.py",
-			"console": "integratedTerminal",
-			"justMyCode": true
-		},
-		// agent/ppo.py
-		{
-			"name": "ppo",
-			"type": "python",
-			"request": "launch",
-			"program": "${workspaceFolder}/agent/ppo.py",
-			"console": "integratedTerminal",
-			"justMyCode": true
-		},
-		// agent/tmp.py
-		{
-			"name": "tmp",
-			"type": "python",
-			"request": "launch",
-			"program": "${workspaceFolder}/agent/tmp.py",
-			"console": "integratedTerminal",
-			"justMyCode": true
-		},
+
 	],
 
 }

@@ -30,17 +30,22 @@ trainer:
   progress_bar: true
   hide_eval_info_print: ${trainer.progress_bar}
 policy:
-  update_a_per_c: 2
   tau: 0.005
-  clip: 1.0
-  noise_decay_rate: 0.998
-  initial_exploration_noise: 0.1
-  policy_noise: 0.2
-  noise_clip: 0.5
   gamma: 0.99
-  exploration_noise:
-    _target_: tianshou.exploration.random.GaussianNoise
-    sigma: 0.1
+  alpha:
+    _target_: builtins.tuple
+    _args_:
+      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
+        - _target_: torch.zeros
+          size: 
+            _target_: builtins.tuple
+            _args_:
+              - - 1
+          requires_grad: true
+          device: ${device}
+        - _target_: torch.optim.Adam
+          _partial_: true
+          lr: 3e-4
 env_max_step: 5000
 
 # SAC specific
@@ -92,7 +97,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           mlp_hidden_sizes: [256]
           mlp_softmax: false
     obs_encode:
-      turn_on: true 
+      turn_on: false 
       feat_dim: 256
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
       before_policy_detach: false # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
@@ -162,7 +167,7 @@ critic1:
     mlp_softmax: false
 critic2: ${critic1}
 runner:
-  _target_: src.runner.TD3Runner
+  _target_: src.runner.SACRunner
   _partial_: true
 critic1_optim:
   _target_: ${actor_optim._target_}

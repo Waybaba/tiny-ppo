@@ -9,6 +9,7 @@ import wandb
 import numpy as np
 from tianshou.policy import SACPolicy
 from typing import Any, Dict, Optional, Sequence, Tuple, Type, Union, Callable, List
+from collections.abc import Iterable
 import numpy as np
 import torch
 from torch import nn
@@ -272,8 +273,6 @@ class SACPolicy(DDPGPolicy):
 		self.critic2_old.eval()
 		self.critic2_optim = critic2_optim
 
-		self._is_auto_alpha = False
-		self._alpha: Union[float, torch.Tensor]
 		if isinstance(alpha, tuple):
 			self._is_auto_alpha = True
 			self._target_entropy, self._log_alpha, self._alpha_optim = alpha
@@ -288,8 +287,11 @@ class SACPolicy(DDPGPolicy):
 			assert alpha[1].shape == torch.Size([1]) and alpha[1].requires_grad
 			self._alpha_optim = self._alpha_optim([alpha[1]])
 			self._alpha = self._log_alpha.detach().exp()
-		else:
+		elif isinstance(alpha, float):
+			self._is_auto_alpha = False
 			self._alpha = alpha
+		else: 
+			raise ValueError("Invalid alpha type.")
 
 		self._deterministic_eval = deterministic_eval
 		self.__eps = np.finfo(np.float32).eps.item()
@@ -547,8 +549,7 @@ class CustomSACPolicy(SACPolicy):
 			self.actor_optim.zero_grad()
 			actor_loss.backward()
 			self.actor_optim.step()
-			
-			
+		
 		### alpha loss
 		if self._is_auto_alpha:
 			log_prob = batch.log_prob_cur.detach() + self._target_entropy
@@ -1364,6 +1365,18 @@ class CustomRecurrentActorProb(nn.Module):
 			# sigma = torch.ones_like(sigma, device=self.device) * 1e-10
 			sigma = sigma * 1e-10
 		return (mu, sigma), state_
+
+	def sample_act(self, mu, var):
+		"""
+		Use torch distribution to sample action and return
+		act, log_prob
+		"""
+		dist = Independent(Normal(mu, var), 1)
+		act = dist.rsample()
+		log_prob = dist.log_prob(act).unsqueeze(-1)
+		squashed_action = torch.tanh(act)
+		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) + np.finfo(np.float32).eps.item()).sum(-1, keepdim=True)
+		return squashed_action, log_prob
 	
 class ObsPredNet(nn.Module):
 	"""
@@ -1704,7 +1717,7 @@ class DefaultRLRunner:
 		self.log("Logger init done!")
 
 
-class SACRunner(DefaultRLRunner):
+class SACRunner_(DefaultRLRunner):
 	def start(self, cfg):
 		self.log("SACRunner init start ...")
 		# TODO add cfg check here e.g. global_cfg == rnn, rnn_layer > 0
@@ -1940,10 +1953,12 @@ class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
 		super().start(cfg)
 
-		self.log("Init Components ...")
-		self._init_components()
+		self.log("_init_basic_components_for_all_alg ...")
+		self._init_basic_components_for_all_alg()
+		self.log("init_components ...")
+		self.init_components()
 
-		self.log("Initial Exploration ...")
+		self.log("_initial_exploration ...")
 		self._initial_exploration()
 
 		self.log("Training Start ...")
@@ -1957,10 +1972,6 @@ class OfflineRLRunner(DefaultRLRunner):
 			# update
 			if self._should_update(): 
 				for _ in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
-					# batch, indices = self.buf.sample(self.cfg.trainer.batch_size) # sample
-					# indices, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.global_cfg.actor_input.history_num)
-					# batch = self.buf[indices]
-					# batch.valid_mask = valid_mask
 					self.update_once()
 			
 			# evaluate
@@ -1982,39 +1993,24 @@ class OfflineRLRunner(DefaultRLRunner):
 
 		self._end_all()
 
-	def _init_components(self):
+	def _init_basic_components_for_all_alg(self):
 		cfg = self.cfg
 		env = self.env
+		# basic for all algorithms
 		self.global_cfg = cfg.global_cfg
-		self.log("Init networks ...")
-		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
-		self.actor_optim = cfg.actor_optim(self.actor.parameters())
-		self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
-		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
-		self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
-		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
-		self.actor_old = deepcopy(self.actor)
-		self.critic1_old = deepcopy(self.critic1)
-		self.critic2_old = deepcopy(self.critic2)
-		self.critic1.train()
-		self.critic2.train()
-		self.critic1_old.train()
-		self.critic2_old.train()
-		self.actor_old.eval()
 		self.log("Init buffer & collector ...")
 		self.buf = cfg.buffer
 		self.train_collector = EnvCollector(env)
 		self.test_collector = EnvCollector(env)
 		self.log("Init others ...")
-		self.exploration_noise = cfg.policy.initial_exploration_noise
 		self.record = WaybabaRecorder()
 		self._start_time = time()
 		if self.cfg.trainer.progress_bar:
 			self.progress = Progress()
 			self.progress.start()
-		self._noise = self.cfg.policy.exploration_noise
-		self._noise_clip = self.cfg.policy.noise_clip
-		if hasattr(self, "init_components"): self.init_components()
+
+	def init_components(self):
+		raise NotImplementedError
 
 	def _initial_exploration(self):
 		"""exploration before training and add to self.buf"""
@@ -2143,9 +2139,37 @@ class OfflineRLRunner(DefaultRLRunner):
 	def _should_end(self):
 		return self.env_step_global >= self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
 
-class TD3Runner(OfflineRLRunner):
-	
+class TD3SACRunner(OfflineRLRunner):
+
 	def init_components(self):
+		self.log("Init networks ...")
+		env = self.env
+		cfg = self.cfg
+
+		# networks
+		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
+		self.actor_optim = cfg.actor_optim(self.actor.parameters())
+		self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
+		self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
+		self.critic1_old = deepcopy(self.critic1)
+		self.critic2_old = deepcopy(self.critic2)
+		self.critic1.train()
+		self.critic2.train()
+		self.critic1_old.train()
+		self.critic2_old.train()
+		if self.ALGORITHM == "td3":
+			self.actor_old = deepcopy(self.actor)
+			self.actor_old.eval()
+			self.exploration_noise = cfg.policy.initial_exploration_noise
+			self._noise = self.cfg.policy.exploration_noise
+			self._noise_clip = self.cfg.policy.noise_clip
+		if self.ALGORITHM == "sac":
+			# if iterable
+			self.log("init sac alpha ...")
+			self._init_sac_alpha()
+		# obs pred & encode
 		assert not (self.global_cfg.actor_input.obs_pred.turn_on and self.global_cfg.actor_input.obs_encode.turn_on), "obs_pred and obs_encode cannot be used at the same time"
 		
 		if self.global_cfg.actor_input.obs_pred.turn_on:
@@ -2186,18 +2210,13 @@ class TD3Runner(OfflineRLRunner):
 					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
 				)], device=self.actor.device)
 	
-	def select_act_for_env(self, batch, state, mode=None):
-		res_state = {}
-		a_in = batch.obs
-		process_online_batch_info = {}
-
+	def preprocess_from_env(self, batch, state, mode=None):
 		assert len(batch.obs.shape) == 1, "for online batch, batch size must be 1"
+		res_state = {}
 
-		# obs basic
 		if self.global_cfg.actor_input.obs_type == "normal": a_in = batch.obs
 		elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
 
-		# obs processing
 		if self.global_cfg.actor_input.history_merge_method == "none":
 			pass
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
@@ -2243,28 +2262,45 @@ class TD3Runner(OfflineRLRunner):
 				raise NotImplementedError("stack_rnn + obs_encode not implemented")
 				encode_output, res_state = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
-				process_online_batch_info["hidden_obs_encode_rnn"] = res_state["hidden"]
 		else:
 			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")
 		
-
-		if not isinstance(a_in, torch.Tensor):
-			a_in = torch.tensor(a_in, dtype=torch.float32).to(self.cfg.device)
+		return a_in, res_state
+	
+	def select_act_for_env(self, batch, state, mode=None):
+		a_in, res_state = self.preprocess_from_env(batch, state, mode=mode)
 		
-		# train eval diff
+		# forward
+		if not isinstance(a_in, torch.Tensor): a_in = torch.tensor(a_in, dtype=torch.float32).to(self.cfg.device)
 		state_for_a = distill_state(state, {"hidden": "hidden"})
-		a_ori, actor_state = self.actor(a_in, state_for_a)
+		a_out, actor_state = self.actor(a_in, state_for_a)
 		res_state = update_state(res_state, actor_state, {"hidden": "hidden"})
-		a_ori = a_ori[0]
-		if mode == "train":
-			noise = torch.tensor(self._noise(a_ori.shape), device=self.cfg.device)
-			if self.cfg.policy.noise_clip > 0.0:
-				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
-			res = a_ori + noise
-		elif mode == "eval":
-			res = a_ori
-		else:
-			raise NotImplementedError
+		
+		if self.ALGORITHM == "td3":
+			if mode == "train":
+				a_out = a_out[0]
+				noise = torch.tensor(self._noise(a_out.shape), device=self.cfg.device)
+				if self.cfg.policy.noise_clip > 0.0:
+					noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+				res = a_out + noise
+			elif mode == "eval":
+				res = a_out[0]
+			else: 
+				raise ValueError("unknown mode: {}".format(mode))
+		elif self.ALGORITHM == "sac":
+			if mode == "train":
+				assert isinstance(a_out, tuple) # (mean, logvar)
+				dist = Independent(Normal(*a_out), 1)
+				if self._deterministic_eval and not self.training: act = a_out[0]
+				else: act = dist.rsample()
+				log_prob = dist.log_prob(act).unsqueeze(-1)
+				squashed_action = torch.tanh(act)
+				log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
+												np.finfo(np.float32).eps.item()).sum(-1, keepdim=True) # TODO remove, seems not used 
+				res = squashed_action
+			elif mode == "eval":
+				res = a_out[0]
+
 		return res, res_state if res_state else None
 	
 	def on_collect_end(self, **kwargs):
@@ -2280,29 +2316,33 @@ class TD3Runner(OfflineRLRunner):
 		batch = self._indices_to_batch(indices)
 		batch.valid_mask = valid_mask
 		batch = self._pre_update_process(batch)
-		# return # TODO tidy up
-		# batch = self._sample_batch(indices)
-		# batch = self._pre_update_process(batch)
-		if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
-		# update cirtic
-		critic_info_ = self.update_critic(batch)
-		if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
-			# update actor
-			actor_info_ = self.update_actor(batch)
-			self.record("learn/actor_loss", actor_info_["actor_loss"])
-			self.exploration_noise *= self.cfg.policy.noise_decay_rate
-		
-		# update pred/encode
-		# if self.global_cfg.actor_input.obs_pred.turn_on: self.update_pred_net(batch, indices)
-		# if self.global_cfg.actor_input.obs_encode.turn_on: self.update_encode_net(batch, indices)
-		
-		self.soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
-		self.soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
-		self.soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
-		self.record("learn/critic_loss", critic_info_["critic_loss"])
-		self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
+		if self.ALGORITHM == "td3":
+			if not hasattr(self, "critic_update_cnt"): self.update_cnt = 0
+			# update cirtic
+			critic_info_ = self.update_critic(batch)
+			if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
+				# update actor
+				actor_info_ = self.update_actor(batch)
+				self.record("learn/actor_loss", actor_info_["actor_loss"])
+				self.exploration_noise *= self.cfg.policy.noise_decay_rate
+			self._soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
+			self._soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
+			self._soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
+			self.record("learn/critic_loss", critic_info_["critic_loss"])
+			self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
+		elif self.ALGORITHM == "sac":
+			self.update_critic(batch)
+			self.update_actor(batch)
+			self._soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
+			self._soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
 		self.update_cnt += 1
 	
+	def update_critic(self, batch):
+		raise NotImplementedError
+	
+	def update_actor(self, batch):
+		raise NotImplementedError
+
 	def _indices_to_batch(self, indices):
 		""" sample batch from buffer with indices
 		After sampling, indices are discarded. So we need to make sure that
@@ -2445,328 +2485,11 @@ class TD3Runner(OfflineRLRunner):
 		
 		return batch
 
-		# 
-		if 1:
-			pass
-		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			buffer = self.buf
-			assert self.global_cfg.actor_input.history_num >= 0
-			if self.global_cfg.actor_input.history_num > 0:
-				idx_stack = utils.idx_stack(indices, buffer, self.global_cfg.actor_input.history_num, direction=self.global_cfg.actor_input.trace_direction) # (B, T)
-				# del indices
-				idx_end = idx_stack[:,-1] # (B, )
-				batch_end = buffer[idx_end] # (B, *)
-				assert (idx_end == indices).all(), f"{idx_end} {indices}"
-				batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, T, *)
-				batch_end.a_in_cur = torch.cat([
-					torch.tensor(self.get_obs_base(batch_end, "actor", "cur"),device=self.actor.device), # (B, T, *)
-					self.get_historical_act(idx_end, self.global_cfg.actor_input.history_num, buffer, "cat", self.actor.device) \
-					if not self.global_cfg.actor_input.noise_act_debug else \
-					torch.normal(size=stacked_batch_prev["act"].reshape(batch_end.obs.shape[0],-1).shape, mean=0., std=1.,device=self.actor.device),
-				], dim=-1) # (B, T, obs_dim + act_dim * history_num)
-				batch_end.a_in_next = torch.cat([
-					torch.tensor(self.get_obs_base(batch_end, "actor", "next"),device=self.actor.device), # (B, T, *)
-					self.get_historical_act(buffer.next(idx_end), self.global_cfg.actor_input.history_num, buffer, "cat", self.actor.device) \
-					if not self.global_cfg.actor_input.noise_act_debug else \
-					torch.normal(size=stacked_batch_cur["act"].reshape(len(batch_end),-1).shape, mean=0., std=1.,device=self.actor.device),
-				], dim=-1) # (B, T, obs_dim + act_dim * history_num)
-				# make mask
-				if self.global_cfg.actor_input.trace_direction == "next":
-					raise ValueError("use next in cal_mlp would cause the start several steps never been learnt, which is fatal in Hopper since episode length is short")
-					# all that reach end of episode should be invalid
-					batch_end.valid_mask = torch.tensor(idx_end != buffer.next(idx_end), device=self.actor.device).int() # (B, T)
-				elif self.global_cfg.actor_input.trace_direction == "prev":
-					# all are valid while before the first action should be 0 filled
-					batch_end.valid_mask = torch.ones(idx_end.shape, device=self.actor.device).int() # (B, T)
-				else: raise ValueError("trace_direction should be next or prev")
-				# obs_pred & obs_encode
-				indices = idx_end
-				batch = batch_end
-				batch.obs_nodelay = self.buf[self.buf.prev(indices)].info["obs_next_nodelay"]
-				batch.obs_nodelay = torch.tensor(batch.obs_nodelay, device=self.cfg.device)
-				batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
-				batch.to_torch(device=self.cfg.device, dtype=torch.float32)
-			else:
-				batch.a_in_cur = self.get_obs_base(batch, "actor", "cur")
-				batch.a_in_next = self.get_obs_base(batch, "actor", "next")
-				batch.valid_mask = torch.ones([len(batch)], device=self.actor.device).int()
-		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			buffer = self.buf
-			assert self.global_cfg.actor_input.history_num > 1, "stack_rnn requires history_num > 1, ususally, it would be 20,40,... since we process long history when running online."
-			assert self.global_cfg.actor_input.history_num > self.global_cfg.actor_input.burnin_num, "stack_rnn requires history_num > burnin_num, ususally, it could be a little larger than burnin_num"
-			assert self.global_cfg.actor_input.trace_direction == "prev", "stack_rnn requires trace_direction == prev"
-			idx_stack = indices
-			# idx_stack = utils.idx_stack(indices, buffer, self.global_cfg.actor_input.history_num, direction=self.global_cfg.actor_input.trace_direction) # (B, T)
-			# if self.global_cfg.actor_input.rnn_idx_adjust_dis_to_start:
-			# 	adjust_dis = self.global_cfg.actor_input.rnn_idx_adjust_dis_to_start 
-			# 	adjust_dis = int(adjust_dis * self.global_cfg.actor_input.history_num) \
-			# 	if isinstance(adjust_dis, float) else adjust_dis
-			# 	idx_stack = self.adjust_idx_stack(idx_stack, adjust_dis, buffer)
-			# del indices
-			idx_end = idx_stack[:,-1] # (B, )
-			batch_end = buffer[idx_end] # (B, *)
-			batch_stack = buffer[idx_stack] # (B, T, *)
-			batch_end.info["obs_nodelay"] = buffer[buffer.prev(idx_end)].info["obs_next_nodelay"] # (B, *)
-			batch_stack.info["obs_nodelay"] = buffer[buffer.prev(idx_stack)].info["obs_next_nodelay"] # (B, T, *)
-			batch_stack.a_in_cur = torch.cat([
-				torch.tensor(self.get_obs_base(batch_stack, "actor", "cur"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
-				self.get_historical_act(idx_stack, 1, buffer, "cat", self.actor.device) # (B, T, act_dim)
-			], dim=-1) # (B, T, obs_dim+act_dim)
-			batch_stack.a_in_next = torch.cat([
-				torch.tensor(self.get_obs_base(batch_stack, "actor", "next"),device=self.actor.device), # (B, T, obs_dim) # (B, T, act_dim)
-				self.get_historical_act(buffer.next(idx_stack), 1, buffer, "cat", self.actor.device)
-			], dim=-1) # (B, T, obs_dim+act_dim)
-			# make mask
-			# if self.global_cfg.actor_input.trace_direction == "next":
-			# 	# end step is invalid
-			# 	batch_stack.valid_mask = torch.tensor(idx_stack != buffer.next(idx_stack), device=self.actor.device).int() # (B, T)
-			# elif self.global_cfg.actor_input.trace_direction == "prev":
-			# 	# start step is invalid
-			# 	batch_stack.valid_mask = torch.tensor(idx_stack != buffer.prev(idx_stack), device=self.actor.device).int() # (B, T)
-			# else: raise ValueError("trace_direction should be next or prev")
-
-			# if the start of the idx reach start or end of the idx reach end, then the whole episode is invalid
-			# idx_stack: B, T
-			# if self.global_cfg.actor_input.seq_mask == True:
-			# 	reach_start = idx_stack[:,0] == buffer.prev(idx_stack[:,0]) # (B, )
-			# 	reach_end = idx_stack[:,-1] == buffer.next(idx_stack[:,-1]) # (B, )
-			# 	batch_stack.valid_mask[reach_start==1,:] = 0
-			# 	batch_stack.valid_mask[reach_end==1,:] = 0
-			# elif self.global_cfg.actor_input.seq_mask == False:
-			# 	reach_start = idx_stack == buffer.prev(idx_stack) # (B, T)
-			# 	reach_end = idx_stack == buffer.next(idx_stack) # (B, T)
-			# 	batch_stack.valid_mask[reach_start==1] = 0
-			# 	batch_stack.valid_mask[reach_end==1] = 0
-			# else: raise ValueError("seq_mask should be True or False")
-			burnin_num = int(self.global_cfg.actor_input.burnin_num * self.global_cfg.actor_input.history_num) \
-			if type(self.global_cfg.actor_input.burnin_num) == float \
-			else self.global_cfg.actor_input.burnin_num
-			# make burnin input
-			burnin_a_in_cur = None
-			burnin_a_in_next = None
-			
-			if self.global_cfg.actor_input.burnin_short_unlock_num: # burnin_short_unlock
-				burnin_unlock_num = int(self.global_cfg.actor_input.burnin_short_unlock_num * self.global_cfg.actor_input.history_num) \
-				if type(self.global_cfg.actor_input.burnin_short_unlock_num) == float \
-				else self.global_cfg.actor_input.burnin_short_unlock_num
-				# if idx start from < burnin_unlock_num, then unlock the whole sequence
-				idx_start = idx_stack[:,0] # (B, )
-				for _ in range(burnin_unlock_num): idx_start = buffer.prev(idx_start)
-				idx_burnin_unlock = idx_start == buffer.prev(idx_start) # (B, )
-			batch_stack.valid_mask[idx_burnin_unlock!=1,:burnin_num] = 0
-			
-			if self.global_cfg.actor_input.trace_direction == "next":
-				seq_reach_start = idx_stack[:,0] == buffer.prev(idx_stack[:,0])
-				batch_stack.valid_mask[seq_reach_start] = True
-			# obs_pred & obs_encode
-			if self.global_cfg.actor_input.obs_pred.turn_on:
-				keeped_keys += ["pred_out_cur", "obs_nodelay"]
-				batch_stack.pred_in_cur = batch_stack.a_in_cur
-				batch_stack.pred_in_next = batch_stack.a_in_next
-				batch_stack.pred_out_cur, pred_info_cur = self.pred_net(batch_stack.pred_in_cur, state=None)
-				batch_stack.pred_out_next, pred_info_next = self.pred_net(batch_stack.pred_in_next, state=None)
-				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
-					batch_stack.a_in_cur = batch_stack.pred_out_cur # (B*T, *)
-					batch_stack.a_in_next = batch_stack.pred_out_next # (B*T, *)
-				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
-					batch_stack.a_in_cur = pred_info_cur["feats"] # (B*T, *)
-					batch_stack.a_in_next = pred_info_next["feats"]
-				else:
-					raise NotImplementedError
-				# detach
-				if self.global_cfg.actor_input.obs_pred.middle_detach: 
-					batch_stack.a_in_cur = batch_stack.a_in_cur.detach()
-					batch_stack.a_in_next = batch_stack.a_in_next.detach()
-				if self.global_cfg.actor_input.obs_pred.net_type == "vae":
-					raise NotImplementedError("vae for rnn is not implemented yet")
-					batch_stack.pred_info_cur_mu = pred_info_cur["mu"]
-					batch_stack.pred_info_cur_logvar = pred_info_cur["logvar"]
-			if self.global_cfg.actor_input.obs_encode.turn_on:
-				raise NotImplementedError("obs_encode is not implemented yet")
-				batch_end.encode_obs_in_cur = batch_end.a_in_cur
-				batch_end.encode_obs_in_next = batch_end.a_in_next
-				batch_end.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch_end.encode_obs_in_cur)
-				batch_end.encode_obs_out_next, encode_obs_info_next = self.encode_net.normal_encode(batch_end.encode_obs_in_next)
-				batch_end.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch_end.info["obs_nodelay"])
-				batch_end.encode_oracle_obs_output_next, encode_oracle_obs_info_next = self.encode_net.oracle_encode(batch_end.info["obs_next_nodelay"])
-				batch_end.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
-				batch_end.encode_normal_info_cur_logvar = encode_obs_info_cur["logvar"]
-				batch_end.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
-				batch_end.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
-				if self.global_cfg.actor_input.obs_encode.train_eval_async == True:
-					batch_end.a_in_cur = batch_end.encode_oracle_obs_output_cur
-					batch_end.a_in_next = batch_end.encode_oracle_obs_output_next
-				elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
-					batch_end.a_in_cur = batch_end.encode_obs_out_cur
-					batch_end.a_in_next = batch_end.encode_obs_out_next
-				else:
-					raise ValueError("batch_end error")
-				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-					batch_end.pred_obs_output_cur, _ = self.encode_net.decode(batch_end.encode_obs_out_cur)
-				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
-					batch_end.a_in_cur = batch_end.a_in_cur.detach()
-					batch_end.a_in_next = batch_end.actor_input_next.detach()
-			# end
-			indices = idx_stack
-			batch = batch_stack
-			batch.obs_nodelay = self.buf[self.buf.prev(indices)].info["obs_next_nodelay"]
-			batch.obs_nodelay = torch.tensor(batch.obs_nodelay, device=self.cfg.device)
-			batch.obs_next_nodelay = batch.info["obs_next_nodelay"]
-			batch.to_torch(device=self.cfg.device, dtype=torch.float32)
-		else: raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
-
-
-		return batch, indices
-
-	def update_critic(self, batch):
-		pre_sz = list(batch.done.shape)
-		with torch.no_grad():
-			batch.a_next_online = self.actor_old(batch.a_in_next, state=None)[0][0]
-			noise = torch.randn(size=batch.a_next_online.shape, device=batch.a_next_online.device) * self.cfg.policy.noise_clip
-			if self.cfg.policy.noise_clip > 0.0:
-				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
-			batch.a_next_online += noise
-			
-			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
-				torch.min(
-					self.critic1_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0],
-					self.critic2_old(torch.cat([batch.c_in_next, batch.a_next_online],-1))[0]
-				).squeeze(-1)
-			).reshape(*pre_sz,-1)
-		
-		critic_loss = F.mse_loss(self.critic1(
-			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].reshape(*pre_sz,-1), target_q, reduce=False) + \
-		F.mse_loss(self.critic2(
-			torch.cat([batch.c_in_cur, batch.act],-1)
-		)[0].reshape(*pre_sz,-1), target_q, reduce=False)
-		# use app
-		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
-
-		self.critic1_optim.zero_grad()
-		self.critic2_optim.zero_grad()
-		critic_loss.backward()
-		self.critic1_optim.step()
-		self.critic2_optim.step()
-
-		return {
-			"critic_loss": critic_loss.cpu().item()
-		}
-
-	def update_actor(self, batch):
-		res_info = {}
-		actor_loss, _ = self.critic1(torch.cat([
-			batch.c_in_cur, 
-			self.actor(batch.a_in_cur, state=None)[0][0]
-		],-1))
-		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
-		combined_loss = 0. + actor_loss
-		# add pred loss
-		if self.global_cfg.actor_input.obs_pred.turn_on:
-			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
-			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
-			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
-			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
-			self.record("learn/obs_pred/pred_loss", pred_loss.item())
-			self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
-			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
-			self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
-			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
-				kl_loss = kl_divergence(
-					batch.pred_info_cur_mu,
-					batch.pred_info_cur_logvar,
-					torch.zeros_like(batch.pred_info_cur_mu),
-					torch.zeros_like(batch.pred_info_cur_logvar),
-				)
-				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
-				self.record("learn/obs_pred/loss_kl", kl_loss.item())
-				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
-				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
-					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
-					self._auto_kl_optim.zero_grad()
-					kl_weight_loss.backward()
-					self._auto_kl_optim.step()
-					self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
-		# add encode loss
-		elif self.global_cfg.actor_input.obs_encode.turn_on:
-			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
-			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
-			self.record("learn/obs_encode/loss_kl", kl_loss.item())
-			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
-			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-				pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
-				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
-				self.record("learn/obs_encode/loss_pred", pred_loss.item())
-				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
-				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
-			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
-				self._auto_kl_optim.zero_grad()
-				kl_weight_loss.backward()
-				self._auto_kl_optim.step()
-				self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-				self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
-		
-		# backward and optim
-		self.actor_optim.zero_grad()
-		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.zero_grad()
-		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.zero_grad()
-		combined_loss.backward()
-		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.step()
-		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.step()
-		self.actor_optim.step()
-
-		return {
-			"actor_loss": actor_loss.cpu().item()
-		}
-
-	def soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
-		"""Softly update the parameters of target module towards the parameters \
-		of source module."""
-		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
-			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
-
 	def on_evaluate_end(self, **kwargs):
 		"""called after a step of evaluation"""
 		self.record("eval/rew_mean", kwargs["rew_mean"])
 		self.record("eval/len_mean", kwargs["len_mean"])
 		self.record("epoch", self.epoch_cnt)
-
-	def get_obs_base(self, batch, a_or_c, stage):
-		""" return the obs base for actor and critic
-		the return is depends on self.global_cfg.actor_input.obs_type and \
-			self.global_cfg.critic_input.obs_type
-		:param batch: batch
-		:param a_or_c: "actor" or "critic"
-		:param stage: "cur" or "next"
-		ps. only called in process stage
-		"""
-		assert stage in ["cur", "next"]
-		assert a_or_c in ["actor", "critic"]
-		raise DeprecationWarning("get_obs_base is deprecated, use get_obs instead")
-		assert False
-		assert self.global_cfg.actor_input.obs_type in ["normal", "oracle"]
-		if a_or_c == "actor":
-			if self.global_cfg.actor_input.obs_type == "normal":
-				if stage == "cur": return batch.obs
-				elif stage == "next": return batch.obs_next
-			elif self.global_cfg.actor_input.obs_type == "oracle":
-				if stage == "cur": 
-					try: return batch.info["obs_nodelay"]
-					except: return batch.obs_nodelay
-				elif stage == "next": return batch.info["obs_next_nodelay"]
-		elif a_or_c == "critic":
-			if self.global_cfg.critic_input.obs_type == "normal":
-				if stage == "cur": return batch.obs
-				elif stage == "next": return batch.obs_next
-			elif self.global_cfg.critic_input.obs_type == "oracle":
-				if stage == "cur": return batch.info["obs_nodelay"]
-				elif stage == "next": return batch.info["obs_next_nodelay"]
 
 	def _get_historical_act(self, indices, step, buffer, type=None, device=None):
 		""" get historical act
@@ -2856,10 +2579,294 @@ class TD3Runner(OfflineRLRunner):
 
 		return res
 
+	def _soft_update(self, tgt: nn.Module, src: nn.Module, tau: float) -> None:
+		"""Softly update the parameters of target module towards the parameters \
+		of source module."""
+		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
+			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
 
+class TD3Runner(TD3SACRunner):
+	ALGORITHM = "td3"
 
+	def update_critic(self, batch):
+		pre_sz = list(batch.done.shape)
+		with torch.no_grad():
+			a_next_online_old = self.actor_old(batch.a_in_next, state=None)[0][0]
+			noise = torch.randn(size=a_next_online_old.shape, device=a_next_online_old.device) * self.cfg.policy.noise_clip
+			if self.cfg.policy.noise_clip > 0.0:
+				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+			a_next_online_old += noise
+			
+			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+				torch.min(
+					self.critic1_old(torch.cat([batch.c_in_next, a_next_online_old],-1))[0],
+					self.critic2_old(torch.cat([batch.c_in_next, a_next_online_old],-1))[0]
+				).squeeze(-1)
+			).reshape(*pre_sz,-1)
+		
+		critic_loss = \
+			F.mse_loss(self.critic1(
+				torch.cat([batch.c_in_cur, batch.act],-1)
+			)[0].reshape(*pre_sz,-1), target_q, reduce=False) + \
+			F.mse_loss(self.critic2(
+				torch.cat([batch.c_in_cur, batch.act],-1)
+			)[0].reshape(*pre_sz,-1), target_q, reduce=False)
+			
+		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
 
+		self.critic1_optim.zero_grad()
+		self.critic2_optim.zero_grad()
+		critic_loss.backward()
+		self.critic1_optim.step()
+		self.critic2_optim.step()
 
-				
+		return {
+			"critic_loss": critic_loss.cpu().item()
+		}
 
+	def update_actor(self, batch):
+		res_info = {}
+		actor_loss, _ = self.critic1(torch.cat([
+			batch.c_in_cur, 
+			self.actor(batch.a_in_cur, state=None)[0][0]
+		],-1))
+		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
+		combined_loss = 0. + actor_loss
+		# add pred loss
+		if self.global_cfg.actor_input.obs_pred.turn_on:
+			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
+			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
+			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
+			self.record("learn/obs_pred/pred_loss", pred_loss.item())
+			self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
+			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
+			self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
+			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
+				kl_loss = kl_divergence(
+					batch.pred_info_cur_mu,
+					batch.pred_info_cur_logvar,
+					torch.zeros_like(batch.pred_info_cur_mu),
+					torch.zeros_like(batch.pred_info_cur_logvar),
+				)
+				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
+				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
+				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				self.record("learn/obs_pred/loss_kl", kl_loss.item())
+				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
+				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+					self._auto_kl_optim.zero_grad()
+					kl_weight_loss.backward()
+					self._auto_kl_optim.step()
+					self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		# add encode loss
+		elif self.global_cfg.actor_input.obs_encode.turn_on:
+			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
+			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
+			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
+			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
+			self.record("learn/obs_encode/loss_kl", kl_loss.item())
+			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
+			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+				pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
+				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+				self.record("learn/obs_encode/loss_pred", pred_loss.item())
+				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
+				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
+			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
+				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				self._auto_kl_optim.zero_grad()
+				kl_weight_loss.backward()
+				self._auto_kl_optim.step()
+				self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+				self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		
+		# backward and optim
+		self.actor_optim.zero_grad()
+		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.zero_grad()
+		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.zero_grad()
+		combined_loss.backward()
+		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.step()
+		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.step()
+		self.actor_optim.step()
 
+		return {
+			"actor_loss": actor_loss.cpu().item()
+		}
+
+class SACRunner(TD3SACRunner):
+	ALGORITHM = "sac"
+	def update_critic(self, batch):
+		# cal target_q
+		pre_sz = list(batch.done.shape)
+		with torch.no_grad():
+			(mu, var), _ = self.actor(batch.a_in_next, state=None)
+			a_next, log_prob_next = self.actor.sample(mu, var)
+			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+				torch.min(
+					self.critic1_old(torch.cat([batch.c_in_next, a_next],-1))[0],
+					self.critic2_old(torch.cat([batch.c_in_next, a_next],-1))[0]
+				).squeeze(-1) - self._alpha * log_prob_next
+			).reshape(*pre_sz,-1)
+		
+		# critic loss
+		critic_loss = \
+		F.mse_loss(self.critic1(
+			torch.cat([batch.c_in_cur, batch.act],-1)
+		)[0].reshape(*pre_sz,-1), target_q, reduce=False) + \
+		F.mse_loss(self.critic2(
+			torch.cat([batch.c_in_cur, batch.act],-1)
+		)[0].reshape(*pre_sz,-1), target_q, reduce=False)
+		
+		# use mask
+		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
+
+		self.critic1_optim.zero_grad()
+		self.critic2_optim.zero_grad()
+		critic_loss.backward()
+		self.critic1_optim.step()
+		self.critic2_optim.step()
+
+		return {
+			"critic_loss": critic_loss.cpu().item()
+		}
+	
+	def update_actor(self, batch):
+		res_info = {}
+		combined_loss = 0.
+		
+		### actor loss
+		(mu, var), _ = self.actor(batch.a_in_cur, state=None)
+		a_cur, log_prob_cur = self.actor.sample_act((mu, var))
+		current_q1a, _ = self.critic1(torch.cat([
+			batch.c_in_cur, a_cur
+		],-1)) # TODO check shape
+		current_q2a, _ = self.critic2(torch.cat([
+			batch.c_in_cur, a_cur
+		],-1)) # TODO check shape
+		actor_loss = self._alpha * log_prob_cur.flatten() \
+			- torch.min(current_q1a, current_q2a) # TODO check the shape
+		actor_loss =  apply_mask(actor_loss, batch.valid_mask).mean()
+		combined_loss += actor_loss
+		
+		# add pred loss
+		if self.global_cfg.actor_input.obs_pred.turn_on:
+			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
+			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
+			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
+			self.record("learn/obs_pred/pred_loss", pred_loss.item())
+			self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
+			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
+			self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
+			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
+				kl_loss = kl_divergence(
+					batch.pred_info_cur_mu,
+					batch.pred_info_cur_logvar,
+					torch.zeros_like(batch.pred_info_cur_mu),
+					torch.zeros_like(batch.pred_info_cur_logvar),
+				)
+				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
+				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
+				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				self.record("learn/obs_pred/loss_kl", kl_loss.item())
+				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
+				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+					self._auto_kl_optim.zero_grad()
+					kl_weight_loss.backward()
+					self._auto_kl_optim.step()
+					self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		
+		# add encode loss
+		if self.global_cfg.actor_input.obs_encode.turn_on:
+			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
+			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
+			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
+			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
+			self.record("learn/obs_encode/loss_kl", kl_loss.item())
+			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
+			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+				pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
+				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+				self.record("learn/obs_encode/loss_pred", pred_loss.item())
+				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
+				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
+			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
+				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				self._auto_kl_optim.zero_grad()
+				kl_weight_loss.backward()
+				self._auto_kl_optim.step()
+				self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+				self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		
+		# backward and optim
+		self.actor_optim.zero_grad()
+		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.zero_grad()
+		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.zero_grad()
+		combined_loss.backward()
+		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.step()
+		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.step()
+		self.actor_optim.step()
+
+		# update alpha (use batch.log_prob_cur)
+		if self._is_auto_alpha:
+			log_prob = batch.log_prob_cur.detach() + self._target_entropy
+			# please take a look at issue #258 if you'd like to change this line
+			alpha_loss = (
+				-(self._log_alpha * log_prob.flatten()) * batch.valid_mask.flatten()
+				).mean()
+			self._alpha_optim.zero_grad()
+			alpha_loss.backward()
+			self._alpha_optim.step()
+			self._alpha = self._log_alpha.detach().exp()
+
+		return {
+			"actor_loss": actor_loss.cpu().item()
+		}
+
+	def _mse_optimizer(self,
+			batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
+		) -> Tuple[torch.Tensor, torch.Tensor]:
+		"""A simple wrapper script for updating critic network."""
+		weight = getattr(batch, "weight", 1.0)
+		current_q, critic_state = critic(batch.critic_input_cur_offline)
+		target_q = torch.tensor(batch.returns).to(current_q.device)
+		td = current_q.flatten() - target_q.flatten()
+		critic_loss = (
+			(td.pow(2) * weight) * batch.valid_mask.flatten()
+		).mean()
+		critic_loss = (td.pow(2) * weight)
+		critic_loss = critic_loss.mean()
+		optimizer.zero_grad()
+		critic_loss.backward()
+		optimizer.step()
+		return td, critic_loss
+
+	def _init_sac_alpha(self):
+		"""
+		init self._alpha, self._log_alpha, self._alpha_optim
+		"""
+		cfg = self.cfg
+		if isinstance(cfg.policy.alpha, Iterable):
+			self._is_auto_alpha = True
+			self._target_entropy, self._log_alpha, self._alpha_optim = cfg.policy.alpha
+			if type(self._target_entropy) == str and self._target_entropy == "neg_act_num":
+				assert hasattr(self.actor, "act_num"), "actor must have act_num attribute"
+				act_num = self.actor.act_num
+				self._target_entropy = - act_num
+			elif type(self._target_entropy) == float:
+				pass
+			else: 
+				raise ValueError("Invalid target entropy type.")
+			assert cfg.policy.alpha[1].shape == torch.Size([1]) and cfg.policy.alpha[1].requires_grad
+			self._alpha_optim = self._alpha_optim([self._log_alpha])
+			self._alpha = self._log_alpha.detach().exp()
+		elif isinstance(cfg.policy.alpha, float):
+			self._is_auto_alpha = False
+			self._alpha = cfg.policy.alpha
+		else: 
+			raise ValueError("Invalid alpha type.")
