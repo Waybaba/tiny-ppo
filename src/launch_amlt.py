@@ -354,7 +354,11 @@ class AmltLauncher:
         elif choice.lower() in ["", "s"]:
             name = self.args["normal"]["tags"].strip("[]\"").replace(" ", "_")
             if "search.job_template.sku" in self.launcher_args: # add sku name
-                name += f"-#{self.launcher_args['search.job_template.sku']}#"
+                sku = self.launcher_args['search.job_template.sku']
+                if "P40" in sku: gpu_name = "P40"
+                elif "P100" in sku: gpu_name = "P100"
+                elif sku == "G1": gpu_name = "P100"
+                name += f"___{gpu_name}___"
             name += "-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
             cmd = f"amlt run {CONFIG_OUTPUT_PATH} {name}"
         else:
