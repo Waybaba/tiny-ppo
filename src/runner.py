@@ -2063,25 +2063,25 @@ class OfflineRLRunner(DefaultRLRunner):
 			Episode reward.
 		"""
 		if not hasattr(self, "epoch_cnt"): self.epoch_cnt = 0
-		eval_batches, info_ = self.test_collector.collect(
-			act_func=partial(self.select_act_for_env, mode="eval"), 
-			n_episode=self.cfg.trainer.episode_per_test, reset=True,
-			progress_bar="Evaluating ..." if self.cfg.trainer.progress_bar else None,
-			rich_progress=self.progress if self.cfg.trainer.progress_bar else None,
-		)
-		eval_rews = [0. for _ in range(self.cfg.trainer.episode_per_test)]
-		eval_lens = [0 for _ in range(self.cfg.trainer.episode_per_test)]
-		cur_ep = 0
-		for i, batch in enumerate(eval_batches): 
-			eval_rews[cur_ep] += batch.rew
-			eval_lens[cur_ep] += 1
-			if batch.terminated or batch.truncated:
-				cur_ep += 1
+		res_info = {}
+		for mode in ["eval", "train"]:
+			eval_batches, info_ = self.test_collector.collect(
+				act_func=partial(self.select_act_for_env, mode=mode), 
+				n_episode=self.cfg.trainer.episode_per_test, reset=True,
+				progress_bar="Evaluating ..." if self.cfg.trainer.progress_bar else None,
+				rich_progress=self.progress if self.cfg.trainer.progress_bar else None,
+			)
+			eval_rews = [0. for _ in range(self.cfg.trainer.episode_per_test)]
+			eval_lens = [0 for _ in range(self.cfg.trainer.episode_per_test)]
+			cur_ep = 0
+			for i, batch in enumerate(eval_batches): 
+				eval_rews[cur_ep] += batch.rew
+				eval_lens[cur_ep] += 1
+				if batch.terminated or batch.truncated:
+					cur_ep += 1
+			res_info["rew_mean"+"_"+mode] = np.mean(eval_rews)
+			res_info["len_mean"+"_"+mode] = np.mean(eval_lens)
 		self.epoch_cnt += 1
-		res_info = {
-			"rew_mean": np.mean(eval_rews),
-			"len_mean": np.mean(eval_lens)
-		}
 		self._on_evaluate_end(**res_info)
 		return res_info
 	

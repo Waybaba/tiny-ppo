@@ -137,7 +137,6 @@ policy:
     _target_: tianshou.exploration.random.GaussianNoise
     sigma: 0.1
 
-
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
