@@ -1984,12 +1984,12 @@ class OfflineRLRunner(DefaultRLRunner):
 				self._evaluate()
 			
 			# log
-			if self._should_log():
+			if self._should_write_log():
 				self._log_time()
 				self.record.upload_to_wandb(step=self.env_step_global, commit=False)
 			
 			# upload
-			if self._should_upload():
+			if self._should_upload_log():
 				wandb.log({}, commit=True)
 				
 			# loop control
@@ -2101,7 +2101,7 @@ class OfflineRLRunner(DefaultRLRunner):
 		pass
 
 	def _log_time(self):
-		if self.env_step_global > 100:
+		if self.env_step_global > 1000:
 			cur_time = time()
 			hours_spent = (cur_time-self._start_time) / 3600
 			speed = self.env_step_global / hours_spent
@@ -2150,7 +2150,7 @@ class OfflineRLRunner(DefaultRLRunner):
 			return True
 		return False
 	
-	def _should_log(self):
+	def _should_write_log(self):
 		if not hasattr(self, "should_log_record"): self.should_log_record = {}
 		cur_log_tick = self.env_step_global // self.cfg.trainer.log_interval
 		if cur_log_tick not in self.should_log_record:
@@ -2158,7 +2158,7 @@ class OfflineRLRunner(DefaultRLRunner):
 			return True
 		return False
 
-	def _should_upload(self):
+	def _should_upload_log(self):
 		if not self.cfg.trainer.log_upload_interval: return True # missing or zero, always upload
 		if not hasattr(self, "should_upload_record"): self.should_upload_record = {}
 		cur_upload_tick = self.env_step_global // self.cfg.trainer.log_upload_interval

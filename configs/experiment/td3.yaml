@@ -107,8 +107,8 @@ buffer:
   size: 1200000
   seq_len: ${trainer.batch_seq_len} # would affect the remaster buffer gap len
 trainer:
-  batch_size: 32 
-  batch_seq_len: 64 # would be used in buffer.seq_len 
+  batch_size: 256 # 256,1 for normal, 32,64 for donqi
+  batch_seq_len: 1 # would be used in buffer.seq_len 
   test_in_train: false
   episode_per_test: 10
   max_epoch: 200
@@ -194,5 +194,5 @@ collector:
 start_timesteps: 10000
 
 # common - for all tasks (task_name, tags, output_dir, device)
-task_name: "RL_Apr"
+task_name: "RL_Apr2"
 tags: ["debug"]
