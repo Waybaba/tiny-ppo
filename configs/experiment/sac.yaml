@@ -4,7 +4,7 @@
 # python train.py experiment=example
 
 defaults:
-  - td3.yaml
+  - td3_sac.yaml
 
 # common - for all tasks (task_name, tags, output_dir, device)
 policy:
@@ -22,9 +22,14 @@ policy:
         - _target_: torch.optim.Adam
           _partial_: true
           lr: 3e-4 # 3e-4 in tianshou
-
+actor:
+  unbounded: true
+  conditioned_sigma: true
 actor_optim:
   lr: 1e-3 # 1e-3 in tianshou, 3e-4 in dongqi code. (For both actor and critic)
 
 runner:
   _target_: src.runner.SACRunner
+
+
+start_timesteps: 10000

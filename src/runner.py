@@ -3,16 +3,14 @@ root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
 from tianshou.data import Batch, ReplayBuffer
 import numpy as np
 from time import time
-import torch
-import torch
 import wandb
 import numpy as np
 from tianshou.policy import SACPolicy
 from typing import Any, Dict, Optional, Sequence, Tuple, Type, Union, Callable, List
 from collections.abc import Iterable
 import numpy as np
-import torch
 from torch import nn
+import torch
 from tianshou.utils.net.common import MLP
 import tianshou
 from torch.utils.tensorboard import SummaryWriter
@@ -1102,7 +1100,6 @@ class RNN_MLP_Net(nn.Module):
 				output_dim,
 				hidden_sizes=(),
 				device=self.device,
-				activation=nn.ReLU
 			)
 			self.heads.append(head.to(self.device))
 		self.mlp_before_head = nn.Sequential(*self.mlp_before_head)
@@ -2195,8 +2192,6 @@ class TD3SACRunner(OfflineRLRunner):
 			self.actor_old = deepcopy(self.actor)
 			self.actor_old.eval()
 			self.exploration_noise = cfg.policy.initial_exploration_noise
-			self._noise = self.cfg.policy.exploration_noise
-			self._noise_clip = self.cfg.policy.noise_clip
 		if self.ALGORITHM == "sac":
 			self.critic1_old.eval()
 			self.critic2_old.eval()
@@ -2312,10 +2307,16 @@ class TD3SACRunner(OfflineRLRunner):
 		if self.ALGORITHM == "td3":
 			if mode == "train":
 				a_out = a_out[0]
-				noise = torch.tensor(self._noise(a_out.shape), device=self.cfg.device)
-				if self.cfg.policy.noise_clip > 0.0:
-					noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+				# noise = torch.tensor(self._noise(a_out.shape), device=self.cfg.device)
+				a_scale = torch.tensor((self.env.action_space.high - self.env.action_space.low) / 2.0, dtype=torch.float32)
+				noise = torch.normal(0., a_scale * self.exploration_noise).to(device=self.cfg.device)
 				res = a_out + noise
+				# if self.cfg.policy.noise_clip > 0.0:
+				# 	noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+				res = res.clip(
+					torch.tensor(self.env.action_space.low, device=self.cfg.device),
+					torch.tensor(self.env.action_space.high, device=self.cfg.device),
+				)
 			elif mode == "eval":
 				res = a_out[0]
 			else: 
@@ -2623,10 +2624,13 @@ class TD3Runner(TD3SACRunner):
 		pre_sz = list(batch.done.shape)
 		with torch.no_grad():
 			a_next_online_old = self.actor_old(batch.a_in_next, state=None)[0][0]
-			noise = torch.randn(size=a_next_online_old.shape, device=a_next_online_old.device) * self.cfg.policy.noise_clip
+			noise = torch.randn(size=a_next_online_old.shape, device=a_next_online_old.device)
+			noise *= self.cfg.policy.policy_noise
 			if self.cfg.policy.noise_clip > 0.0:
 				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+				noise *= torch.tensor((self.env.action_space.high - self.env.action_space.low) / 2, device=a_next_online_old.device)
 			a_next_online_old += noise
+			a_next_online_old = a_next_online_old.clamp(self.env.action_space.low[0], self.env.action_space.high[0])
 			
 			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
 				torch.min(
