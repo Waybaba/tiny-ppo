@@ -49,7 +49,6 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           rnn_hidden_layer_size: 256 
           mlp_hidden_sizes: [256,256]
           mlp_softmax: false
-          dropout: 0.1
         decoder_net:
           _target_: src.runner.RNN_MLP_Net
           _partial_: true
@@ -85,7 +84,6 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           rnn_hidden_layer_size: 256
           mlp_hidden_sizes: [256,256]
           mlp_softmax: false
-          dropout: 0.0
         decoder_net:
           _target_: src.runner.RNN_MLP_Net
           _partial_: true
@@ -93,7 +91,6 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           rnn_hidden_layer_size: 256
           mlp_hidden_sizes: [256,256]
           mlp_softmax: false
-          dropout: 0.0
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
@@ -141,7 +138,6 @@ actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
   device: ${device}
-  global_cfg: ${global_cfg}
   net: 
     _target_: src.runner.RNN_MLP_Net
     _partial_: true
@@ -156,7 +152,6 @@ critic1:
   _target_: src.runner.CustomRecurrentCritic
   _partial_: true
   device: ${device}
-  global_cfg: ${global_cfg}
   net: 
     _target_: src.runner.RNN_MLP_Net
     _partial_: true
@@ -183,7 +178,6 @@ env:
   train_num: 1
   test_num: 1
   delay: 0
-  global_cfg: ${global_cfg}
 collector:
   train_collector:
     _target_: tianshou.data.Collector

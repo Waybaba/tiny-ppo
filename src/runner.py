@@ -1710,6 +1710,7 @@ class DefaultRLRunner:
 		self.cfg = cfg
 		self.env = cfg.env
 		# init
+		cfg.env.global_cfg = self.cfg.global_cfg
 		seed = int(time()) if cfg.seed is None else cfg.seed
 		utils.seed_everything(seed) # TODO add env seed
 		self.train_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.train_num)])
@@ -1952,6 +1953,7 @@ class WaybabaRecorder:
 
 		return "\n".join(aligned_info)
 
+
 class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
 		super().start(cfg)
@@ -2065,10 +2067,11 @@ class OfflineRLRunner(DefaultRLRunner):
 		if not hasattr(self, "epoch_cnt"): self.epoch_cnt = 0
 		# evaluate
 		for mode in ["eval", "train"]:
+			eval_type = "deterministic" if mode == "eval" else ""
 			eval_batches, _ = self.test_collector.collect(
 				act_func=partial(self.select_act_for_env, mode=mode), 
 				n_episode=self.cfg.trainer.episode_per_test, reset=True,
-				progress_bar="Evaluating ..." if self.cfg.trainer.progress_bar else None,
+				progress_bar=f"Evaluating {eval_type} ..." if self.cfg.trainer.progress_bar else None,
 				rich_progress=self.progress if self.cfg.trainer.progress_bar else None,
 			)
 			eval_rews = [0. for _ in range(self.cfg.trainer.episode_per_test)]
@@ -2079,7 +2082,6 @@ class OfflineRLRunner(DefaultRLRunner):
 				eval_lens[cur_ep] += 1
 				if batch.terminated or batch.truncated:
 					cur_ep += 1
-			eval_type = "deterministic" if mode == "eval" else ""
 			self.record("eval/rew_mean"+"_"+eval_type, np.mean(eval_rews))
 			self.record("eval/len_mean"+"_"+eval_type, np.mean(eval_lens))
 		# loop control
@@ -2168,6 +2170,7 @@ class OfflineRLRunner(DefaultRLRunner):
 	def _should_end(self):
 		return self.env_step_global >= self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
 
+
 class TD3SACRunner(OfflineRLRunner):
 
 	def init_components(self):
@@ -2176,11 +2179,11 @@ class TD3SACRunner(OfflineRLRunner):
 		cfg = self.cfg
 
 		# networks
-		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
+		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0],global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.actor_optim = cfg.actor_optim(self.actor.parameters())
-		self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+		self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
-		self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
+		self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
 		self.critic1_old = deepcopy(self.critic1)
 		self.critic2_old = deepcopy(self.critic2)
@@ -2195,7 +2198,8 @@ class TD3SACRunner(OfflineRLRunner):
 			self._noise = self.cfg.policy.exploration_noise
 			self._noise_clip = self.cfg.policy.noise_clip
 		if self.ALGORITHM == "sac":
-			# if iterable
+			self.critic1_old.eval()
+			self.critic2_old.eval()
 			self.log("init sac alpha ...")
 			self._init_sac_alpha()
 		# obs pred & encode
@@ -2610,6 +2614,7 @@ class TD3SACRunner(OfflineRLRunner):
 		of source module."""
 		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
 			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
+
 
 class TD3Runner(TD3SACRunner):
 	ALGORITHM = "td3"
