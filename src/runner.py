@@ -2063,9 +2063,9 @@ class OfflineRLRunner(DefaultRLRunner):
 			Episode reward.
 		"""
 		if not hasattr(self, "epoch_cnt"): self.epoch_cnt = 0
-		res_info = {}
+		# evaluate
 		for mode in ["eval", "train"]:
-			eval_batches, info_ = self.test_collector.collect(
+			eval_batches, _ = self.test_collector.collect(
 				act_func=partial(self.select_act_for_env, mode=mode), 
 				n_episode=self.cfg.trainer.episode_per_test, reset=True,
 				progress_bar="Evaluating ..." if self.cfg.trainer.progress_bar else None,
@@ -2079,24 +2079,23 @@ class OfflineRLRunner(DefaultRLRunner):
 				eval_lens[cur_ep] += 1
 				if batch.terminated or batch.truncated:
 					cur_ep += 1
-			res_info["rew_mean"+"_"+mode] = np.mean(eval_rews)
-			res_info["len_mean"+"_"+mode] = np.mean(eval_lens)
+			eval_type = "deterministic" if mode == "eval" else ""
+			self.record("eval/rew_mean"+"_"+eval_type, np.mean(eval_rews))
+			self.record("eval/len_mean"+"_"+eval_type, np.mean(eval_lens))
+		# loop control
 		self.epoch_cnt += 1
-		self._on_evaluate_end(**res_info)
-		return res_info
+		self.record("epoch", self.epoch_cnt)
+		self._on_evaluate_end()
 	
-	def _on_evaluate_end(self, **kwargs):
-		# log time
-		cur_time = time()
-		self.record("misc/hours_left", (cur_time-self._start_time)/3600*((self.cfg.trainer.max_epoch-self.epoch_cnt)/self.cfg.trainer.max_epoch))
-		self.record("misc/hours_spent", (cur_time-self._start_time)/3600)
-		
-		to_print = self.record.__str__().replace("\n", "  ")
-		to_print = "[Epoch {: 5d}/{}] ### ".format(self.epoch_cnt-1, self.cfg.trainer.max_epoch) + to_print
-		if not self.cfg.trainer.hide_eval_info_print: print(to_print)
-		self.on_evaluate_end(**kwargs)
+	def _on_evaluate_end(self):
+		# print epoch log (deactivated in debug mode as the info is already in progress bar)
+		if not self.cfg.trainer.hide_eval_info_print: 
+			to_print = self.record.__str__().replace("\n", "  ")
+			to_print = "[Epoch {: 5d}/{}] ### ".format(self.epoch_cnt-1, self.cfg.trainer.max_epoch) + to_print
+			print(to_print)
+		self.on_evaluate_end()
 	
-	def on_evaluate_end(self, **kwargs):
+	def on_evaluate_end(self):
 		pass
 
 	def _log_time(self):
@@ -2113,7 +2112,22 @@ class OfflineRLRunner(DefaultRLRunner):
 		if self.cfg.trainer.progress_bar: self.progress.stop()
 		wandb.finish()
 
-	def select_act_for_env(self, obs, info=None, state=None, mode=None):
+	def select_act_for_env(self, batch, state, mode):
+		"""
+		Note this is only used when interacting with env. For learning state,
+		the actions are got by calling self.actor ...
+		Usage: 
+			would be passed as a function to collector
+		Args:
+			batch: batch of data
+			state: {"hidden": [], "hidden_pred": [], ...}
+			mode: "train" or "eval"
+				for train, it would use stochastic action
+				for eval, it would use deterministic action
+				usage: 
+					1. when collecting data, mode="train" is used
+					2. when evaluating, both mode="train" and mode="eval" are used
+		"""
 		raise NotImplementedError
 
 	def _should_update(self):
@@ -2282,7 +2296,7 @@ class TD3SACRunner(OfflineRLRunner):
 		
 		return a_in, res_state
 	
-	def select_act_for_env(self, batch, state, mode=None):
+	def select_act_for_env(self, batch, state, mode):
 		a_in, res_state = self.preprocess_from_env(batch, state, mode=mode)
 		
 		# forward
@@ -2499,11 +2513,9 @@ class TD3SACRunner(OfflineRLRunner):
 		
 		return batch
 
-	def on_evaluate_end(self, **kwargs):
+	def on_evaluate_end(self):
 		"""called after a step of evaluation"""
-		self.record("eval/rew_mean", kwargs["rew_mean"])
-		self.record("eval/len_mean", kwargs["len_mean"])
-		self.record("epoch", self.epoch_cnt)
+		pass
 
 	def _get_historical_act(self, indices, step, buffer, type=None, device=None):
 		""" get historical act
