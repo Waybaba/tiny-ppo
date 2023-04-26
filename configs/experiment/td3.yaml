@@ -19,7 +19,8 @@ actor_optim:
 policy:
   update_a_per_c: 2
   clip: 1.0
-  noise_decay_rate: 0.998
+  # noise_decay_rate: 0.998
+  noise_decay_rate: 1.0
   policy_noise: 0.2 # training: noise = torch.randn() -> noise *= self.policy_noise -> noise = noise.clamp(-self.noise_clip, self.noise_clip)
   noise_clip: 0.5 # training: see above
   # initial_exploration_noise: 0.1
