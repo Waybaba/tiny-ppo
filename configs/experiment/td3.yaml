@@ -9,40 +9,6 @@ defaults:
   - _self_
 
 # common - for all tasks (task_name, tags, output_dir, device)
-
-buffer: 
-  _target_: src.runner.ReplayBuffer
-  size: 1200000
-  seq_len: ${trainer.batch_seq_len} # would affect the remaster buffer gap len
-trainer:
-  batch_size: 32 
-  batch_seq_len: 64 # would be used in buffer.seq_len 
-  test_in_train: false
-  episode_per_test: 10
-  max_epoch: 200
-  step_per_epoch: 5000 # epoch is eval
-  # max_epoch: 10
-  # step_per_epoch: 1000 # epoch is eval
-  step_per_collect: 1
-  update_per_step: 1
-  log_interval: 100
-  log_upload_interval: 100 # 0 for instant upload
-  progress_bar: true
-  hide_eval_info_print: ${trainer.progress_bar}
-policy:
-  update_a_per_c: 2
-  tau: 0.005
-  clip: 1.0
-  noise_decay_rate: 0.998
-  initial_exploration_noise: 0.1
-  policy_noise: 0.2
-  noise_clip: 0.5
-  gamma: 0.99
-  exploration_noise:
-    _target_: tianshou.exploration.random.GaussianNoise
-    sigma: 0.1
-env_max_step: 5000
-
 # SAC specific
 
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
@@ -133,6 +99,45 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_type: "oracle" # normal or oracle
   log_interval: 100
   log_instant_commit: true # false would make the wandb sync only once per epoch
+
+
+runner:
+  _target_: src.runner.TD3Runner
+  _partial_: true
+
+buffer: 
+  _target_: src.runner.ReplayBuffer
+  size: 1200000
+  seq_len: ${trainer.batch_seq_len} # would affect the remaster buffer gap len
+trainer:
+  batch_size: 32 
+  batch_seq_len: 64 # would be used in buffer.seq_len 
+  test_in_train: false
+  episode_per_test: 10
+  max_epoch: 200
+  step_per_epoch: 5000 # epoch is eval
+  # max_epoch: 10
+  # step_per_epoch: 1000 # epoch is eval
+  step_per_collect: 1
+  update_per_step: 1
+  log_interval: 100
+  log_upload_interval: 100 # 0 for instant upload
+  progress_bar: true
+  hide_eval_info_print: ${trainer.progress_bar}
+policy:
+  update_a_per_c: 2
+  tau: 0.005
+  clip: 1.0
+  noise_decay_rate: 0.998
+  initial_exploration_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  gamma: 0.99
+  exploration_noise:
+    _target_: tianshou.exploration.random.GaussianNoise
+    sigma: 0.1
+
+
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
@@ -161,21 +166,19 @@ critic1:
     mlp_hidden_sizes: [256,256]
     mlp_softmax: false
 critic2: ${critic1}
-runner:
-  _target_: src.runner.TD3Runner
+actor_optim:
+  _target_: torch.optim.Adam
   _partial_: true
+  lr: 3e-4
 critic1_optim:
   _target_: ${actor_optim._target_}
   _partial_: true
   lr: ${actor_optim.lr}
 critic2_optim: ${critic1_optim}
-actor_optim:
-  _target_: torch.optim.Adam
-  _partial_: true
-  lr: 3e-4
 
 
 # common - for all algorithms
+env_max_step: 5000
 env:
   name: HalfCheetah-v4
   train_num: 1

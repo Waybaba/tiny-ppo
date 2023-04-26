@@ -22,6 +22,7 @@ policy:
         - _target_: torch.optim.Adam
           _partial_: true
           lr: 3e-4 # 3e-4 in tianshou
+
 actor_optim:
   lr: 1e-3 # 1e-3 in tianshou, 3e-4 in dongqi code. (For both actor and critic)
 

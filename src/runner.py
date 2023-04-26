@@ -2107,6 +2107,7 @@ class OfflineRLRunner(DefaultRLRunner):
 			hours_left = (self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch-self.env_step_global) / speed
 			self.record("misc/hours_spent", hours_spent)
 			self.record("misc/hours_left", hours_left)
+			self.record("misc/step_per_hour", speed)
 
 	def _end_all(self):
 		if self.cfg.trainer.progress_bar: self.progress.stop()
