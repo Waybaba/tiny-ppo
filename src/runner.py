@@ -1370,13 +1370,15 @@ class CustomRecurrentActorProb(nn.Module):
 		Use torch distribution to sample action and return
 		act, log_prob
 		"""
-		dist = Independent(Normal(mu, var), 1)
-		act = dist.rsample() # (*, act_dim)
-		squashed_action = torch.tanh(act)
-		log_prob = dist.log_prob(act).unsqueeze(-1)
-		log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
-										np.finfo(np.float32).eps.item()).sum(-1, keepdim=True)
-		return squashed_action, log_prob
+		pre_sz = list(mu.size()[:-1])
+		normal = Independent(Normal(mu, var), 1)
+		x_t = normal.rsample() # (*, act_dim)
+		y_t = torch.tanh(x_t) # (*, act_dim)
+		action = y_t * self.hps["max_action"] + 0.0 # TODO use more stable version
+		log_prob = normal.log_prob(x_t).unsqueeze(-1) # (*, 1)
+		log_prob = log_prob - torch.log((1 - y_t.pow(2)) + np.finfo(np.float32).eps.item()).sum(dim=-1,keepdim=True) # (*, 1)
+		mean = torch.tanh(mu) * self.hps["max_action"]
+		return action, log_prob
 	
 class ObsPredNet(nn.Module):
 	"""
@@ -2326,13 +2328,14 @@ class TD3SACRunner(OfflineRLRunner):
 				assert isinstance(a_out, tuple) # (mean, logvar)
 				dist = Independent(Normal(*a_out), 1)
 				act = dist.rsample()
-				squashed_action = torch.tanh(act)
+				squashed_action = torch.tanh(act) * torch.tensor(self.env.action_space.high, device=self.cfg.device) + 0.0 # TODO bias
 				# log_prob = dist.log_prob(act).unsqueeze(-1)
 				# log_prob = log_prob - torch.log((1 - squashed_action.pow(2)) +
 				# 								np.finfo(np.float32).eps.item()).sum(-1, keepdim=True) # TODO remove, seems not used 
 				res = squashed_action
 			elif mode == "eval":
 				res = a_out[0]
+				res = torch.tanh(res) * torch.tensor(self.env.action_space.high, device=self.cfg.device) + 0.0 # TODO bias
 
 		return res, res_state if res_state else None
 	
@@ -2897,9 +2900,7 @@ class SACRunner(TD3SACRunner):
 			self._is_auto_alpha = True
 			self._target_entropy, self._log_alpha, self._alpha_optim = cfg.policy.alpha
 			if type(self._target_entropy) == str and self._target_entropy == "neg_act_num":
-				assert hasattr(self.actor, "act_num"), "actor must have act_num attribute"
-				act_num = self.actor.act_num
-				self._target_entropy = - act_num
+				self._target_entropy = - np.prod(self.env.action_space.shape)
 			elif type(self._target_entropy) == float:
 				self._target_entropy = torch.tensor(self._target_entropy).to(self.device)
 			else: 
