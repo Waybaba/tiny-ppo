@@ -19,7 +19,7 @@ class DelayedRoboticEnv(gym.Wrapper):
         if self.global_cfg.actor_input.history_merge_method != "none" or \
             self.global_cfg.critic_input.history_merge_method != "none":
             if self.global_cfg.critic_input.history_merge_method != "none": raise NotImplementedError
-            self.history_num = self.global_cfg.actor_input.history_num # short flag
+            self.history_num = self.global_cfg.history_num # short flag
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
         else:
             self.history_num = 0

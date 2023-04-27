@@ -22,8 +22,8 @@
 			"justMyCode": true,
 			"args": [
 				// "experiment=td3",
-				// "experiment=td3_rnn",
-				"experiment=sac",
+				"experiment=td3_rnn",
+				// "experiment=sac",
 				// "experiment=sac_rnn",
 				// "env.name=HalfCheetah-v4",
 				"env.name=Hopper-v4",
