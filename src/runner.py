@@ -1370,13 +1370,19 @@ class CustomRecurrentActorProb(nn.Module):
 		Use torch distribution to sample action and return
 		act, log_prob
 		"""
+		ESP = np.finfo(np.float32).eps.item()
 		pre_sz = list(mu.size()[:-1])
 		normal = Independent(Normal(mu, var), 1)
 		x_t = normal.rsample() # (*, act_dim)
 		y_t = torch.tanh(x_t) # (*, act_dim)
 		action = y_t * self.hps["max_action"] + 0.0 # TODO use more stable version
 		log_prob = normal.log_prob(x_t).unsqueeze(-1) # (*, 1)
-		log_prob = log_prob - torch.log((1 - y_t.pow(2)) + np.finfo(np.float32).eps.item()).sum(dim=-1,keepdim=True) # (*, 1)
+		if self.hps["dongqi_log_prob_clamp"]:
+			log_prob = log_prob.clamp(-20, 10)
+		if self.hps["dongqi_later_sum"]:
+			log_prob = (log_prob - torch.log((1 - y_t.pow(2)) + ESP)).sum(dim=-1,keepdim=True) # (*, 1)
+		else:
+			log_prob = log_prob - torch.log((1 - y_t.pow(2)) + ESP).sum(dim=-1,keepdim=True) # (*, 1)
 		mean = torch.tanh(mu) * self.hps["max_action"]
 		return action, log_prob
 	
@@ -2742,8 +2748,8 @@ class SACRunner(TD3SACRunner):
 		# cal target_q
 		pre_sz = list(batch.done.shape)
 		with torch.no_grad():
-			(mu, var), _ = self.actor_old(batch.a_in_next, state=None)
-			a_next, log_prob_next = self.actor_old.sample_act(mu, var)
+			(mu, var), _ = self.actor(batch.a_in_next, state=None)
+			a_next, log_prob_next = self.actor.sample_act(mu, var)
 			v_next = torch.min(
 				self.critic1_old(torch.cat([batch.c_in_next, a_next],-1))[0],
 				self.critic2_old(torch.cat([batch.c_in_next, a_next],-1))[0]
@@ -2793,6 +2799,15 @@ class SACRunner(TD3SACRunner):
 		combined_loss += actor_loss
 		self.record("learn/loss_actor", actor_loss.item())
 		self.record("learn/loss_actor_normed", actor_loss.item()/batch.valid_mask.float().mean().item())
+
+		if self.cfg.policy.dongqi_mu_sigma_reg_ratio:
+			# calculate pow(2) for mu and sigma (use mask)
+			reg_loss = (mu ** 2).sum(-1) + (var ** 2).sum(-1)
+			reg_loss = apply_mask(reg_loss, batch.valid_mask).mean()
+			combined_loss += reg_loss * self.cfg.policy.dongqi_mu_sigma_reg_ratio
+			self.record("learn/loss_actor_reg", reg_loss.item())
+			self.record("learn/loss_actor_reg_normed", reg_loss.item()/batch.valid_mask.float().mean().item())
+
 		
 		# add pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
