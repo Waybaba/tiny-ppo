@@ -2742,8 +2742,8 @@ class SACRunner(TD3SACRunner):
 		# cal target_q
 		pre_sz = list(batch.done.shape)
 		with torch.no_grad():
-			(mu, var), _ = self.actor(batch.a_in_next, state=None)
-			a_next, log_prob_next = self.actor.sample_act(mu, var)
+			(mu, var), _ = self.actor_old(batch.a_in_next, state=None)
+			a_next, log_prob_next = self.actor_old.sample_act(mu, var)
 			v_next = torch.min(
 				self.critic1_old(torch.cat([batch.c_in_next, a_next],-1))[0],
 				self.critic2_old(torch.cat([batch.c_in_next, a_next],-1))[0]
