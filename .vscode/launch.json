@@ -30,7 +30,7 @@
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
-				"env.delay=4",
+				"env.delay=0",
 				"start_timesteps=1000",
 			],
 		},

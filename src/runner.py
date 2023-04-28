@@ -1401,17 +1401,17 @@ class CustomRecurrentActorProb(nn.Module):
 		"""
 		ESP = np.finfo(np.float32).eps.item()
 		pre_sz = list(mu.size()[:-1])
-		normal = Independent(Normal(mu, var), 1)
+		normal = Normal(mu, var)
 		x_t = normal.rsample() # (*, act_dim)
 		y_t = torch.tanh(x_t) # (*, act_dim)
 		action = y_t * self.hps["max_action"] + 0.0 # TODO use more stable version
-		log_prob = normal.log_prob(x_t).unsqueeze(-1) # (*, 1)
+		log_prob = normal.log_prob(x_t) # (*, a_dim)
 		if self.hps["dongqi_log_prob_clamp"]:
 			log_prob = log_prob.clamp(-20, 10)
 		if self.hps["dongqi_later_sum"]:
-			log_prob = (log_prob - torch.log((1 - y_t.pow(2)) + ESP)).sum(dim=-1,keepdim=True) # (*, 1)
+			log_prob = (log_prob - torch.log(1 - y_t.pow(2) + ESP)).sum(dim=-1,keepdim=True) # (*, 1)
 		else:
-			log_prob = log_prob - torch.log((1 - y_t.pow(2)) + ESP).sum(dim=-1,keepdim=True) # (*, 1)
+			log_prob = log_prob - torch.log(1 - y_t.pow(2) + ESP).sum(dim=-1,keepdim=True) # (*, 1)
 		mean = torch.tanh(mu) * self.hps["max_action"]
 		return action, log_prob
 	
@@ -2371,7 +2371,7 @@ class TD3SACRunner(OfflineRLRunner):
 			elif mode == "eval":
 				res = a_out[0]
 				res = torch.tanh(res) * torch.tensor(self.env.action_space.high, device=self.cfg.device) + 0.0 # TODO bias
-
+			else: raise ValueError("unknown mode: {}".format(mode))
 		return res, res_state if res_state else None
 	
 	def on_collect_end(self, **kwargs):
@@ -2917,7 +2917,7 @@ class SACRunner(TD3SACRunner):
 			v_next = torch.min(
 				self.critic1_old(torch.cat([batch.c_in_next, a_next],-1))[0],
 				self.critic2_old(torch.cat([batch.c_in_next, a_next],-1))[0]
-			).reshape(*pre_sz) - self._log_alpha.exp() * log_prob_next.reshape(*pre_sz)
+			).reshape(*pre_sz) - self._log_alpha.exp().detach() * log_prob_next.reshape(*pre_sz)
 			target_q = batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * v_next
 		
 		# critic loss
@@ -2958,7 +2958,7 @@ class SACRunner(TD3SACRunner):
 		current_q2a, _ = self.critic2(torch.cat([
 			batch.c_in_cur, a_cur
 		],-1))
-		actor_loss = self._log_alpha.exp() * log_prob_cur - torch.min(current_q1a, current_q2a)
+		actor_loss = self._log_alpha.exp().detach() * log_prob_cur - torch.min(current_q1a, current_q2a)
 		actor_loss = apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss += actor_loss
 		self.record("learn/loss_actor", actor_loss.item())
@@ -3036,8 +3036,11 @@ class SACRunner(TD3SACRunner):
 
 		# update alpha (use batch.log_prob_cur)
 		if self._is_auto_alpha:
-			cur_entropy = - log_prob_cur.detach() # (*, 1)
-			alpha_loss = - self._log_alpha.exp() * apply_mask(self._target_entropy-cur_entropy, batch.valid_mask)
+			cur_entropy = - apply_mask(log_prob_cur.detach(), batch.valid_mask).mean() / batch.valid_mask.mean() # (*, 1)
+			if 1:
+				alpha_loss = - self._log_alpha * (self._target_entropy - cur_entropy)
+			else:
+				alpha_loss = - self._log_alpha * (self._target_entropy - cur_entropy).detach()
 			alpha_loss = alpha_loss.mean()
 			self._alpha_optim.zero_grad()
 			alpha_loss.backward()

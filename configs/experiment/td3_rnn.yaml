@@ -8,7 +8,7 @@ defaults:
   - _self_
 
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
-  burnin_num: 0
+  burnin_num: 0.25
   history_num: 1 # since we only stack in rnn, only one is needed
   actor_input:
     history_merge_method: "stack_rnn" # cat_mlp or stack_rnn or none
@@ -19,8 +19,8 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       net:
         encoder_net: 
           rnn_layer_num: 1
-          rnn_hidden_layer_size: 512
-          mlp_hidden_sizes: [512]
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [256]
     obs_encode:
       turn_on: false
       feat_dim: 256
