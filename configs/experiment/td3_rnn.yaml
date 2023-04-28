@@ -66,3 +66,6 @@ actor:
     rnn_hidden_layer_size: 256
     mlp_hidden_sizes: [256]
 
+trainer:
+  batch_size: 32 # 256,1 for normal, 32,64 for donqi
+  batch_seq_len: 64 # would be used in buffer.seq_len 

@@ -2774,6 +2774,7 @@ class TD3SACRunner(OfflineRLRunner):
 			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
 
 	def _burnin_num(self):
+		if "burnin_num" not in self.cfg.global_cfg: return 0
 		if not self.cfg.global_cfg.burnin_num: return 0
 		burnin_num = self.cfg.global_cfg.burnin_num
 		if type(self.cfg.global_cfg.burnin_num) == float:
