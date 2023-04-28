@@ -1,0 +1,42 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - _self_
+
+runner:
+  _target_: src.runner.DDPGTianshouRunner
+  _partial_: true
+
+task: HalfCheetah-v4
+seed: 0
+buffer_size: 1000000
+hidden_sizes: [256, 256]
+actor_lr: 1.0e-3
+critic_lr: 1.0e-3
+gamma: 0.99
+tau: 0.005
+exploration_noise: 0.1
+start_timesteps: 25000
+epoch: 200
+step_per_epoch: 5000
+step_per_collect: 1
+update_per_step: 1
+n_step: 1
+batch_size: 256
+training_num: 1
+test_num: 10
+logdir: ${output_dir}
+render: 0.0
+resume_path: null
+resume_id: null
+logger: wandb
+watch: false
+
+
+# common - for all tasks (task_name, tags, output_dir, device)
+wandb_project: ${task_name}
+task_name: "RL_Apr2"
+tags: ["debug"]

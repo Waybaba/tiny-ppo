@@ -23,16 +23,59 @@
 			"args": [
 				// "experiment=td3",
 				// "experiment=td3_rnn",
-				"experiment=sac",
+				// "experiment=sac",
 				// "experiment=sac_rnn",
-				// "experiment=ddpg",
-				// "env.name=HalfCheetah-v4",
-				"env.name=Hopper-v4",
+				"experiment=sac",
+				"env.name=HalfCheetah-v4",
+				// "env.name=Hopper-v4",
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
 				"env.delay=0",
 				"start_timesteps=1000",
+			],
+		},
+
+		// cleanrl-ddpg
+		{
+			"name": "cleanrl-ddpg",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/cleanrl/ddpg.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				// "env.name=HalfCheetah-v4",
+				// "env.delay=0",
+				// "start_timesteps=1000",
+			],
+		},
+		// tianshou-ddpg
+		{
+			"name": "tianshou-ddpg",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/tianshou/ddpg.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				// "env.name=HalfCheetah-v4",
+				// "env.delay=0",
+				// "start_timesteps=1000",
+			],
+		},
+		// entry.py
+		{
+			"name": "ddpg_tianshou",
+			"type": "python",
+			"request": "launch",
+			"program": "${workspaceFolder}/src/entry.py",
+			"console": "integratedTerminal",
+			"justMyCode": true,
+			"args": [
+				"experiment=ddpg_tianshou",
+				// "env.name=HalfCheetah-v4",
+				// "env.delay=0",
 			],
 		},
 		// entry.py
