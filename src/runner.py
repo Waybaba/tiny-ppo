@@ -2212,25 +2212,39 @@ class TD3SACRunner(OfflineRLRunner):
 		# networks
 		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0],global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.actor_optim = cfg.actor_optim(self.actor.parameters())
+		self.actor_old = deepcopy(self.actor)
+
 		self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
 		self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
 		self.critic1_old = deepcopy(self.critic1)
 		self.critic2_old = deepcopy(self.critic2)
+
+		self.actor_old.eval()
 		self.critic1.train()
 		self.critic2.train()
 		self.critic1_old.train()
 		self.critic2_old.train()
+		
 		if self.ALGORITHM == "td3":
-			self.actor_old = deepcopy(self.actor)
-			self.actor_old.eval()
+			redudent_net = []
 			self.exploration_noise = cfg.policy.initial_exploration_noise
+			# TODO remove dedudent net
 		if self.ALGORITHM == "sac":
+			redudent_net = ["actor_old"]
 			self.critic1_old.eval()
 			self.critic2_old.eval()
 			self.log("init sac alpha ...")
 			self._init_sac_alpha()
+		if self.ALGORITHM == "ddpg":
+			redudent_net = ["critic2", "critic2_old"]
+			self.actor_old = deepcopy(self.actor)
+			self.actor_old.eval()
+			self.exploration_noise = cfg.policy.initial_exploration_noise
+		
+		if redudent_net:
+			for net_name in redudent_net: delattr(self, net_name)
 		# obs pred & encode
 		assert not (self.global_cfg.actor_input.obs_pred.turn_on and self.global_cfg.actor_input.obs_encode.turn_on), "obs_pred and obs_encode cannot be used at the same time"
 		
@@ -2369,6 +2383,24 @@ class TD3SACRunner(OfflineRLRunner):
 				res = a_out[0]
 				res = torch.tanh(res) * torch.tensor(self.env.action_space.high, device=self.cfg.device) + 0.0 # TODO bias
 			else: raise ValueError("unknown mode: {}".format(mode))
+		elif self.ALGORITHM == "ddpg":
+			if mode == "train":
+				a_out = a_out[0]
+				# noise = torch.tensor(self._noise(a_out.shape), device=self.cfg.device)
+				a_scale = torch.tensor((self.env.action_space.high - self.env.action_space.low) / 2.0, dtype=torch.float32)
+				noise = torch.normal(0., a_scale * self.exploration_noise).to(device=self.cfg.device)
+				res = a_out + noise
+				# if self.cfg.policy.noise_clip > 0.0:
+				# 	noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+				res = res.clip(
+					torch.tensor(self.env.action_space.low, device=self.cfg.device),
+					torch.tensor(self.env.action_space.high, device=self.cfg.device),
+				)
+			elif mode == "eval":
+				res = a_out[0]
+			else: 
+				raise ValueError("unknown mode: {}".format(mode))
+
 		return res, res_state if res_state else None
 	
 	def on_collect_end(self, **kwargs):
@@ -2395,11 +2427,10 @@ class TD3SACRunner(OfflineRLRunner):
 		
 		if self.ALGORITHM == "td3":
 			# update cirtic
-			critic_info_ = self.update_critic(batch)
+			self.update_critic(batch)
 			if self.update_cnt % self.cfg.policy.update_a_per_c == 0:
 				# update actor
-				actor_info_ = self.update_actor(batch)
-				self.record("learn/actor_loss", actor_info_["actor_loss"])
+				self.update_actor(batch)
 				self.exploration_noise *= self.cfg.policy.noise_decay_rate
 			self._soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
 			self._soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
@@ -2409,6 +2440,14 @@ class TD3SACRunner(OfflineRLRunner):
 			self.update_actor(batch)
 			self._soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
 			self._soft_update(self.critic2_old, self.critic2, self.cfg.policy.tau)
+		elif self.ALGORITHM == "ddpg":
+			self.update_critic(batch)
+			self.update_actor(batch)
+			self._soft_update(self.critic1_old, self.critic1, self.cfg.policy.tau)
+			self._soft_update(self.actor_old, self.actor, self.cfg.policy.tau)
+		else:
+			raise NotImplementedError
+			
 		self.update_cnt += 1
 	
 	def update_critic(self, batch):
@@ -2824,10 +2863,6 @@ class TD3Runner(TD3SACRunner):
 		self.critic1_optim.step()
 		self.critic2_optim.step()
 
-		return {
-			"critic_loss": critic_loss.cpu().item()
-		}
-
 	def update_actor(self, batch):
 		res_info = {}
 		actor_loss, _ = self.critic1(torch.cat([
@@ -2898,10 +2933,7 @@ class TD3Runner(TD3SACRunner):
 		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.step()
 		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.step()
 		self.actor_optim.step()
-
-		return {
-			"actor_loss": actor_loss.cpu().item()
-		}
+		self.record("learn/actor_loss", actor_loss.cpu().item())
 
 class SACRunner(TD3SACRunner):
 	ALGORITHM = "sac"
@@ -3099,3 +3131,107 @@ class SACRunner(TD3SACRunner):
 			self._log_alpha = cfg.policy.alpha # here, the cfg alpha is actually log_alpha
 		else: 
 			raise ValueError("Invalid alpha type.")
+
+class DDPGRunner(TD3SACRunner):
+	ALGORITHM = "ddpg"
+	def update_critic(self, batch):
+		pre_sz = list(batch.done.shape)
+		with torch.no_grad():
+			a_next_online_old = self.actor_old(
+				batch.a_in_next, 
+				state=batch.state_next if self._burnin_num() else None
+			)[0][0]
+			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+				self.critic1_old(torch.cat([batch.c_in_next, a_next_online_old],-1))[0].squeeze(-1)
+			).reshape(*pre_sz,-1)
+		
+		critic_loss = F.mse_loss(
+				self.critic1(
+					torch.cat([batch.c_in_cur, batch.act],-1)
+				)[0].reshape(*pre_sz,-1), 
+				target_q, 
+				reduce=False
+			)
+			
+		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
+		self.record("learn/critic_loss", critic_loss.cpu().item())
+		self.record("learn/valid_mask_ratio", batch.valid_mask.float().mean())
+		
+		self.critic1_optim.zero_grad()
+		critic_loss.backward()
+		self.critic1_optim.step()
+
+		return {
+			"critic_loss": critic_loss.cpu().item()
+		}
+
+	def update_actor(self, batch):
+		actor_loss, _ = self.critic1(torch.cat([
+			batch.c_in_cur, 
+			self.actor(
+				batch.a_in_cur, 
+				state=batch.state_cur if self._burnin_num() else None
+			)[0][0]
+		],-1))
+		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
+		combined_loss = 0. + actor_loss
+		# add pred loss
+		if self.global_cfg.actor_input.obs_pred.turn_on:
+			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
+			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
+			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
+			self.record("learn/obs_pred/pred_loss", pred_loss.item())
+			self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
+			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
+			self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
+			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
+				kl_loss = kl_divergence(
+					batch.pred_info_cur_mu,
+					batch.pred_info_cur_logvar,
+					torch.zeros_like(batch.pred_info_cur_mu),
+					torch.zeros_like(batch.pred_info_cur_logvar),
+				)
+				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
+				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
+				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				self.record("learn/obs_pred/loss_kl", kl_loss.item())
+				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
+				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+					self._auto_kl_optim.zero_grad()
+					kl_weight_loss.backward()
+					self._auto_kl_optim.step()
+					self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		# add encode loss
+		elif self.global_cfg.actor_input.obs_encode.turn_on:
+			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
+			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
+			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
+			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
+			self.record("learn/obs_encode/loss_kl", kl_loss.item())
+			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
+			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+				pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
+				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+				self.record("learn/obs_encode/loss_pred", pred_loss.item())
+				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
+				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
+			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
+				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				self._auto_kl_optim.zero_grad()
+				kl_weight_loss.backward()
+				self._auto_kl_optim.step()
+				self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+				self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		
+		# backward and optim
+		self.actor_optim.zero_grad()
+		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.zero_grad()
+		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.zero_grad()
+		combined_loss.backward()
+		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.step()
+		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.step()
+		self.actor_optim.step()
+		self.record("learn/actor_loss", actor_loss.cpu().item())

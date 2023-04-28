@@ -8,7 +8,6 @@ defaults:
 
 runner:
   _target_: src.runner.TD3Runner
-
 actor:
   unbounded: false
   conditioned_sigma: true
