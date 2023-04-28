@@ -10,7 +10,6 @@ defaults:
 policy:
   tau: 0.005
   gamma: 0.99
-  noise_clip: 0.5 # training: see above
   initial_exploration_noise: 0.1
 
 actor:
