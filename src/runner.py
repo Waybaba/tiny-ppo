@@ -1406,12 +1406,9 @@ class CustomRecurrentActorProb(nn.Module):
 		y_t = torch.tanh(x_t) # (*, act_dim)
 		action = y_t * self.hps["max_action"] + 0.0 # TODO use more stable version
 		log_prob = normal.log_prob(x_t) # (*, a_dim)
-		if self.hps["dongqi_log_prob_clamp"]:
+		if self.hps["global_cfg"].debug.dongqi_log_prob_clamp:
 			log_prob = log_prob.clamp(-20, 10)
-		if self.hps["dongqi_later_sum"]:
-			log_prob = (log_prob - torch.log(1 - y_t.pow(2) + ESP)).sum(dim=-1,keepdim=True) # (*, 1)
-		else:
-			log_prob = log_prob - torch.log(1 - y_t.pow(2) + ESP).sum(dim=-1,keepdim=True) # (*, 1)
+		log_prob = (log_prob - torch.log(1 - y_t.pow(2) + ESP)).sum(dim=-1,keepdim=True) # (*, 1)
 		mean = torch.tanh(mu) * self.hps["max_action"]
 		return action, log_prob
 	
@@ -2964,11 +2961,11 @@ class SACRunner(TD3SACRunner):
 		self.record("learn/loss_actor", actor_loss.item())
 		self.record("learn/loss_actor_normed", actor_loss.item()/batch.valid_mask.float().mean().item())
 
-		if self.cfg.policy.dongqi_mu_sigma_reg_ratio:
+		if self.global_cfg.debug.dongqi_mu_sigma_reg_ratio:
 			# calculate pow(2) for mu and sigma (use mask)
 			reg_loss = (mu ** 2).sum(-1) + (var ** 2).sum(-1)
 			reg_loss = apply_mask(reg_loss, batch.valid_mask).mean()
-			combined_loss += reg_loss * self.cfg.policy.dongqi_mu_sigma_reg_ratio
+			combined_loss += reg_loss * self.global_cfg.debug.dongqi_mu_sigma_reg_ratio
 			self.record("learn/loss_actor_reg", reg_loss.item())
 			self.record("learn/loss_actor_reg_normed", reg_loss.item()/batch.valid_mask.float().mean().item())
 
@@ -3035,13 +3032,21 @@ class SACRunner(TD3SACRunner):
 		self.actor_optim.step()
 
 		# update alpha (use batch.log_prob_cur)
+
 		if self._is_auto_alpha:
-			cur_entropy = - apply_mask(log_prob_cur.detach(), batch.valid_mask).mean() / batch.valid_mask.mean() # (*, 1)
-			if 1:
-				alpha_loss = - self._log_alpha * (self._target_entropy - cur_entropy)
+			if self.global_cfg.debug.use_log_alpha_for_mul_logprob:
+				alpha_mul = self._log_alpha
 			else:
-				alpha_loss = - self._log_alpha * (self._target_entropy - cur_entropy).detach()
-			alpha_loss = alpha_loss.mean()
+				alpha_mul = self._log_alpha.exp()
+			
+			if self.global_cfg.debug.entropy_mask_loss_renorm:
+				cur_entropy = - apply_mask(log_prob_cur.detach(), batch.valid_mask).mean() / batch.valid_mask.mean() # (*, 1)
+				alpha_loss = - alpha_mul * (self._target_entropy - cur_entropy)
+			else:
+				cur_entropy = - log_prob_cur.detach() # (*, 1)
+				alpha_loss = - alpha_mul * apply_mask(self._target_entropy-cur_entropy, batch.valid_mask) # (*, 1)
+				alpha_loss = alpha_loss.mean()
+			
 			self._alpha_optim.zero_grad()
 			alpha_loss.backward()
 			self._alpha_optim.step()
