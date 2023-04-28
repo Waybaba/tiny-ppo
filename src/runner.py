@@ -1131,8 +1131,8 @@ class RNN_MLP_Net(nn.Module):
 				device=self.device,
 			)
 			self.heads.append(head.to(self.device))
-		self.heads = nn.ModuleList(self.heads)
 		self.mlp_before_head = nn.Sequential(*self.mlp_before_head)
+		self.heads = nn.ModuleList(self.heads)
 	
 	def forward(
 		self,

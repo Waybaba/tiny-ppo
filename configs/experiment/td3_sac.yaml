@@ -97,10 +97,10 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
   log_interval: 100
   log_instant_commit: true # false would make the wandb sync only once per epoch
   debug: # default value is the better one
-    entropy_mask_loss_renorm: true # true: mask->mean->renorm->loss # false: loss -> mask -> mean
+    entropy_mask_loss_renorm: false # true: mask->mean->renorm->loss # false: loss -> mask -> mean
     use_log_alpha_for_mul_logprob: true
     dongqi_log_prob_clamp: false 
-    dongqi_mu_sigma_reg_ratio: 1e-3 # 0 for skip
+    dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip
 
 
 trainer:
