@@ -177,19 +177,6 @@ env:
   train_num: 1
   test_num: 1
   delay: 0
-collector:
-  train_collector:
-    _target_: tianshou.data.Collector
-    _partial_: true
-    buffer: 
-      _target_: tianshou.data.ReplayBuffer
-      size: 1000000
-      # stack_num: 8
-      # buffer_num: 2
-    exploration_noise: true
-  test_collector:
-    _target_: tianshou.data.Collector
-    _partial_: true
 start_timesteps: ???
 
 # common - for all tasks (task_name, tags, output_dir, device)
