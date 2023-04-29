@@ -16,7 +16,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     rnn_idx_adjust_dis_to_start: 0.5 # only for rnn, when the idx_stack start is < this, the idx_stack will be adjusted to the start, use 0 to do nothing, use float would times the history_num
     seq_mask: false 
     obs_pred: 
-      turn_on: true 
+      turn_on: false 
       input_type: "obs" # obs or feat
       net_type: rnn # vae or mlp
       net:
@@ -71,3 +71,6 @@ actor:
     rnn_hidden_layer_size: 256
     mlp_hidden_sizes: [256]
 
+trainer:
+  batch_size: 32 # 256,1 for normal, 32,64 for donqi
+  batch_seq_len: 64 # would be used in buffer.seq_len 
