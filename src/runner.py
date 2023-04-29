@@ -1112,6 +1112,7 @@ class RNN_MLP_Net(nn.Module):
 		# build mlp
 		assert len(mlp_hidden_sizes) > 0, "mlp_hidden_sizes must be > 0"
 		before_head_mlp_hidden_sizes = mlp_hidden_sizes[:-1]
+		
 		self.mlp_before_head = []
 		self.mlp_before_head.append(MLP(
 			rnn_hidden_layer_size if rnn_layer_num else input_dim,
@@ -1120,8 +1121,10 @@ class RNN_MLP_Net(nn.Module):
 			device=self.device,
 			activation=nn.ReLU
 		))
+		self.mlp_before_head.append(nn.ReLU())
 		if self.dropout:
 			self.mlp_before_head.append(nn.Dropout(self.dropout))
+		
 		self.heads = []
 		for _ in range(head_num):
 			head = MLP(
@@ -1131,6 +1134,7 @@ class RNN_MLP_Net(nn.Module):
 				device=self.device,
 			)
 			self.heads.append(head.to(self.device))
+		
 		self.mlp_before_head = nn.Sequential(*self.mlp_before_head)
 		self.heads = nn.ModuleList(self.heads)
 	
