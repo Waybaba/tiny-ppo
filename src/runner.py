@@ -21,7 +21,7 @@ import torch.nn.functional as F
 
 import warnings
 warnings.filterwarnings('ignore')
-from tianshou.policy import DDPGPolicy
+from src.tianshou.policy import DDPGPolicy
 from tianshou.exploration import BaseNoise
 from torch.distributions import Independent, Normal
 from copy import deepcopy
@@ -129,7 +129,7 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 		hint: walking left from idxes
 		"""
 		assert len(idxes.shape) == 2, "idxes should be 2-dim, should support more later"
-		return self._remaster_expand(idxes[:,0], burnin_len, direction="left", contain_head=False)
+		return self._remaster_expand(idxes[:,0], burnin_len, direction="left", contain_head=True)
 	
 	def _remaster_expand(self, idx_start, seq_len, direction="left", contain_head=True):
 		""" expand the idxes to a sequence of idxes
@@ -1177,6 +1177,7 @@ class RNN_MLP_Net(nn.Module):
 				# print(hidden[0,0])
 			else: 
 				# normal step of online
+
 				after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
 			if to_unsqueeze: 
 				after_rnn = after_rnn.squeeze(-2)
@@ -1821,7 +1822,7 @@ class DDPGTianshouRunner(TianshouRunner):
 
 		from tianshou.data import Collector, ReplayBuffer, VectorReplayBuffer
 		from tianshou.exploration import GaussianNoise
-		from tianshou.policy import DDPGPolicy
+		from src.tianshou.policy import DDPGPolicy # modified
 		from tianshou.trainer import offpolicy_trainer
 		from tianshou.utils import TensorboardLogger, WandbLogger
 		from tianshou.utils.net.common import Net
@@ -1864,6 +1865,7 @@ class DDPGTianshouRunner(TianshouRunner):
 			exploration_noise=GaussianNoise(sigma=cfg.exploration_noise),
 			estimation_step=cfg.n_step,
 			action_space=env.action_space,
+			cfg=cfg,
 		)
 
 		# collector
@@ -2715,46 +2717,9 @@ class TD3SACRunner(OfflineRLRunner):
 				batch.a_in_next = torch.cat([batch.a_in_next, batch.ahis_next[...,-1,:]], dim=-1)
 				if self._burnin_num():
 					keeped_keys += ["state_cur", "state_next"]
-					burnin_batch.a_in_cur = torch.cat([burnin_batch.a_in_cur, burnin_batch.ahis_cur[...,-1,:]], dim=-1)
-					burnin_batch.a_in_next = torch.cat([burnin_batch.a_in_next, burnin_batch.ahis_next[...,-1,:]], dim=-1)
-					
-					with torch.no_grad():
-						state_curs = []
-						state_nexts = []
-						for t in range(burnin_batch.a_in_cur.shape[-2]):
-							state_cur = state_curs[-1] if len(state_curs) > 0 else None
-							state_next = state_nexts[-1] if len(state_nexts) > 0 else None
-							_, state_cur = self.actor(burnin_batch.a_in_cur, state=None)
-							_, state_next = self.actor(burnin_batch.a_in_next, state=None)
-							state_curs.append(state_cur)
-							state_nexts.append(state_next)
-						state_cur = {
-							"hidden": torch.cat([s["hidden"] for s in state_curs], dim=1),
-						}
-						state_next = {
-							"hidden": torch.cat([s["hidden"] for s in state_nexts], dim=1),
-						}
-
-					# index states B, T, state_dim. 
-					# -1 -> set the state as all zero
-					# 0 - (T-1) -> set the state as the last state of the corresponding time step
-					idx_cur = (burnin_batch.valid_mask.sum(dim=-1) - 1).long() # (B,)
-					idx_next = (burnin_batch.valid_mask.sum(dim=-1) - 1).long()
-					batch.state_cur = torch.zeros((*idx_cur.shape, state_cur["hidden"].shape[-1]))
-					batch.state_next = torch.zeros((*idx_next.shape, state_next["hidden"].shape[-1]))
-					for i in range(idx_cur.shape[0]):
-						if idx_cur[i] == -1:
-							continue
-						batch.state_cur[i] = state_cur["hidden"][i, idx_cur[i]]
-						batch.state_next[i] = state_next["hidden"][i, idx_next[i]]
-					batch.state_cur = {
-						"hidden": batch.state_cur,
-					}
-					batch.state_next = {
-						"hidden": batch.state_next,
-					}
-					# TODO for case all invalid. 2. note the min is the first index of valid
-
+					burnin_batch.a_in = torch.cat([burnin_batch.a_in_cur, burnin_batch.ahis_cur[...,-1,:]], dim=-1) # [B, T, obs_dim+act_dim]
+					# forward to get state
+					batch.state_cur, batch.state_next = self._burnin_to_get_state(burnin_batch.a_in, burnin_batch.valid_mask, self.actor)
 
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				raise NotImplementedError
@@ -2939,6 +2904,7 @@ class TD3SACRunner(OfflineRLRunner):
 		of source module."""
 		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
 			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
+                # update the target network
 
 	def _burnin_num(self):
 		if "burnin_num" not in self.cfg.global_cfg: return 0
@@ -2949,6 +2915,69 @@ class TD3SACRunner(OfflineRLRunner):
 		elif type(self.cfg.global_cfg.burnin_num) == int:
 			burnin_num = self.cfg.global_cfg.burnin_num
 		return burnin_num
+
+	def _burnin_to_get_state(self, input, mask, net):
+		""" 
+		process input to the net to get the final state after the final valid mask
+
+		Structure:
+			... ,_ , 1, 2, 3, 4, 5, 6, 7, 8, 9, ... Memory Buffer
+			... ,_ , _, 3, 4, 5, _, _, _, _, ... mean sequence
+			... ,_ , 2, 3, _, _, _, _, _, _, ... burnin
+			... ,0 , 1, 1, _, _, _, _, _, _, ... burn in mask
+			after shifting
+			burnin      = [2, 3, 0]
+			burnin_mask = [1, 1, 0]
+			so the full state would be [2, 3, 0]
+			so state_cur should be the state after 2
+			and state_next should be the state after 2, 3
+		Args:
+			input: (B, T, in_dim_of_net)
+			mask: (B, T)
+			net:
+				forward a_in and return out, state
+				where state = {
+					"hidden": (B, num_layers, hidden_dim)
+				e.g. net(burnin_batch.a_in,state=None)[1]["hidden"].shape
+		Returns:
+			state_cur: (B, num_layers, hidden_dim)
+			state_next: (B, num_layers, hidden_dim)
+			for state_cur, it should be the state after the last second burnin (since the last one the start of the main sequence) 
+			for state_next, it should be the state after the last burnin
+		"""
+		assert len(input.shape) == 3 and len(mask.shape) == 2
+		B, T = input.shape[:2]
+		
+		with torch.no_grad():
+			# Compute hidden states for each time step
+			hidden_states = []
+			last_state = None
+			for t in range(T):
+				input_t = input[:, t].unsqueeze(1)
+				_, state = net(input_t, state=last_state)
+				hidden_states.append(state["hidden"])
+				last_state = state
+
+			# Stack hidden states along the time dimension
+			hidden_states = torch.stack(hidden_states, dim=1) # (B, T, num_layers, hidden_dim)
+
+		# Identify the last and second last burn-in indices
+		burnin_mask = mask == 1
+		burnin_cumsum = burnin_mask.cumsum(dim=-1)
+		
+		last_burnin_idx = burnin_cumsum.max(dim=-1).indices
+		second_last_burnin_idx = (burnin_cumsum - 1).clamp(min=0).max(dim=-1).indices
+
+		# Extract states for the last second and last burn-in steps
+		state_cur = {
+			"hidden": hidden_states[torch.arange(B), second_last_burnin_idx]
+		}
+		state_next = {
+			"hidden": hidden_states[torch.arange(B), last_burnin_idx]
+		}
+
+		return state_cur, state_next
+
 
 
 class TD3Runner(TD3SACRunner):
@@ -2969,7 +2998,11 @@ class TD3Runner(TD3SACRunner):
 			a_next_online_old += noise
 			a_next_online_old = a_next_online_old.clamp(self.env.action_space.low[0], self.env.action_space.high[0])
 			
-			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+			if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
+				value_mask = batch.terminated
+			else:
+				value_mask = batch.done
+			target_q = (batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * \
 				torch.min(
 					self.critic1_old(torch.cat([batch.c_in_next, a_next_online_old],-1))[0],
 					self.critic2_old(torch.cat([batch.c_in_next, a_next_online_old],-1))[0]
@@ -3072,13 +3105,17 @@ class SACRunner(TD3SACRunner):
 		# cal target_q
 		pre_sz = list(batch.done.shape)
 		with torch.no_grad():
+			if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
+				value_mask = batch.terminated
+			else:
+				value_mask = batch.done
 			(mu, var), _ = self.actor(batch.a_in_next, state=None)
 			a_next, log_prob_next = self.actor.sample_act(mu, var)
 			v_next = torch.min(
 				self.critic1_old(torch.cat([batch.c_in_next, a_next],-1))[0],
 				self.critic2_old(torch.cat([batch.c_in_next, a_next],-1))[0]
 			).reshape(*pre_sz) - self._log_alpha.exp().detach() * log_prob_next.reshape(*pre_sz)
-			target_q = batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * v_next
+			target_q = batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * v_next
 		
 		# critic loss
 		critic_loss = \
@@ -3268,11 +3305,15 @@ class DDPGRunner(TD3SACRunner):
 	def update_critic(self, batch):
 		pre_sz = list(batch.done.shape)
 		with torch.no_grad():
+			if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
+				value_mask = batch.terminated
+			else:
+				value_mask = batch.done
 			a_next_online_old = self.actor_old(
 				batch.a_in_next, 
 				state=batch.state_next if self._burnin_num() else None
 			)[0][0]
-			target_q = (batch.rew + self.cfg.policy.gamma * (1 - batch.done.int()) * \
+			target_q = (batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * \
 				self.critic1_old(torch.cat([batch.c_in_next, a_next_online_old],-1))[0].squeeze(-1)
 			).reshape(*pre_sz,-1)
 		

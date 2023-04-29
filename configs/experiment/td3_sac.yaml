@@ -101,6 +101,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     use_log_alpha_for_mul_logprob: true
     dongqi_log_prob_clamp: false 
     dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip
+    use_terminated_mask_for_value: false
 
 
 trainer:

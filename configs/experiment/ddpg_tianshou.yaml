@@ -35,6 +35,10 @@ resume_id: null
 logger: wandb
 watch: false
 
+debug:
+  my_compute_one_step: true
+  return_type: "my_use_done" # "tianshou", "tianshou_onestep", "my_use_done", "my_use_terminated", "eval_all"
+
 
 # common - for all tasks (task_name, tags, output_dir, device)
 wandb_project: ${task_name}

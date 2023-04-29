@@ -14,7 +14,7 @@
 		},
 		// TD3_SAC
 		{
-			"name": "TD3_SAC",
+			"name": "TD3_SAC_DDPG",
 			"type": "python",
 			"request": "launch",
 			"program": "${workspaceFolder}/src/entry.py",
@@ -26,6 +26,7 @@
 				// "experiment=sac",
 				// "experiment=sac_rnn",
 				// "experiment=sac",
+				// "experiment=ddpg_tianshou",
 				"env.name=HalfCheetah-v4",
 				// "env.name=Hopper-v4",
 				// "env.name=Ant-v4",
@@ -60,7 +61,8 @@
 			"justMyCode": true,
 			"args": [
 				"experiment=ddpg_tianshou",
-				// "env.name=HalfCheetah-v4",
+				// "task=Hopper-v4",
+				"task=HalfCheetah-v4",
 				// "env.delay=0",
 			],
 		},
