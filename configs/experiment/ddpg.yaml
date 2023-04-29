@@ -12,6 +12,9 @@ policy:
   gamma: 0.99
   initial_exploration_noise: 0.1
 
+debug: # default value is the better one
+  use_terminated_mask_for_value: false
+
 actor:
   unbounded: false
   conditioned_sigma: true
