@@ -50,18 +50,18 @@ for base_env_name in ["HalfCheetah-v4", "Ant-v4", "Hopper-v4", "Walker2d-v4", "H
             max_episode_steps=5000,
         )
 
-class DelayedEnvWrapper(utils.delay.DelayedRoboticEnv):
-    metadata = {'render.modes': ['human', 'text']}
-    def __init__(self, base_env_name: str, delay_steps=2, global_config=None):
-        base_env = gym.make(base_env_name)
-        super().__init__(base_env, delay_steps, global_config)
-
-# class DelayedEnvWrapper(gym.Wrapper):
+# class DelayedEnvWrapper(utils.delay.DelayedRoboticEnv):
 #     metadata = {'render.modes': ['human', 'text']}
 #     def __init__(self, base_env_name: str, delay_steps=2, global_config=None):
-#         # For debugging: replace 'base_env_name' with 'HalfCheetah-v4'
-#         base_env = gym.make('HalfCheetah-v4')
-#         super().__init__(base_env)
+#         base_env = gym.make(base_env_name)
+#         super().__init__(base_env, delay_steps, global_config)
+
+class DelayedEnvWrapper(gym.Wrapper):
+    metadata = {'render.modes': ['human', 'text']}
+    def __init__(self, base_env_name: str, delay_steps=2, global_config=None):
+        # For debugging: replace 'base_env_name' with 'HalfCheetah-v4'
+        base_env = gym.make('HalfCheetah-v4')
+        super().__init__(base_env)
         
 
 def make_mujoco_env(task, seed, training_num, test_num, obs_norm):
