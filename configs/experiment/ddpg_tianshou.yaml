@@ -10,7 +10,8 @@ runner:
   _target_: src.runner.DDPGTianshouRunner
   _partial_: true
 
-task: HalfCheetah-v4
+# task: HalfCheetah-v4
+task: HalfCheetah-v4-delay_0
 seed: 0
 buffer_size: 1000000
 hidden_sizes: [256, 256]

@@ -4,11 +4,65 @@ import gymnasium as gym
 
 from tianshou.env import ShmemVectorEnv, VectorEnvNormObs
 
-try:
-    import envpool
-except ImportError:
+TURN_ON_ENVPOOL = False
+if TURN_ON_ENVPOOL:
+    try:
+        import envpool
+    except ImportError:
+        envpool = None
+else:
     envpool = None
 
+
+from gymnasium.envs.registration import register
+
+import numpy as np
+from queue import Queue
+from copy import deepcopy
+import utils
+
+
+# HalfCheetah-v4-delay_0
+
+class Config:
+    pass
+
+
+class Globa_cfg:
+    def __init__(self):
+        self.actor_input = Config()
+        self.critic_input = Config()
+        self.actor_input.history_merge_method = "none"
+        self.critic_input.history_merge_method = "none"
+        self.history_num = 1
+
+
+for base_env_name in ["HalfCheetah-v4", "Ant-v4", "Hopper-v4", "Walker2d-v4", "Humanoid-v4"]:
+    for delay in range(16):
+        register(
+            f"{base_env_name}-delay_{delay}",
+            entry_point="src.tianshou.mujoco_env:DelayedEnvWrapper",
+            kwargs=dict(
+                base_env_name=base_env_name,
+                delay_steps=delay,
+                global_config=Globa_cfg(),
+            ),
+            max_episode_steps=5000,
+        )
+
+class DelayedEnvWrapper(utils.delay.DelayedRoboticEnv):
+    metadata = {'render.modes': ['human', 'text']}
+    def __init__(self, base_env_name: str, delay_steps=2, global_config=None):
+        base_env = gym.make(base_env_name)
+        super().__init__(base_env, delay_steps, global_config)
+
+# class DelayedEnvWrapper(gym.Wrapper):
+#     metadata = {'render.modes': ['human', 'text']}
+#     def __init__(self, base_env_name: str, delay_steps=2, global_config=None):
+#         # For debugging: replace 'base_env_name' with 'HalfCheetah-v4'
+#         base_env = gym.make('HalfCheetah-v4')
+#         super().__init__(base_env)
+        
 
 def make_mujoco_env(task, seed, training_num, test_num, obs_norm):
     """Wrapper function for Mujoco env.
@@ -32,9 +86,10 @@ def make_mujoco_env(task, seed, training_num, test_num, obs_norm):
             [lambda: gym.make(task) for _ in range(training_num)]
         )
         test_envs = ShmemVectorEnv([lambda: gym.make(task) for _ in range(test_num)])
-        env.seed(seed)
-        train_envs.seed(seed)
-        test_envs.seed(seed)
+        if TURN_ON_ENVPOOL:
+            env.seed(seed)
+            train_envs.seed(seed)
+            test_envs.seed(seed)
     if obs_norm:
         # obs norm wrapper
         train_envs = VectorEnvNormObs(train_envs)
