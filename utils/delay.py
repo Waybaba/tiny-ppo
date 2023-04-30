@@ -4,9 +4,11 @@ from queue import Queue
 from copy import deepcopy
 
 class DelayedRoboticEnv(gym.Wrapper):
-    def __init__(self, env0: gym.Env, delay_steps=2, global_config=None):
-        super().__init__(env0)
-        self.env = env0
+    metadata = {'render.modes': ['human', 'text']}
+
+    def __init__(self, base_env: gym.Env, delay_steps=2, global_config=None):
+        super().__init__(base_env)
+        self.env = base_env
         self.delay_steps = delay_steps
         self.global_cfg = global_config
 
@@ -77,7 +79,7 @@ class DelayedRoboticEnv(gym.Wrapper):
             self.act_buf.pop(0)
         elif self.history_num == 0:
             info["historical_act"] = False
-        return (deepcopy(obs_next_delayed), deepcopy(reward), deepcopy(done or truncated), deepcopy(info))
+        return (deepcopy(obs_next_delayed), deepcopy(reward), deepcopy(done), deepcopy(truncated), deepcopy(info))
 
     def step(self, action):
         """

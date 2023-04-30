@@ -2014,10 +2014,10 @@ class EnvCollector:
 					if a.device != torch.device("cpu"):
 						a = a.cpu()
 					a = a.numpy()
-				s_, r, terminated, info = self.env.step(a)
+				s_, r, terminated, truncated, info = self.env.step(a)
 				rew_sum_cur += r
 
-				truncated = env_step_cur == self.env_max_step
+				truncated = truncated or (env_step_cur == self.env_max_step)
 				batch = Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info)
 				
 				yield batch, {
