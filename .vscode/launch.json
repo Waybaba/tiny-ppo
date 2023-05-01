@@ -31,6 +31,8 @@
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
+				"gloglobal_cfg.debug.delay_keep_order_method=expect1",
+				"env.fixed_delay=false",
 				"env.delay=12",
 				"start_timesteps=1000",
 			],
