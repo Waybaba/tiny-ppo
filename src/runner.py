@@ -538,7 +538,8 @@ class CustomSACPolicy(SACPolicy):
 				combined_loss = combined_loss + kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
 				to_logs["learn/obs_pred/loss_kl"] = kl_loss.item()
 				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
-					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+					kl_loss_normed = kl_loss.detach() / self.global_cfg.actor_input.obs_pred.auto_kl_target
+					kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
 					self._auto_kl_optim.zero_grad()
 					kl_weight_loss.backward()
 					self._auto_kl_optim.step()
@@ -569,7 +570,8 @@ class CustomSACPolicy(SACPolicy):
 			self.actor_optim.step()
 			self._encode_optim.step()
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				kl_loss_normed = kl_loss / batch.valid_mask.mean()
+				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
