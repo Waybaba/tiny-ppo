@@ -3171,7 +3171,6 @@ class SACRunner(TD3SACRunner):
 			combined_loss += reg_loss * self.global_cfg.debug.dongqi_mu_sigma_reg_ratio
 			self.record("learn/loss_actor_reg", reg_loss.item())
 			self.record("learn/loss_actor_reg_normed", reg_loss.item()/batch.valid_mask.float().mean().item())
-
 		
 		# add pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
