@@ -33,7 +33,7 @@ from pytorch_lightning.utilities.logger import (
 
 def make_env(env_cfg):
     env = gym.make(env_cfg.name)
-    env = DelayedRoboticEnv(env, env_cfg.delay, env_cfg.global_cfg)
+    env = DelayedRoboticEnv(env, env_cfg.delay, env_cfg.fixed_delay, env_cfg.global_cfg)
     return env
 
 def seed_everything(seed: int):

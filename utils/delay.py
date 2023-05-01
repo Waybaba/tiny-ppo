@@ -3,19 +3,55 @@ import numpy as np
 from queue import Queue
 from copy import deepcopy
 
+class ListAsQueue:
+    """ A queue implemented by list, which support indexing.
+    """
+    def __init__(self, maxsize):
+        self.maxsize = maxsize
+        self.queue = []
+    
+    def put(self, item):
+        if len(self.queue) >= self.maxsize:
+            self.queue.pop(0)
+        self.queue.append(item)
+    
+    def get(self):
+        return self.queue.pop(0)
+
+    def empty(self):
+        return len(self.queue) == 0
+    
+    def full(self):
+        return len(self.queue) == self.maxsize
+    
+    def __getitem__(self, idx):
+        return self.queue[idx]
+
+    def __len__(self):
+        return len(self.queue)
+    
+
 class DelayedRoboticEnv(gym.Wrapper):
+    """
+    Args:
+        fixed_delay: if True, the delay_steps is fixed. Otherwise, 
+            the delay_steps is sampled from a uniform distribution
+            between (0, max_delay_steps]
+    """
     metadata = {'render.modes': ['human', 'text']}
 
-    def __init__(self, base_env: gym.Env, delay_steps=2, global_config=None):
+    def __init__(self, base_env: gym.Env, delay_steps, fixed_delay, global_config):
         super().__init__(base_env)
+        
         self.env = base_env
         self.delay_steps = delay_steps
+        self.fixed_delay = fixed_delay
         self.global_cfg = global_config
 
         # delayed observations
-        self.delay_buf = Queue(maxsize=delay_steps+1)
+        self.delay_buf = ListAsQueue(maxsize=delay_steps+1)
         self.last_oracle_obs = None
-
+        self.last_delayed_step = None # for debug
 
         # history merge
         if self.global_cfg.actor_input.history_merge_method != "none" or \
@@ -47,10 +83,21 @@ class DelayedRoboticEnv(gym.Wrapper):
         # get obs_next_delayed
         obs_next_delayed = self.delay_buf.get()
         self.delay_buf.put(obs_next_nodelay)
+
+        if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
+            if self.global_cfg.debug.delay_keep_order:
+                self.last_delayed_step = np.random.randint(0, self.delay_steps)
+            else:
+                self.last_delayed_step = np.random.randint(0, self.delay_steps)
+            obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
+        else:
+            self.last_delayed_step = len(self.delay_buf) - 1
+
         self.last_oracle_obs = obs_next_nodelay
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
         info["obs_nodelay"] = None
+        info["obs_delayed_step_num"] = self.last_delayed_step
         return obs_next_delayed, info
 
     def preprocess_fn(self, res, action):
@@ -63,14 +110,27 @@ class DelayedRoboticEnv(gym.Wrapper):
             obs_next_nodelay, reward, done, truncated, info = res
         else:
             raise ValueError("Invalid return value from env.step()")
+        
         # operate the delayed observation queue
         assert self.delay_buf.full(), "delay_buf should be filled with zeros in reset()"
         obs_next_delayed = self.delay_buf.get()
         self.delay_buf.put(obs_next_nodelay)
+
+        if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
+            if self.global_cfg.debug.delay_keep_order:
+                self.last_delayed_step = np.random.randint(0, min(self.last_delayed_step + 1, self.delay_steps+1))
+            else:
+                self.last_delayed_step = np.random.randint(0, self.delay_steps)
+            obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
+        else:
+            self.last_delayed_step = len(self.delay_buf) - 1
+        
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
         info["obs_nodelay"] = self.last_oracle_obs
+        info["obs_delayed_step_num"] = self.last_delayed_step
         self.last_oracle_obs = obs_next_nodelay
+
         # history merge
         if self.history_num > 0:
             # info["historical_act"] = np.concatenate(self.act_buf, axis=0)
@@ -89,12 +149,6 @@ class DelayedRoboticEnv(gym.Wrapper):
         """
         res = self.env.step(action)
         return self.preprocess_fn(res, action)
-
-    def render(self):
-        return self.env.render()
-
-    def close(self):
-        return self.env.close()
 
 # RLlib version
 class RLlibDelayedRoboticEnv(DelayedRoboticEnv):

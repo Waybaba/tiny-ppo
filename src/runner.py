@@ -2606,12 +2606,13 @@ class TD3SACRunner(OfflineRLRunner):
 			act, rew, done (*, ): no changes (terminated and truncated are removed since we don't need them)
 			ahis_cur, ahis_next (*, history_len, act_dim): history of actions
 		"""
-		keeped_keys = ["dobs", "dobs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done", "terminated"]
+		keeped_keys = ["dobs", "dobs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done", "terminated", "obs_delayed_step_num"]
 		batch = self.buf[indices]
 		batch.dobs, batch.dobs_next = batch.obs, batch.obs_next
 		batch.oobs, batch.oobs_next = batch.info["obs_nodelay"], batch.info["obs_next_nodelay"]
 		batch.ahis_cur = batch.info["historical_act"]
 		batch.ahis_next = self.buf[self.buf.next(indices)].info["historical_act"]
+		batch.obs_delayed_step_num = batch.info["obs_delayed_step_num"]
 		for k in list(batch.keys()): 
 			if k not in keeped_keys:
 				batch.pop(k)
@@ -2803,7 +2804,10 @@ class TD3SACRunner(OfflineRLRunner):
 			raise NotImplementedError
 		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
 			raise NotImplementedError
-		
+
+		# log
+		self.record("learn/obs_delayed_step_num", batch.obs_delayed_step_num.mean().item())
+
 		# only keep res keys
 		for k in list(batch.keys()): 
 			if k not in keeped_keys: batch.pop(k)
