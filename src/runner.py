@@ -3171,7 +3171,7 @@ class SACRunner(TD3SACRunner):
 			combined_loss += reg_loss * self.global_cfg.debug.dongqi_mu_sigma_reg_ratio
 			self.record("learn/loss_actor_reg", reg_loss.item())
 			self.record("learn/loss_actor_reg_normed", reg_loss.item()/batch.valid_mask.float().mean().item())
-		
+
 		# add pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
 			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
@@ -3195,7 +3195,7 @@ class SACRunner(TD3SACRunner):
 				self.record("learn/obs_pred/loss_kl", kl_loss.item())
 				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
 				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
-					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
+					kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
 					self._auto_kl_optim.zero_grad()
 					kl_weight_loss.backward()
 					self._auto_kl_optim.step()
