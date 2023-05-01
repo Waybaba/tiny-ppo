@@ -2807,6 +2807,7 @@ class TD3SACRunner(OfflineRLRunner):
 
 		# log
 		self.record("learn/obs_delayed_step_num", batch.obs_delayed_step_num.mean().item())
+		self.record("learn/obs_delayed_step_num_sample", batch.obs_delayed_step_num.flatten()[0].item())
 
 		# only keep res keys
 		for k in list(batch.keys()): 
