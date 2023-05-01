@@ -102,7 +102,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     dongqi_log_prob_clamp: false 
     dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip
     use_terminated_mask_for_value: true
-    delay_keep_order: true
+    delay_keep_order_method: expect1 # none, expect1
 
 
 trainer:
@@ -179,7 +179,7 @@ env:
   train_num: 1
   test_num: 1
   delay: 0
-  fixed_delay: false
+  fixed_delay: true 
 start_timesteps: ???
 
 # common - for all tasks (task_name, tags, output_dir, device)

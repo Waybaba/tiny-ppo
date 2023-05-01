@@ -85,11 +85,13 @@ class DelayedRoboticEnv(gym.Wrapper):
         self.delay_buf.put(obs_next_nodelay)
 
         if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
-            if self.global_cfg.debug.delay_keep_order:
+            if not self.global_cfg.debug.delay_keep_order_method:
                 self.last_delayed_step = np.random.randint(0, self.delay_steps)
+            elif self.global_cfg.debug.delay_keep_order_method == "expect1":
+                self.last_delayed_step = np.random.randint(-1, 2)
+                self.last_delayed_step = np.clip(self.last_delayed_step, 0, self.delay_steps-1)
             else:
-                self.last_delayed_step = np.random.randint(0, self.delay_steps)
-            obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
+                raise ValueError("Invalid delay_keep_order_method {}".format(self.global_cfg.debug.delay_keep_order_method))
         else:
             self.last_delayed_step = len(self.delay_buf) - 1
 
@@ -117,10 +119,13 @@ class DelayedRoboticEnv(gym.Wrapper):
         self.delay_buf.put(obs_next_nodelay)
 
         if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
-            if self.global_cfg.debug.delay_keep_order:
-                self.last_delayed_step = np.random.randint(0, min(self.last_delayed_step + 1, self.delay_steps+1))
-            else:
+            if not self.global_cfg.debug.delay_keep_order_method:
                 self.last_delayed_step = np.random.randint(0, self.delay_steps)
+            elif self.global_cfg.debug.delay_keep_order_method == "expect1":
+                self.last_delayed_step = np.random.randint(self.last_delayed_step-1, self.last_delayed_step+2)
+                self.last_delayed_step = np.clip(self.last_delayed_step, 0, self.delay_steps-1)
+            else:
+                raise ValueError("Invalid delay_keep_order_method {}".format(self.global_cfg.debug.delay_keep_order_method))
             obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
         else:
             self.last_delayed_step = len(self.delay_buf) - 1
