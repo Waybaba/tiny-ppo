@@ -3,40 +3,19 @@ import numpy as np
 from queue import Queue
 from copy import deepcopy
 
-class ListAsQueue:
-    """ A queue implemented by list, which support indexing.
-    """
-    def __init__(self, maxsize):
-        self.maxsize = maxsize
-        self.queue = []
-    
-    def put(self, item):
-        if len(self.queue) >= self.maxsize:
-            self.queue.pop(0)
-        self.queue.append(item)
-    
-    def get(self):
-        return self.queue.pop(0)
+   
 
-    def empty(self):
-        return len(self.queue) == 0
-    
-    def full(self):
-        return len(self.queue) == self.maxsize
-    
-    def __getitem__(self, idx):
-        return self.queue[idx]
-
-    def __len__(self):
-        return len(self.queue)
-    
 
 class DelayedRoboticEnv(gym.Wrapper):
     """
     Args:
         fixed_delay: if True, the delay_steps is fixed. Otherwise, 
             the delay_steps is sampled from a uniform distribution
-            between (0, max_delay_steps]
+            between [0, max_delay_steps)
+            self.delay_buf = [delay=max, delay=max-1, ..., delay=0]
+        delay_keep_order_method:
+            "none": random sample from the delay_buf
+            "expect1": sample from the delay_buf with the step forward of 1 [0,1,2]
     """
     metadata = {'render.modes': ['human', 'text']}
 
@@ -86,7 +65,7 @@ class DelayedRoboticEnv(gym.Wrapper):
 
         if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
             if not self.global_cfg.debug.delay_keep_order_method:
-                self.last_delayed_step = np.random.randint(0, self.delay_steps)
+                self.last_delayed_step = np.random.randint(0, self.delay_steps) if self.delay_steps > 0 else 0
             elif self.global_cfg.debug.delay_keep_order_method == "expect1":
                 self.last_delayed_step = len(self.delay_buf) - 1 # start from the max delay step
                 self.last_delayed_step = np.random.randint(self.last_delayed_step-1, self.last_delayed_step+2)
@@ -121,7 +100,7 @@ class DelayedRoboticEnv(gym.Wrapper):
 
         if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
             if not self.global_cfg.debug.delay_keep_order_method:
-                self.last_delayed_step = np.random.randint(0, self.delay_steps)
+                self.last_delayed_step = np.random.randint(0, self.delay_steps) if self.delay_steps > 0 else 0
             elif self.global_cfg.debug.delay_keep_order_method == "expect1":
                 self.last_delayed_step = np.random.randint(self.last_delayed_step-1, self.last_delayed_step+2)
                 self.last_delayed_step = np.clip(self.last_delayed_step, 0, self.delay_steps-1)
@@ -162,10 +141,29 @@ class RLlibDelayedRoboticEnv(DelayedRoboticEnv):
         super().__init__(env0, env_config["delay_steps"])
 
 
-
-class DelayQueue:
-    """ a queue for delayed observations storation
+class ListAsQueue:
+    """ A queue implemented by list, which support indexing.
     """
-    def __init__(self, size):
-        self.size = size
+    def __init__(self, maxsize):
+        self.maxsize = maxsize
         self.queue = []
+    
+    def put(self, item):
+        if len(self.queue) >= self.maxsize:
+            self.queue.pop(0)
+        self.queue.append(item)
+    
+    def get(self):
+        return self.queue.pop(0)
+
+    def empty(self):
+        return len(self.queue) == 0
+    
+    def full(self):
+        return len(self.queue) == self.maxsize
+    
+    def __getitem__(self, idx):
+        return self.queue[idx]
+
+    def __len__(self):
+        return len(self.queue)

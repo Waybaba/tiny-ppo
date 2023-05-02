@@ -33,7 +33,7 @@
 				// "env.name=DummyNum-v0",
 				"global_cfg.debug.delay_keep_order_method=expect1",
 				"env.fixed_delay=false",
-				"env.delay=12",
+				"env.delay=0",
 				"start_timesteps=1000",
 			],
 		},
