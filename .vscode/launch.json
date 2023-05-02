@@ -23,9 +23,9 @@
 			"args": [
 				// "experiment=ddpg",
 				// "experiment=ddpg_rnn",
-				"experiment=td3",
+				// "experiment=td3",
 				// "experiment=td3_rnn",
-				// "experiment=sac",
+				"experiment=sac",
 				// "experiment=sac_rnn",
 				// "experiment=ddpg_tianshou",
 				// "env.name=HalfCheetah-v4",

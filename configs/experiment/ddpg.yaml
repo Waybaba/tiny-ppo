@@ -26,3 +26,5 @@ runner:
 
 
 start_timesteps: 25e3
+
+algorithm_name: ddpg
