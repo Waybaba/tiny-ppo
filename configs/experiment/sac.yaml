@@ -4,7 +4,7 @@
 # python train.py experiment=example
 
 defaults:
-  - td3_sac.yaml
+  - default.yaml
 
 # common - for all tasks (task_name, tags, output_dir, device)
 policy:

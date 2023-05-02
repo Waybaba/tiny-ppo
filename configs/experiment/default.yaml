@@ -1,95 +1,178 @@
 # @package _global_
 
-# to execute this experiment run:
-# python train.py experiment=example
+# default -> sac -> sac_rnn <- rnn_plugin
+# default -> td3 -> td3_rnn <- rnn_plugin
+# default -> ddpg -> ddpg_rnn <- rnn_plugin
+# default -> rnn_plugin
 
-defaults:
-  - hydra: default.yaml
-  - paths: default.yaml
-  - net: default.yaml
-  - net@net_c1: default.yaml
-  - _self_
+global_cfg: # would be passed to actor, critic1, critic2, policy, env
+  history_num: ${env.delay} # decide the info["historical_act"] length # would use ${env.delay}
+  actor_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "normal" # normal or oracle
+    obs_pred:
+      turn_on: false 
+      feat_dim: 256
+      middle_detach: false 
+      input_type: "feat" # obs or feat
+      net_type: vae # vae or mlp
+      norm_kl_loss_weight: 1.0
+      auto_kl_target: 50
+      pred_loss_weight: 0.1
+      auto_kl_optim:
+        _target_: torch.optim.Adam
+        _partial_: true
+        lr: ${actor_optim.lr}
+      optim:
+        _target_: torch.optim.Adam
+        _partial_: true
+        lr: ${actor_optim.lr}
+      net:
+        _target_: src.runner.ObsPredNet
+        _partial_: true
+        device: ${device}
+        feat_dim: ${global_cfg.actor_input.obs_pred.feat_dim}
+        net_type: ${global_cfg.actor_input.obs_pred.net_type}
+        encoder_net: 
+          _target_: src.runner.RNN_MLP_Net
+          _partial_: true
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256 
+          mlp_hidden_sizes: [256,256]
+          mlp_softmax: false
+        decoder_net:
+          _target_: src.runner.RNN_MLP_Net
+          _partial_: true
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [256]
+          mlp_softmax: false
+    obs_encode:
+      turn_on: false 
+      feat_dim: 256
+      train_eval_async: true # true is VLOG, false is normal training. only affect the training input
+      before_policy_detach: false # whether detach the input before policy net. Detail: there is no certain answer for which one is better.
+      norm_kl_loss_weight: 0.1
+      auto_kl_target: 50
+      pred_loss_weight: 0.0
+      optim:
+        _target_: torch.optim.Adam
+        _partial_: true
+        lr: ${actor_optim.lr}
+      auto_kl_optim:
+        _target_: torch.optim.Adam
+        _partial_: true
+        lr: ${actor_optim.lr}
+      net:
+        _target_: src.runner.ObsEncodeNet
+        _partial_: true
+        feat_dim: ${global_cfg.actor_input.obs_encode.feat_dim}
+        device: ${device}
+        encoder_net: 
+          _target_: src.runner.RNN_MLP_Net
+          _partial_: true
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [256,256]
+          mlp_softmax: false
+        decoder_net:
+          _target_: src.runner.RNN_MLP_Net
+          _partial_: true
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [256,256]
+          mlp_softmax: false
+  critic_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "oracle" # normal or oracle
+  log_interval: 100
+  log_instant_commit: true # false would make the wandb sync only once per epoch
+  debug: # default value is the better one
+    entropy_mask_loss_renorm: false # true: mask->mean->renorm->loss # false: loss -> mask -> mean
+    use_log_alpha_for_mul_logprob: true
+    dongqi_log_prob_clamp: false 
+    dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip
+    use_terminated_mask_for_value: true
+    delay_keep_order_method: expect1 # none, expect1
 
-# info
-task_name: "RL"
-tags: ["debug"]
 
-output_dir: "${paths.output_dir}"
-device: "cuda"
-actor:
-  _target_: tianshou.utils.net.continuous.ActorProb
+trainer:
+  batch_size: 256 # 256,1 for normal, 32,64 for donqi
+  batch_seq_len: 1 # would be used in buffer.seq_len 
+  # batch_size: 32
+  # batch_seq_len: 64
+  test_in_train: false
+  episode_per_test: 10
+  max_epoch: 200
+  step_per_epoch: 5000 # epoch is eval
+  # max_epoch: 10
+  # step_per_epoch: 1000 # epoch is eval
+  step_per_collect: 1
+  update_per_step: 1
+  log_interval: 100
+  log_upload_interval: 100 # 0 for instant upload
+  progress_bar: true
+  hide_eval_info_print: ${trainer.progress_bar}
+
+policy:
+  tau: 0.005
+  gamma: 0.99
+
+runner:
+  _target_: ???
   _partial_: true
-  # hidden_sizes: [256, 256]
-  hidden_sizes: []
+
+
+actor:
+  _target_: src.runner.CustomRecurrentActorProb
+  _partial_: true
   device: ${device}
+  net: 
+    _target_: src.runner.RNN_MLP_Net
+    _partial_: true
+    rnn_layer_num: 0
+    rnn_hidden_layer_size: 256
+    mlp_hidden_sizes: [256,256]
+    mlp_softmax: false
+  unbounded: ???
+  conditioned_sigma: ???
+  pure_random: false
+critic1:
+  _target_: src.runner.CustomRecurrentCritic
+  _partial_: true
+  device: ${device}
+  net: 
+    _target_: src.runner.RNN_MLP_Net
+    _partial_: true
+    rnn_layer_num: 0
+    rnn_hidden_layer_size: 256
+    mlp_hidden_sizes: [256,256]
+    mlp_softmax: false
+critic2: ${critic1}
 actor_optim:
   _target_: torch.optim.Adam
   _partial_: true
-  lr: 1e-3
-net_c1: 
-  concat: true # obs + action as input
-critic1:
-  _target_: tianshou.utils.net.continuous.Critic
-  _partial_: true
-  # hidden_sizes: [256]
-  hidden_sizes: []
-  device: ${device}
+  lr: ???
 critic1_optim:
   _target_: ${actor_optim._target_}
   _partial_: true
-  lr: 1e-3
-net_c2: ${net_c1}
-critic2: ${critic1}
+  lr: ${actor_optim.lr}
 critic2_optim: ${critic1_optim}
-policy:
-  # _target_: tianshou.policy.SACPolicy
-  # _target_: agent.sac.CustomSACPolicy
-  _target_: agent.sac.AsyncACSACPolicy
-  _partial_: true
-  tau: 0.005
-  gamma: 0.99
-  critic_use_oracle_obs: false
-  # alpha: 0.2
-  alpha:
-    _target_: builtins.tuple
-    _args_:
-      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
-        - _target_: torch.zeros
-          size: 
-            _target_: builtins.tuple
-            _args_:
-              - - 1
-          requires_grad: true
-          device: ${device}
-        - _target_: torch.optim.Adam
-          _partial_: true
-          lr: 3e-4
-  estimation_step: 1
+
+# common - for all algorithms
+buffer: 
+  _target_: src.runner.ReplayBuffer
+  size: 1200000
+  seq_len: ${trainer.batch_seq_len} # would affect the remaster buffer gap len
+env_max_step: 5000
 env:
   name: HalfCheetah-v4
   train_num: 1
   test_num: 1
   delay: 0
-collector:
-  train_collector:
-    _target_: tianshou.data.Collector
-    _partial_: true
-    buffer: 
-      _target_: tianshou.data.ReplayBuffer
-      size: 1000000
-      # buffer_num: 2
-    exploration_noise: true
-  test_collector:
-    _target_: tianshou.data.Collector
-    _partial_: true
-trainer:
-  _target_: tianshou.trainer.OffpolicyTrainer
-  _partial_: true
-  max_epoch: 200
-  step_per_epoch: 5000
-  step_per_collect: 1
-  update_per_step: 1
-  episode_per_test: 10
-  batch_size: 256
-  test_in_train: false
-seed: 0
+  fixed_delay: true 
+start_timesteps: ???
+
+# common - for all tasks (task_name, tags, output_dir, device)
+task_name: "RL_Apr2"
+tags: ["debug"]

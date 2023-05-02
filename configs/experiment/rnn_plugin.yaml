@@ -1,0 +1,43 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - _self_
+
+global_cfg: # would be passed to actor, critic1, critic2, policy, env
+  history_num: 1 # [[obs, act],...] rnn only need one
+  actor_input:
+    history_merge_method: "stack_rnn" # cat_mlp or stack_rnn or none
+    burnin_num: 0.25 # only works for stack_rnn
+    seq_mask: false 
+    obs_pred: 
+      # turn_on: false 
+      net_type: rnn # vae or mlp
+      net:
+        encoder_net: 
+          rnn_layer_num: 1
+          rnn_hidden_layer_size: 512
+          mlp_hidden_sizes: [512]
+    obs_encode:
+      # turn_on: false
+      net:
+        encoder_net: 
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [512,512]
+        decoder_net:
+          rnn_layer_num: 0
+          rnn_hidden_layer_size: 256
+          mlp_hidden_sizes: [512,512]
+
+actor:
+  net: 
+    rnn_layer_num: 0
+    rnn_hidden_layer_size: 256
+    mlp_hidden_sizes: [256]
+
+trainer:
+  batch_size: 32 # 256,1 for normal, 32,64 for donqi
+  batch_seq_len: 64 # would be used in buffer.seq_len 

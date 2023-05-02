@@ -33,10 +33,8 @@ class DelayedRoboticEnv(gym.Wrapper):
         self.last_delayed_step = None # for debug
 
         # history merge
-        if self.global_cfg.actor_input.history_merge_method != "none" or \
-            self.global_cfg.critic_input.history_merge_method != "none":
-            if self.global_cfg.critic_input.history_merge_method != "none": raise NotImplementedError
-            self.history_num = self.global_cfg.history_num # short flag
+        if self.global_cfg.history_num:
+            self.history_num = self.global_cfg.history_num
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
         else:
             self.history_num = 0

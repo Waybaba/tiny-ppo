@@ -4,7 +4,7 @@
 # python train.py experiment=example
 
 defaults:
-  - td3_sac.yaml
+  - default.yaml
 
 runner:
   _target_: src.runner.TD3Runner

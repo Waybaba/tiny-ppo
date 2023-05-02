@@ -1,0 +1,95 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - hydra: default.yaml
+  - paths: default.yaml
+  - net: default.yaml
+  - net@net_c1: default.yaml
+  - _self_
+
+# info
+task_name: "RL"
+tags: ["debug"]
+
+output_dir: "${paths.output_dir}"
+device: "cuda"
+actor:
+  _target_: tianshou.utils.net.continuous.ActorProb
+  _partial_: true
+  # hidden_sizes: [256, 256]
+  hidden_sizes: []
+  device: ${device}
+actor_optim:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 1e-3
+net_c1: 
+  concat: true # obs + action as input
+critic1:
+  _target_: tianshou.utils.net.continuous.Critic
+  _partial_: true
+  # hidden_sizes: [256]
+  hidden_sizes: []
+  device: ${device}
+critic1_optim:
+  _target_: ${actor_optim._target_}
+  _partial_: true
+  lr: 1e-3
+net_c2: ${net_c1}
+critic2: ${critic1}
+critic2_optim: ${critic1_optim}
+policy:
+  # _target_: tianshou.policy.SACPolicy
+  # _target_: agent.sac.CustomSACPolicy
+  _target_: agent.sac.AsyncACSACPolicy
+  _partial_: true
+  tau: 0.005
+  gamma: 0.99
+  critic_use_oracle_obs: false
+  # alpha: 0.2
+  alpha:
+    _target_: builtins.tuple
+    _args_:
+      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
+        - _target_: torch.zeros
+          size: 
+            _target_: builtins.tuple
+            _args_:
+              - - 1
+          requires_grad: true
+          device: ${device}
+        - _target_: torch.optim.Adam
+          _partial_: true
+          lr: 3e-4
+  estimation_step: 1
+env:
+  name: HalfCheetah-v4
+  train_num: 1
+  test_num: 1
+  delay: 0
+collector:
+  train_collector:
+    _target_: tianshou.data.Collector
+    _partial_: true
+    buffer: 
+      _target_: tianshou.data.ReplayBuffer
+      size: 1000000
+      # buffer_num: 2
+    exploration_noise: true
+  test_collector:
+    _target_: tianshou.data.Collector
+    _partial_: true
+trainer:
+  _target_: tianshou.trainer.OffpolicyTrainer
+  _partial_: true
+  max_epoch: 200
+  step_per_epoch: 5000
+  step_per_collect: 1
+  update_per_step: 1
+  episode_per_test: 10
+  batch_size: 256
+  test_in_train: false
+seed: 0
