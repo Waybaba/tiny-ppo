@@ -13,6 +13,7 @@ class DelayedRoboticEnv(gym.Wrapper):
             the delay_steps is sampled from a uniform distribution
             between [0, max_delay_steps)
             self.delay_buf = [delay=max, delay=max-1, ..., delay=0]
+            idx = - (delay + 1) + max
         delay_keep_order_method:
             "none": random sample from the delay_buf
             "expect1": sample from the delay_buf with the step forward of 1 [0,1,2]
@@ -58,7 +59,7 @@ class DelayedRoboticEnv(gym.Wrapper):
             info["historical_act"] = np.stack(self.act_buf, axis=0)
         
         # get obs_next_delayed
-        obs_next_delayed = self.delay_buf.get()
+        self.delay_buf.get()
         self.delay_buf.put(obs_next_nodelay)
 
         if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
@@ -71,7 +72,9 @@ class DelayedRoboticEnv(gym.Wrapper):
             else:
                 raise ValueError("Invalid delay_keep_order_method {}".format(self.global_cfg.debug.delay_keep_order_method))
         else:
-            self.last_delayed_step = len(self.delay_buf) - 1
+            self.last_delayed_step = self.delay_steps
+
+        obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
 
         self.last_oracle_obs = obs_next_nodelay
         info["obs_next_nodelay"] = obs_next_nodelay
@@ -104,9 +107,10 @@ class DelayedRoboticEnv(gym.Wrapper):
                 self.last_delayed_step = np.clip(self.last_delayed_step, 0, self.delay_steps-1)
             else:
                 raise ValueError("Invalid delay_keep_order_method {}".format(self.global_cfg.debug.delay_keep_order_method))
-            obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
         else:
-            self.last_delayed_step = len(self.delay_buf) - 1
+            self.last_delayed_step = self.delay_steps
+        
+        obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
         
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
