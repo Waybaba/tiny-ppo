@@ -29,6 +29,7 @@ from rich.progress import Progress
 from rich.progress import track
 from rich.console import Console
 
+# utils
 
 def distill_state(state, key_maps):
 	"""
@@ -75,6 +76,17 @@ def apply_mask(tensor, mask):
 	masked_tensor = tensor * mask_reshaped
 
 	return masked_tensor
+
+class DummyNet(nn.Module):
+	"""Return input as output."""
+	def __init__(self, **kwargs):
+		super().__init__()
+		# set all kwargs as self.xxx
+		for k, v in kwargs.items():
+			setattr(self, k, v)
+		
+	def forward(self, x):
+		return x
 
 class ReplayBuffer(tianshou.data.ReplayBuffer):
 	def __init__(
@@ -183,8 +195,194 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 		# raise ValueError("ReplayBuffer.reset() is not supported for ReMaster Buffer")
 		return super().reset(keep_statistics)
 
+class EnvCollector:
+	"""
+	Use policy to collect data from env.
+	This collector will continue from the last state of the env.
+	"""
 
-# policy
+	def __init__(self, env):
+		self.env = env
+		self.env_loop = self.create_env_loop()
+
+	def collect(self, act_func, n_step=None, n_episode=None, env_max_step=5000, reset=False, progress_bar=None, rich_progress=None):
+		"""
+		Return 
+			res: a list of Batch(obs, act, rew, done, obs_next, info).
+			# info: {
+			# 	"rews": list of total rewards of each episode,
+			# }
+		Policy can be function or string "random". 
+			function: 
+				input: batch, state output: a, state
+				state is {"hidden": xxx, "hidden_pre": xxx}
+		n_step and n_episode should be provided one and only one.
+		Will continue from the last state of the env if reset=False.
+		"""
+		assert isinstance(act_func, (str, Callable)), "act_func should be a function or string 'random'"
+		assert (n_step is None) ^ (n_episode is None), "n_step and n_episode should be provided one and only one"
+		if progress_bar is not None: assert rich_progress is not None, "rich process must be provided to display process bar"
+
+		if reset == True: self.to_reset = True
+		self.act_func = act_func
+		self.env_max_step = env_max_step
+		res_list = []
+		res_info = {
+			"rew_sum_list": [],
+			"ep_len_list": []
+		}
+
+		step_cnt = 0
+		episode_cnt = 0
+		finish_flag = False
+		if progress_bar is not None:
+			progress = rich_progress
+			task = progress.add_task(progress_bar, total=n_episode if n_episode is not None else n_step)
+		while not finish_flag:
+			batch, env_loop_info = next(self.env_loop)
+			res_list.append(batch)
+
+			if (batch.terminated or batch.truncated).any(): 
+				episode_cnt += 1
+				if progress_bar is not None: progress.update(task, advance=1)
+				res_info["rew_sum_list"].append(env_loop_info["rew_sum"])
+				res_info["ep_len_list"].append(env_loop_info["ep_len"])
+
+			if n_step is not None:
+				step_cnt += 1
+				if progress_bar is not None: progress.update(task, advance=1)
+				finish_flag = step_cnt >= n_step
+			elif n_episode is not None:
+				finish_flag = episode_cnt >= n_episode
+			
+		if progress_bar is not None: progress.remove_task(task)
+		return res_list, res_info
+
+	def create_env_loop(self):
+		"""
+		Infinite loop, yield a Batch(obs, act, rew, done, obs_next, info).
+		Will restart from 0 and return Batch(s_0, ...) if self.to_reset = True.
+		"""
+		while True:
+			env_step_cur = 0
+			rew_sum_cur = 0.
+			s, info = self.env.reset()
+			info["is_first_step"] = True
+			last_state = None
+
+			while True:
+				a, last_state = self._select_action(Batch(obs=s, info=info), last_state)
+				# if a is tensor, turn to numpy array
+				if isinstance(a, torch.Tensor):
+					a = a.detach()
+					if a.device != torch.device("cpu"):
+						a = a.cpu()
+					a = a.numpy()
+				s_, r, terminated, truncated, info = self.env.step(a)
+				rew_sum_cur += r
+
+				truncated = truncated or (env_step_cur == self.env_max_step)
+				batch = Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info)
+				
+				yield batch, {
+					"rew_sum": rew_sum_cur,
+					"ep_len": env_step_cur,
+				}
+
+				if self.to_reset:
+					self.to_reset = False
+					break
+
+				if terminated or truncated:
+					break
+
+				env_step_cur += 1
+				s = s_
+
+	def _select_action(self, s, state):
+		if self.act_func == "random":
+			return self.env.action_space.sample(), None
+		else:
+			return self.act_func(s, state)
+
+	def reset(self):
+		self.to_reset = True
+
+class WaybabaRecorder:
+	"""
+	store all digit values during training and render in different ways.
+	self.data = {
+		"name": {
+			"value": [],
+			"show_in_progress_bar": True,
+			"upload_to_wandb": False,
+			"wandb_logged": False,
+		},
+		...
+	}
+	"""
+	def __init__(self):
+		self.data = {}
+	
+	def __call__(self, k, v, wandb_=None, progress_bar=None):
+		"""
+		would update upload_to_wandb and show_in_progress_bar if provided.
+		"""
+		if k not in self.data: self.data[k] = self._create_new()
+		self.data[k]["values"].append(v)
+		if progress_bar in [True, False]: self.data[k]["show_in_progress_bar"] = progress_bar
+		if wandb_ in [True, False]:  self.data[k]["upload_to_wandb"] = wandb_
+		self.data[k]["wandb_logged"] = False
+
+	def upload_to_wandb(self, *args, **kwargs):
+		to_upload = {}
+		for k, v in self.data.items():
+			if v["upload_to_wandb"] and not v["wandb_logged"] and len(v["values"]) > 0:
+				to_upload[k] = v["values"][-1]
+				self.data[k]["wandb_logged"] = True
+		if len(to_upload) > 0:
+			wandb.log(to_upload, *args, **kwargs)
+
+	def to_progress_bar_description(self):
+		return self.__str__()
+
+	def _create_new(self):
+		return {
+			"values": [],
+			"show_in_progress_bar": True,
+			"upload_to_wandb": True,
+			"wandb_logged": False,
+		}
+	
+	def __str__(self):
+		info_dict = {
+			k: v["values"][-1] for k, v in \
+			sorted(self.data.items(), key=lambda item: item[0]) \
+			if v["show_in_progress_bar"] and len(v["values"]) > 0
+		}
+		for k, v in info_dict.items():
+			if type(v) == int:
+				info_dict[k] = str(v)
+			elif type(v) == float:
+				info_dict[k] = '{:.2f}'.format(v)
+			else:
+				info_dict[k] = '{:.2f}'.format(v)
+
+		# Find the maximum length of keys and values
+		max_key_length = max(len(k) for k in info_dict.keys())
+		max_value_length = max(len(v) for v in info_dict.values())
+
+		# Align keys to the left and values to the right
+		aligned_info = []
+		for k, v in info_dict.items():
+			left_aligned_key = k.ljust(max_key_length)
+			right_aligned_value = v.rjust(max_value_length)
+			aligned_info.append(f"{left_aligned_key} {right_aligned_value}")
+
+		return "\n".join(aligned_info)
+
+
+# bak
 class AsyncACDDPGPolicy(DDPGPolicy):
 	@staticmethod
 	def _mse_optimizer(
@@ -391,6 +589,161 @@ class SACPolicy(DDPGPolicy):
 			result["alpha"] = self._alpha.item()  # type: ignore
 
 		return result
+
+class TD3Policy(DDPGPolicy):
+	"""Implementation of TD3, arXiv:1802.09477.
+
+	:param torch.nn.Module actor: the actor network following the rules in
+		:class:`~tianshou.policy.BasePolicy`. (s -> logits)
+	:param torch.optim.Optimizer actor_optim: the optimizer for actor network.
+	:param torch.nn.Module critic1: the first critic network. (s, a -> Q(s, a))
+	:param torch.optim.Optimizer critic1_optim: the optimizer for the first
+		critic network.
+	:param torch.nn.Module critic2: the second critic network. (s, a -> Q(s, a))
+	:param torch.optim.Optimizer critic2_optim: the optimizer for the second
+		critic network.
+	:param float tau: param for soft update of the target network. Default to 0.005.
+	:param float gamma: discount factor, in [0, 1]. Default to 0.99.
+	:param float exploration_noise: the exploration noise, add to the action.
+		Default to ``GaussianNoise(sigma=0.1)``
+	:param float policy_noise: the noise used in updating policy network.
+		Default to 0.2.
+	:param int update_actor_freq: the update frequency of actor network.
+		Default to 2.
+	:param float noise_clip: the clipping range used in updating policy network.
+		Default to 0.5.
+	:param bool reward_normalization: normalize the reward to Normal(0, 1).
+		Default to False.
+	:param bool action_scaling: whether to map actions from range [-1, 1] to range
+		[action_spaces.low, action_spaces.high]. Default to True.
+	:param str action_bound_method: method to bound action to range [-1, 1], can be
+		either "clip" (for simply clipping the action) or empty string for no bounding.
+		Default to "clip".
+	:param Optional[gym.Space] action_space: env's action space, mandatory if you want
+		to use option "action_scaling" or "action_bound_method". Default to None.
+	:param lr_scheduler: a learning rate scheduler that adjusts the learning rate in
+		optimizer in each policy.update(). Default to None (no lr_scheduler).
+
+	.. seealso::
+
+		Please refer to :class:`~tianshou.policy.BasePolicy` for more detailed
+		explanation.
+	"""
+
+	def __init__(
+		self,
+		actor: torch.nn.Module,
+		actor_optim: torch.optim.Optimizer,
+		critic1: torch.nn.Module,
+		critic1_optim: torch.optim.Optimizer,
+		critic2: torch.nn.Module,
+		critic2_optim: torch.optim.Optimizer,
+		tau: float = 0.005,
+		gamma: float = 0.99,
+		exploration_noise=None,
+		policy_noise: float = 0.2,
+		update_actor_freq: int = 2,
+		noise_clip: float = 0.5,
+		reward_normalization: bool = False,
+		estimation_step: int = 1,
+		**kwargs: Any,
+	) -> None:
+		super().__init__(
+			actor, actor_optim, None, None, tau, gamma, exploration_noise,
+			reward_normalization, estimation_step, **kwargs
+		)
+		self.critic1, self.critic1_old = critic1, deepcopy(critic1)
+		self.critic1_old.eval()
+		self.critic1_optim = critic1_optim
+		self.critic2, self.critic2_old = critic2, deepcopy(critic2)
+		self.critic2_old.eval()
+		self.critic2_optim = critic2_optim
+		self._policy_noise = policy_noise
+		self._freq = update_actor_freq
+		self._noise_clip = noise_clip
+		self._cnt = 0
+		self._last = 0
+
+	def train(self, mode: bool = True) -> "TD3Policy":
+		self.training = mode
+		self.actor.train(mode)
+		self.critic1.train(mode)
+		self.critic2.train(mode)
+		return self
+
+	def sync_weight(self) -> None:
+		self.soft_update(self.critic1_old, self.critic1, self.tau)
+		self.soft_update(self.critic2_old, self.critic2, self.tau)
+		self.soft_update(self.actor_old, self.actor, self.tau)
+
+	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
+		batch = buffer[indices]  # batch.obs: s_{t+n}
+		act_ = self(batch, model="actor_old", input="obs_next").act
+		noise = torch.randn(size=act_.shape, device=act_.device) * self._policy_noise
+		if self._noise_clip > 0.0:
+			noise = noise.clamp(-self._noise_clip, self._noise_clip)
+		act_ += noise
+		target_q = torch.min(
+			self.critic1_old(batch.obs_next, act_),
+			self.critic2_old(batch.obs_next, act_),
+		)
+		return target_q
+
+	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
+		# critic 1&2
+		td1, critic1_loss = self._mse_optimizer(
+			batch, self.critic1, self.critic1_optim
+		)
+		td2, critic2_loss = self._mse_optimizer(
+			batch, self.critic2, self.critic2_optim
+		)
+		batch.weight = (td1 + td2) / 2.0  # prio-buffer
+
+		# actor
+		if self._cnt % self._freq == 0:
+			actor_loss = -self.critic1(batch.obs, self(batch, eps=0.0).act).mean()
+			self.actor_optim.zero_grad()
+			actor_loss.backward()
+			self._last = actor_loss.item()
+			self.actor_optim.step()
+			self.sync_weight()
+		self._cnt += 1
+		return {
+			"loss/actor": self._last,
+			"loss/critic1": critic1_loss.item(),
+			"loss/critic2": critic2_loss.item(),
+		}
+
+	def forward(
+		self,
+		batch: Batch,
+		state: Optional[Union[dict, Batch, np.ndarray]] = None,
+		model: str = "actor",
+		input: str = "obs",
+		**kwargs: Any,
+	) -> Batch:
+		"""Compute action over the given batch data.
+
+		:return: A :class:`~tianshou.data.Batch` which has 2 keys:
+
+			* ``act`` the action.
+			* ``state`` the hidden state.
+
+		.. seealso::
+
+			Please refer to :meth:`~tianshou.policy.BasePolicy.forward` for
+			more detailed explanation.
+		"""
+		model = getattr(self, model)
+		obs = batch[input]
+		actions, hidden = model(obs, state=state, info=batch.info)
+		return Batch(act=actions, state=hidden)
+	
+class TianshouTD3Wrapper(TD3Policy):
+	def __init__(self, *args, **kwargs):
+		self.global_cfg = kwargs.pop("global_cfg")
+		self.state_space = kwargs.pop("state_space")
+		super().__init__(*args, **kwargs)
 
 # net
 
@@ -883,173 +1236,6 @@ class ObsEncodeNet(nn.Module):
 		res = encoder_outputs[0]
 		return res, info
 
-class TD3Policy(DDPGPolicy):
-	"""Implementation of TD3, arXiv:1802.09477.
-
-	:param torch.nn.Module actor: the actor network following the rules in
-		:class:`~tianshou.policy.BasePolicy`. (s -> logits)
-	:param torch.optim.Optimizer actor_optim: the optimizer for actor network.
-	:param torch.nn.Module critic1: the first critic network. (s, a -> Q(s, a))
-	:param torch.optim.Optimizer critic1_optim: the optimizer for the first
-		critic network.
-	:param torch.nn.Module critic2: the second critic network. (s, a -> Q(s, a))
-	:param torch.optim.Optimizer critic2_optim: the optimizer for the second
-		critic network.
-	:param float tau: param for soft update of the target network. Default to 0.005.
-	:param float gamma: discount factor, in [0, 1]. Default to 0.99.
-	:param float exploration_noise: the exploration noise, add to the action.
-		Default to ``GaussianNoise(sigma=0.1)``
-	:param float policy_noise: the noise used in updating policy network.
-		Default to 0.2.
-	:param int update_actor_freq: the update frequency of actor network.
-		Default to 2.
-	:param float noise_clip: the clipping range used in updating policy network.
-		Default to 0.5.
-	:param bool reward_normalization: normalize the reward to Normal(0, 1).
-		Default to False.
-	:param bool action_scaling: whether to map actions from range [-1, 1] to range
-		[action_spaces.low, action_spaces.high]. Default to True.
-	:param str action_bound_method: method to bound action to range [-1, 1], can be
-		either "clip" (for simply clipping the action) or empty string for no bounding.
-		Default to "clip".
-	:param Optional[gym.Space] action_space: env's action space, mandatory if you want
-		to use option "action_scaling" or "action_bound_method". Default to None.
-	:param lr_scheduler: a learning rate scheduler that adjusts the learning rate in
-		optimizer in each policy.update(). Default to None (no lr_scheduler).
-
-	.. seealso::
-
-		Please refer to :class:`~tianshou.policy.BasePolicy` for more detailed
-		explanation.
-	"""
-
-	def __init__(
-		self,
-		actor: torch.nn.Module,
-		actor_optim: torch.optim.Optimizer,
-		critic1: torch.nn.Module,
-		critic1_optim: torch.optim.Optimizer,
-		critic2: torch.nn.Module,
-		critic2_optim: torch.optim.Optimizer,
-		tau: float = 0.005,
-		gamma: float = 0.99,
-		exploration_noise=None,
-		policy_noise: float = 0.2,
-		update_actor_freq: int = 2,
-		noise_clip: float = 0.5,
-		reward_normalization: bool = False,
-		estimation_step: int = 1,
-		**kwargs: Any,
-	) -> None:
-		super().__init__(
-			actor, actor_optim, None, None, tau, gamma, exploration_noise,
-			reward_normalization, estimation_step, **kwargs
-		)
-		self.critic1, self.critic1_old = critic1, deepcopy(critic1)
-		self.critic1_old.eval()
-		self.critic1_optim = critic1_optim
-		self.critic2, self.critic2_old = critic2, deepcopy(critic2)
-		self.critic2_old.eval()
-		self.critic2_optim = critic2_optim
-		self._policy_noise = policy_noise
-		self._freq = update_actor_freq
-		self._noise_clip = noise_clip
-		self._cnt = 0
-		self._last = 0
-
-	def train(self, mode: bool = True) -> "TD3Policy":
-		self.training = mode
-		self.actor.train(mode)
-		self.critic1.train(mode)
-		self.critic2.train(mode)
-		return self
-
-	def sync_weight(self) -> None:
-		self.soft_update(self.critic1_old, self.critic1, self.tau)
-		self.soft_update(self.critic2_old, self.critic2, self.tau)
-		self.soft_update(self.actor_old, self.actor, self.tau)
-
-	def _target_q(self, buffer: ReplayBuffer, indices: np.ndarray) -> torch.Tensor:
-		batch = buffer[indices]  # batch.obs: s_{t+n}
-		act_ = self(batch, model="actor_old", input="obs_next").act
-		noise = torch.randn(size=act_.shape, device=act_.device) * self._policy_noise
-		if self._noise_clip > 0.0:
-			noise = noise.clamp(-self._noise_clip, self._noise_clip)
-		act_ += noise
-		target_q = torch.min(
-			self.critic1_old(batch.obs_next, act_),
-			self.critic2_old(batch.obs_next, act_),
-		)
-		return target_q
-
-	def learn(self, batch: Batch, **kwargs: Any) -> Dict[str, float]:
-		# critic 1&2
-		td1, critic1_loss = self._mse_optimizer(
-			batch, self.critic1, self.critic1_optim
-		)
-		td2, critic2_loss = self._mse_optimizer(
-			batch, self.critic2, self.critic2_optim
-		)
-		batch.weight = (td1 + td2) / 2.0  # prio-buffer
-
-		# actor
-		if self._cnt % self._freq == 0:
-			actor_loss = -self.critic1(batch.obs, self(batch, eps=0.0).act).mean()
-			self.actor_optim.zero_grad()
-			actor_loss.backward()
-			self._last = actor_loss.item()
-			self.actor_optim.step()
-			self.sync_weight()
-		self._cnt += 1
-		return {
-			"loss/actor": self._last,
-			"loss/critic1": critic1_loss.item(),
-			"loss/critic2": critic2_loss.item(),
-		}
-
-	def forward(
-		self,
-		batch: Batch,
-		state: Optional[Union[dict, Batch, np.ndarray]] = None,
-		model: str = "actor",
-		input: str = "obs",
-		**kwargs: Any,
-	) -> Batch:
-		"""Compute action over the given batch data.
-
-		:return: A :class:`~tianshou.data.Batch` which has 2 keys:
-
-			* ``act`` the action.
-			* ``state`` the hidden state.
-
-		.. seealso::
-
-			Please refer to :meth:`~tianshou.policy.BasePolicy.forward` for
-			more detailed explanation.
-		"""
-		model = getattr(self, model)
-		obs = batch[input]
-		actions, hidden = model(obs, state=state, info=batch.info)
-		return Batch(act=actions, state=hidden)
-	
-class TianshouTD3Wrapper(TD3Policy):
-	def __init__(self, *args, **kwargs):
-		self.global_cfg = kwargs.pop("global_cfg")
-		self.state_space = kwargs.pop("state_space")
-		super().__init__(*args, **kwargs)
-
-# utils
-
-class DummyNet(nn.Module):
-	"""Return input as output."""
-	def __init__(self, **kwargs):
-		super().__init__()
-		# set all kwargs as self.xxx
-		for k, v in kwargs.items():
-			setattr(self, k, v)
-		
-	def forward(self, x):
-		return x
 
 # Runner
 
@@ -1247,195 +1433,7 @@ class DDPGTianshouRunner(TianshouRunner):
 		print(f'Final reward: {result["rews"].mean()}, length: {result["lens"].mean()}')
 
 
-
 """new implementation"""
-
-class EnvCollector:
-	"""
-	Use policy to collect data from env.
-	This collector will continue from the last state of the env.
-	"""
-
-	def __init__(self, env):
-		self.env = env
-		self.env_loop = self.create_env_loop()
-
-	def collect(self, act_func, n_step=None, n_episode=None, env_max_step=5000, reset=False, progress_bar=None, rich_progress=None):
-		"""
-		Return 
-			res: a list of Batch(obs, act, rew, done, obs_next, info).
-			# info: {
-			# 	"rews": list of total rewards of each episode,
-			# }
-		Policy can be function or string "random". 
-			function: 
-				input: batch, state output: a, state
-				state is {"hidden": xxx, "hidden_pre": xxx}
-		n_step and n_episode should be provided one and only one.
-		Will continue from the last state of the env if reset=False.
-		"""
-		assert isinstance(act_func, (str, Callable)), "act_func should be a function or string 'random'"
-		assert (n_step is None) ^ (n_episode is None), "n_step and n_episode should be provided one and only one"
-		if progress_bar is not None: assert rich_progress is not None, "rich process must be provided to display process bar"
-
-		if reset == True: self.to_reset = True
-		self.act_func = act_func
-		self.env_max_step = env_max_step
-		res_list = []
-		res_info = {
-			"rew_sum_list": [],
-			"ep_len_list": []
-		}
-
-		step_cnt = 0
-		episode_cnt = 0
-		finish_flag = False
-		if progress_bar is not None:
-			progress = rich_progress
-			task = progress.add_task(progress_bar, total=n_episode if n_episode is not None else n_step)
-		while not finish_flag:
-			batch, env_loop_info = next(self.env_loop)
-			res_list.append(batch)
-
-			if (batch.terminated or batch.truncated).any(): 
-				episode_cnt += 1
-				if progress_bar is not None: progress.update(task, advance=1)
-				res_info["rew_sum_list"].append(env_loop_info["rew_sum"])
-				res_info["ep_len_list"].append(env_loop_info["ep_len"])
-
-			if n_step is not None:
-				step_cnt += 1
-				if progress_bar is not None: progress.update(task, advance=1)
-				finish_flag = step_cnt >= n_step
-			elif n_episode is not None:
-				finish_flag = episode_cnt >= n_episode
-			
-		if progress_bar is not None: progress.remove_task(task)
-		return res_list, res_info
-
-	def create_env_loop(self):
-		"""
-		Infinite loop, yield a Batch(obs, act, rew, done, obs_next, info).
-		Will restart from 0 and return Batch(s_0, ...) if self.to_reset = True.
-		"""
-		while True:
-			env_step_cur = 0
-			rew_sum_cur = 0.
-			s, info = self.env.reset()
-			info["is_first_step"] = True
-			last_state = None
-
-			while True:
-				a, last_state = self._select_action(Batch(obs=s, info=info), last_state)
-				# if a is tensor, turn to numpy array
-				if isinstance(a, torch.Tensor):
-					a = a.detach()
-					if a.device != torch.device("cpu"):
-						a = a.cpu()
-					a = a.numpy()
-				s_, r, terminated, truncated, info = self.env.step(a)
-				rew_sum_cur += r
-
-				truncated = truncated or (env_step_cur == self.env_max_step)
-				batch = Batch(obs=s, act=a, rew=r, terminated=terminated, truncated=truncated, obs_next=s_, info=info)
-				
-				yield batch, {
-					"rew_sum": rew_sum_cur,
-					"ep_len": env_step_cur,
-				}
-
-				if self.to_reset:
-					self.to_reset = False
-					break
-
-				if terminated or truncated:
-					break
-
-				env_step_cur += 1
-				s = s_
-
-	def _select_action(self, s, state):
-		if self.act_func == "random":
-			return self.env.action_space.sample(), None
-		else:
-			return self.act_func(s, state)
-
-	def reset(self):
-		self.to_reset = True
-
-class WaybabaRecorder:
-	"""
-	store all digit values during training and render in different ways.
-	self.data = {
-		"name": {
-			"value": [],
-			"show_in_progress_bar": True,
-			"upload_to_wandb": False,
-			"wandb_logged": False,
-		},
-		...
-	}
-	"""
-	def __init__(self):
-		self.data = {}
-	
-	def __call__(self, k, v, wandb_=None, progress_bar=None):
-		"""
-		would update upload_to_wandb and show_in_progress_bar if provided.
-		"""
-		if k not in self.data: self.data[k] = self._create_new()
-		self.data[k]["values"].append(v)
-		if progress_bar in [True, False]: self.data[k]["show_in_progress_bar"] = progress_bar
-		if wandb_ in [True, False]:  self.data[k]["upload_to_wandb"] = wandb_
-		self.data[k]["wandb_logged"] = False
-
-	def upload_to_wandb(self, *args, **kwargs):
-		to_upload = {}
-		for k, v in self.data.items():
-			if v["upload_to_wandb"] and not v["wandb_logged"] and len(v["values"]) > 0:
-				to_upload[k] = v["values"][-1]
-				self.data[k]["wandb_logged"] = True
-		if len(to_upload) > 0:
-			wandb.log(to_upload, *args, **kwargs)
-
-	def to_progress_bar_description(self):
-		return self.__str__()
-
-	def _create_new(self):
-		return {
-			"values": [],
-			"show_in_progress_bar": True,
-			"upload_to_wandb": True,
-			"wandb_logged": False,
-		}
-	
-	def __str__(self):
-		info_dict = {
-			k: v["values"][-1] for k, v in \
-			sorted(self.data.items(), key=lambda item: item[0]) \
-			if v["show_in_progress_bar"] and len(v["values"]) > 0
-		}
-		for k, v in info_dict.items():
-			if type(v) == int:
-				info_dict[k] = str(v)
-			elif type(v) == float:
-				info_dict[k] = '{:.2f}'.format(v)
-			else:
-				info_dict[k] = '{:.2f}'.format(v)
-
-		# Find the maximum length of keys and values
-		max_key_length = max(len(k) for k in info_dict.keys())
-		max_value_length = max(len(v) for v in info_dict.values())
-
-		# Align keys to the left and values to the right
-		aligned_info = []
-		for k, v in info_dict.items():
-			left_aligned_key = k.ljust(max_key_length)
-			right_aligned_value = v.rjust(max_value_length)
-			aligned_info.append(f"{left_aligned_key} {right_aligned_value}")
-
-		return "\n".join(aligned_info)
-
 
 class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
@@ -1942,10 +1940,12 @@ class TD3SACRunner(OfflineRLRunner):
 			"a_in_cur", "a_in_next", 
 			"c_in_online_cur", "c_in_online_next", "c_in_cur",
 			"done", "rew", "act", "valid_mask", "terminated"
-			(obs_pred) "pred_out_cur", "oobs", 
-			(obs_encode) 
+			(only when obs_pred) "pred_out_cur", "oobs", 
+			(only when obs_encode)
+			(only when sac) "logprob_online_cur", "logprob_online_next"
+			ps. the key with "online" is with gradient
 		"""
-		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_online_cur", "c_in_online_next", "done", "rew", "act", "valid_mask", "terminated"]
+		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_online_cur", "c_in_online_next", "logprob_online_cur", "logprob_online_next", "done", "rew", "act", "valid_mask", "terminated"]
 		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
 		if self._burnin_num(): burnin_batch.to_torch(device=self.cfg.device, dtype=torch.float32)
 		pre_sz = list(batch["done"].shape)
@@ -2105,7 +2105,9 @@ class TD3SACRunner(OfflineRLRunner):
 			raise ValueError("history_merge_method error")
 
 		# get online act from actor
-		act_online, act_online_next = self.get_act_online(batch)
+		act_online, act_online_next, act_online_info = self.get_act_online(batch)
+		if "logprob_online_cur" in act_online_info: batch.logprob_online_cur = act_online_info["logprob_online_cur"]
+		if "logprob_online_next" in act_online_info: batch.logprob_online_next = act_online_info["logprob_online_next"]
 
 		# critic - 1. obs base
 		if self.global_cfg.critic_input.obs_type == "normal": 
@@ -2131,7 +2133,7 @@ class TD3SACRunner(OfflineRLRunner):
 				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next.flatten(start_dim=-2)], dim=-1)
 				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
 		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
-			if self.global_cfg.hisory_num > 0:
+			if self.global_cfg.history_num > 0:
 				batch.c_in_online_cur = torch.cat([batch.c_in_online_cur, batch.ahis_cur[...,-1,:]], dim=-1)
 				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next[...,-1,:]], dim=-1)
 				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur[...,-1,:]], dim=-1)
@@ -2319,14 +2321,20 @@ class TD3SACRunner(OfflineRLRunner):
 
 		return state_cur, state_next
 
-def get_act_online(self, batch) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Returns the current and next actions to be taken by the agent.
+	def get_act_online(self, batch) -> Tuple[torch.Tensor, torch.Tensor]:
+		"""
+		Returns the current and next actions to be taken by the agent.
 
-    Returns:
-        A tuple of two torch.Tensor objects representing the current and next actions.
-    """
-    raise NotImplementedError
+		ps. include all actor forwards during learning
+
+		Motivation: the forward of the actor is across algorithms,
+			more importantly, the output results should be used to make 
+			critic input
+
+		Returns:
+			A tuple of two torch.Tensor objects representing the current and next actions.
+		"""
+		raise NotImplementedError
 
 class TD3Runner(TD3SACRunner):
 	ALGORITHM = "td3"
@@ -2334,35 +2342,23 @@ class TD3Runner(TD3SACRunner):
 	def update_critic(self, batch):
 		pre_sz = list(batch.done.shape)
 		with torch.no_grad():
-			a_next_online_old = self.actor_old(
-				batch.a_in_next, 
-				state=batch.state_next if self._burnin_num() else None
-			)[0][0]
-			noise = torch.randn(size=a_next_online_old.shape, device=a_next_online_old.device)
-			noise *= self.cfg.policy.policy_noise
-			if self.cfg.policy.noise_clip > 0.0:
-				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
-				noise *= torch.tensor((self.env.action_space.high - self.env.action_space.low) / 2, device=a_next_online_old.device)
-			a_next_online_old += noise
-			a_next_online_old = a_next_online_old.clamp(self.env.action_space.low[0], self.env.action_space.high[0])
-			
 			if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
 				value_mask = batch.terminated
 			else:
 				value_mask = batch.done
 			target_q = (batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * \
 				torch.min(
-					self.critic1_old(torch.cat([batch.c_in_next, a_next_online_old],-1))[0],
-					self.critic2_old(torch.cat([batch.c_in_next, a_next_online_old],-1))[0]
+					self.critic1_old(batch.c_in_online_next)[0],
+					self.critic2_old(batch.c_in_online_next)[0]
 				).squeeze(-1)
 			).reshape(*pre_sz,-1)
 		
 		critic_loss = \
 			F.mse_loss(self.critic1(
-				torch.cat([batch.c_in_cur, batch.act],-1)
+				batch.c_in_cur
 			)[0].reshape(*pre_sz,-1), target_q, reduce=False) + \
 			F.mse_loss(self.critic2(
-				torch.cat([batch.c_in_cur, batch.act],-1)
+				batch.c_in_cur
 			)[0].reshape(*pre_sz,-1), target_q, reduce=False)
 			
 		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
@@ -2377,13 +2373,7 @@ class TD3Runner(TD3SACRunner):
 
 	def update_actor(self, batch):
 		res_info = {}
-		actor_loss, _ = self.critic1(torch.cat([
-			batch.c_in_cur, 
-			self.actor(
-				batch.a_in_cur, 
-				state=batch.state_cur if self._burnin_num() else None
-			)[0][0]
-		],-1))
+		actor_loss, _ = self.critic1(batch.c_in_online_cur)
 		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss = 0. + actor_loss
 		# add pred loss
@@ -2447,6 +2437,27 @@ class TD3Runner(TD3SACRunner):
 		self.actor_optim.step()
 		self.record("learn/actor_loss", actor_loss.cpu().item())
 
+	def get_act_online(self, batch):
+		act_online_cur = self.actor(
+			batch.a_in_cur, 
+			state=batch.state_cur if self._burnin_num() else None
+		)[0][0]
+		with torch.no_grad():
+			a_next_online_old = self.actor_old(
+				batch.a_in_next, 
+				state=batch.state_next if self._burnin_num() else None
+			)[0][0]
+			noise = torch.randn(size=a_next_online_old.shape, device=a_next_online_old.device)
+			noise *= self.cfg.policy.policy_noise
+			if self.cfg.policy.noise_clip > 0.0:
+				noise = noise.clamp(-self.cfg.policy.noise_clip, self.cfg.policy.noise_clip)
+				noise *= torch.tensor((self.env.action_space.high - self.env.action_space.low) / 2, device=a_next_online_old.device)
+			a_next_online_old += noise
+			a_next_online_old = a_next_online_old.clamp(self.env.action_space.low[0], self.env.action_space.high[0])
+			act_online_next = a_next_online_old
+			
+		return act_online_cur, act_online_next, {}
+	
 class SACRunner(TD3SACRunner):
 	ALGORITHM = "sac"
 	def update_critic(self, batch):
@@ -2457,21 +2468,20 @@ class SACRunner(TD3SACRunner):
 				value_mask = batch.terminated
 			else:
 				value_mask = batch.done
-			(mu, var), _ = self.actor(batch.a_in_next, state=None)
-			a_next, log_prob_next = self.actor.sample_act(mu, var)
+			
 			v_next = torch.min(
-				self.critic1_old(torch.cat([batch.c_in_next, a_next],-1))[0],
-				self.critic2_old(torch.cat([batch.c_in_next, a_next],-1))[0]
-			).reshape(*pre_sz) - self._log_alpha.exp().detach() * log_prob_next.reshape(*pre_sz)
+				self.critic1_old(batch.c_in_online_next)[0],
+				self.critic2_old(batch.c_in_online_next)[0]
+			).reshape(*pre_sz) - self._log_alpha.exp().detach() * batch.logprob_online_next.reshape(*pre_sz)
 			target_q = batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * v_next
 		
 		# critic loss
 		critic_loss = \
 		F.mse_loss(self.critic1(
-			torch.cat([batch.c_in_cur, batch.act],-1)
+			batch.c_in_cur
 		)[0].reshape(*pre_sz), target_q, reduce=False) + \
 		F.mse_loss(self.critic2(
-			torch.cat([batch.c_in_cur, batch.act],-1)
+			batch.c_in_cur
 		)[0].reshape(*pre_sz), target_q, reduce=False)
 
 		# use mask
@@ -2495,15 +2505,9 @@ class SACRunner(TD3SACRunner):
 		combined_loss = 0.
 		
 		### actor loss
-		(mu, var), _ = self.actor(batch.a_in_cur, state=None)
-		a_cur, log_prob_cur = self.actor.sample_act(mu, var)
-		current_q1a, _ = self.critic1(torch.cat([
-			batch.c_in_cur, a_cur
-		],-1))
-		current_q2a, _ = self.critic2(torch.cat([
-			batch.c_in_cur, a_cur
-		],-1))
-		actor_loss = self._log_alpha.exp().detach() * log_prob_cur - torch.min(current_q1a, current_q2a)
+		current_q1a, _ = self.critic1(batch.c_in_online_cur)
+		current_q2a, _ = self.critic2(batch.c_in_online_cur)
+		actor_loss = self._log_alpha.exp().detach() * batch.logprob_online_cur - torch.min(current_q1a, current_q2a)
 		actor_loss = apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss += actor_loss
 		self.record("learn/loss_actor", actor_loss.item())
@@ -2578,7 +2582,7 @@ class SACRunner(TD3SACRunner):
 		if self.global_cfg.actor_input.obs_encode.turn_on: self._encode_optim.step()
 		self.actor_optim.step()
 
-		# update alpha (use batch.log_prob_cur)
+		# update alpha (use batch.logprob_online_cur)
 
 		if self._is_auto_alpha:
 			if self.global_cfg.debug.use_log_alpha_for_mul_logprob:
@@ -2587,10 +2591,10 @@ class SACRunner(TD3SACRunner):
 				alpha_mul = self._log_alpha.exp()
 			
 			if self.global_cfg.debug.entropy_mask_loss_renorm:
-				cur_entropy = - apply_mask(log_prob_cur.detach(), batch.valid_mask).mean() / batch.valid_mask.mean() # (*, 1)
+				cur_entropy = - apply_mask(batch.logprob_online_cur.detach(), batch.valid_mask).mean() / batch.valid_mask.mean() # (*, 1)
 				alpha_loss = - alpha_mul * (self._target_entropy - cur_entropy)
 			else:
-				cur_entropy = - log_prob_cur.detach() # (*, 1)
+				cur_entropy = - batch.logprob_online_cur.detach() # (*, 1)
 				alpha_loss = - alpha_mul * apply_mask(self._target_entropy-cur_entropy, batch.valid_mask) # (*, 1)
 				alpha_loss = alpha_loss.mean()
 			
@@ -2607,6 +2611,17 @@ class SACRunner(TD3SACRunner):
 			"actor_loss": actor_loss.cpu().item()
 		}
 
+	def get_act_online(self, batch):
+		(mu, var), _ = self.actor(batch.a_in_cur, state=batch.state_cur if self._burnin_num() else None)
+		act_online_cur, logprob_online_cur = self.actor.sample_act(mu, var)
+		with torch.no_grad():
+			(mu, var), _ = self.actor(batch.a_in_next, state=batch.state_next if self._burnin_num() else None)
+			act_online_next, logprob_online_next = self.actor.sample_act(mu, var)
+		return act_online_cur, act_online_next, {
+			"logprob_online_cur": logprob_online_cur,
+			"logprob_online_next": logprob_online_next
+		}
+	
 	def _mse_optimizer(self,
 			batch: Batch, critic: torch.nn.Module, optimizer: torch.optim.Optimizer
 		) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -2753,4 +2768,4 @@ class DDPGRunner(TD3SACRunner):
 				batch.a_in_next, 
 				state=batch.state_next if self._burnin_num() else None
 			)[0][0]
-		return act_online_cur, act_online_next
+		return act_online_cur, act_online_next, {}

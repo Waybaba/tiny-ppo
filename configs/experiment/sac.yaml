@@ -33,3 +33,5 @@ runner:
 
 
 start_timesteps: 10000
+
+algorithm_name: sac

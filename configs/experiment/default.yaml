@@ -97,8 +97,8 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
 
 
 trainer:
-  batch_size: 256 # 256,1 for normal, 32,64 for donqi
-  batch_seq_len: 1 # would be used in buffer.seq_len 
+  batch_size: 32 # 256,1 for normal, 32,64 for donqi
+  batch_seq_len: 64 # would be used in buffer.seq_len 
   # batch_size: 32
   # batch_seq_len: 64
   test_in_train: false
@@ -173,6 +173,8 @@ env:
   fixed_delay: true 
 start_timesteps: ???
 
+
 # common - for all tasks (task_name, tags, output_dir, device)
+algorithm_name: ???
 task_name: "RL_Apr2"
 tags: ["debug"]
