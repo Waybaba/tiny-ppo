@@ -34,7 +34,7 @@ class Globa_cfg:
         self.critic_input = Config()
         self.actor_input.history_merge_method = "none"
         self.critic_input.history_merge_method = "none"
-        self.history_num = 1
+        self.history_num = 0
 
 
 for base_env_name in ["HalfCheetah-v4", "Ant-v4", "Hopper-v4", "Walker2d-v4", "Humanoid-v4"]:
@@ -43,25 +43,24 @@ for base_env_name in ["HalfCheetah-v4", "Ant-v4", "Hopper-v4", "Walker2d-v4", "H
             f"{base_env_name}-delay_{delay}",
             entry_point="src.tianshou.mujoco_env:DelayedEnvWrapper",
             kwargs=dict(
-                base_env_name=base_env_name,
+                base_env=gym.make(base_env_name),
                 delay_steps=delay,
+                fixed_delay=True,
                 global_config=Globa_cfg(),
             ),
             max_episode_steps=5000,
         )
 
-# class DelayedEnvWrapper(utils.delay.DelayedRoboticEnv):
-#     metadata = {'render.modes': ['human', 'text']}
-#     def __init__(self, base_env_name: str, delay_steps=2, global_config=None):
-#         base_env = gym.make(base_env_name)
-#         super().__init__(base_env, delay_steps, global_config)
-
-class DelayedEnvWrapper(gym.Wrapper):
+class DelayedEnvWrapper(utils.delay.DelayedRoboticEnv):
     metadata = {'render.modes': ['human', 'text']}
-    def __init__(self, base_env_name: str, delay_steps=2, global_config=None):
-        # For debugging: replace 'base_env_name' with 'HalfCheetah-v4'
-        base_env = gym.make('HalfCheetah-v4')
-        super().__init__(base_env)
+    def __init__(self, base_env: gym.Env, delay_steps, fixed_delay, global_config=None):
+        super().__init__(base_env, delay_steps, fixed_delay, global_config)
+
+# class DelayedEnvWrapper(gym.Wrapper):
+#     metadata = {'render.modes': ['human', 'text']}
+#     def __init__(self, base_env: gym.Env, delay_steps, fixed_delay, global_config=None):
+#         # For debugging: replace 'base_env_name' with 'HalfCheetah-v4'
+#         super().__init__(base_env)
         
 
 def make_mujoco_env(task, seed, training_num, test_num, obs_norm):

@@ -382,6 +382,131 @@ class WaybabaRecorder:
 		return "\n".join(aligned_info)
 
 
+"""Tinashou"""
+
+class TianshouRunner:
+	def __init__(self):
+		pass
+
+class DDPGTianshouRunner(TianshouRunner):
+	def start(self, cfg):
+		from src.tianshou.mujoco_env import make_mujoco_env
+		import argparse
+		import datetime
+		import os
+		import pprint
+
+		import numpy as np
+		import torch
+		from torch.utils.tensorboard import SummaryWriter
+
+		from tianshou.data import Collector, ReplayBuffer, VectorReplayBuffer
+		from tianshou.exploration import GaussianNoise
+		from src.tianshou.policy import DDPGPolicy # modified
+		from tianshou.trainer import offpolicy_trainer
+		from tianshou.utils import TensorboardLogger, WandbLogger
+		from tianshou.utils.net.common import Net
+		from tianshou.utils.net.continuous import Actor, Critic
+		env, train_envs, test_envs = make_mujoco_env(
+			cfg.task, cfg.seed, cfg.training_num, cfg.test_num, obs_norm=False
+		)
+		cfg.state_shape = env.observation_space.shape or env.observation_space.n
+		cfg.action_shape = env.action_space.shape or env.action_space.n
+		cfg.max_action = env.action_space.high[0]
+		cfg.exploration_noise = cfg.exploration_noise * cfg.max_action
+		print("Observations shape:", cfg.state_shape)
+		print("Actions shape:", cfg.action_shape)
+		print("Action range:", np.min(env.action_space.low), np.max(env.action_space.high))
+		# seed
+		np.random.seed(cfg.seed)
+		torch.manual_seed(cfg.seed)
+		# model
+		net_a = Net(cfg.state_shape, hidden_sizes=cfg.hidden_sizes, device=cfg.device)
+		actor = Actor(
+			net_a, cfg.action_shape, max_action=cfg.max_action, device=cfg.device
+		).to(cfg.device)
+		actor_optim = torch.optim.Adam(actor.parameters(), lr=cfg.actor_lr)
+		net_c = Net(
+			cfg.state_shape,
+			cfg.action_shape,
+			hidden_sizes=cfg.hidden_sizes,
+			concat=True,
+			device=cfg.device,
+		)
+		critic = Critic(net_c, device=cfg.device).to(cfg.device)
+		critic_optim = torch.optim.Adam(critic.parameters(), lr=cfg.critic_lr)
+		policy = DDPGPolicy(
+			actor,
+			actor_optim,
+			critic,
+			critic_optim,
+			tau=cfg.tau,
+			gamma=cfg.gamma,
+			exploration_noise=GaussianNoise(sigma=cfg.exploration_noise),
+			estimation_step=cfg.n_step,
+			action_space=env.action_space,
+			cfg=cfg,
+		)
+
+		# collector
+		if cfg.training_num > 1:
+			buffer = VectorReplayBuffer(cfg.buffer_size, len(train_envs))
+		else:
+			buffer = ReplayBuffer(cfg.buffer_size)
+		train_collector = Collector(policy, train_envs, buffer, exploration_noise=True)
+		test_collector = Collector(policy, test_envs)
+		train_collector.collect(n_step=cfg.start_timesteps, random=True)
+
+		# log
+		now = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
+		cfg.algo_name = "ddpg"
+		log_name = os.path.join(cfg.task, cfg.algo_name, str(cfg.seed), now)
+		log_path = os.path.join(cfg.logdir, log_name)
+
+		# logger
+		if cfg.logger == "wandb":
+			logger = WandbLogger(
+				save_interval=1,
+				name=log_name.replace(os.path.sep, "__"),
+				run_id=cfg.resume_id,
+				config=cfg,
+				project=cfg.wandb_project,
+			)
+		writer = SummaryWriter(log_path)
+		writer.add_text("args", str(cfg))
+		if cfg.logger == "tensorboard":
+			logger = TensorboardLogger(writer)
+		else:  # wandb
+			logger.load(writer)
+
+		def save_best_fn(policy):
+			torch.save(policy.state_dict(), os.path.join(log_path, "policy.pth"))
+
+		if not cfg.watch:
+			# trainer
+			result = offpolicy_trainer(
+				policy,
+				train_collector,
+				test_collector,
+				cfg.epoch,
+				cfg.step_per_epoch,
+				cfg.step_per_collect,
+				cfg.test_num,
+				cfg.batch_size,
+				save_best_fn=save_best_fn,
+				logger=logger,
+				update_per_step=cfg.update_per_step,
+				test_in_train=False,
+			)
+			pprint.pprint(result)
+
+		# Let's watch its performance!
+		policy.eval()
+		test_envs.seed(cfg.seed)
+		test_collector.reset()
+		result = test_collector.collect(n_episode=cfg.test_num, render=cfg.render)
+		print(f'Final reward: {result["rews"].mean()}, length: {result["lens"].mean()}')
+
 # bak
 class AsyncACDDPGPolicy(DDPGPolicy):
 	@staticmethod
@@ -1307,132 +1432,6 @@ class SACRunner_(DefaultRLRunner):
 		wandb.finish()
 		self.log("SACRunner init end!")
 
-"""Tinashou"""
-
-class TianshouRunner:
-	def __init__(self):
-		pass
-
-class DDPGTianshouRunner(TianshouRunner):
-	def start(self, cfg):
-		from src.tianshou.mujoco_env import make_mujoco_env
-		import argparse
-		import datetime
-		import os
-		import pprint
-
-		import numpy as np
-		import torch
-		from torch.utils.tensorboard import SummaryWriter
-
-		from tianshou.data import Collector, ReplayBuffer, VectorReplayBuffer
-		from tianshou.exploration import GaussianNoise
-		from src.tianshou.policy import DDPGPolicy # modified
-		from tianshou.trainer import offpolicy_trainer
-		from tianshou.utils import TensorboardLogger, WandbLogger
-		from tianshou.utils.net.common import Net
-		from tianshou.utils.net.continuous import Actor, Critic
-		env, train_envs, test_envs = make_mujoco_env(
-			cfg.task, cfg.seed, cfg.training_num, cfg.test_num, obs_norm=False
-		)
-		cfg.state_shape = env.observation_space.shape or env.observation_space.n
-		cfg.action_shape = env.action_space.shape or env.action_space.n
-		cfg.max_action = env.action_space.high[0]
-		cfg.exploration_noise = cfg.exploration_noise * cfg.max_action
-		print("Observations shape:", cfg.state_shape)
-		print("Actions shape:", cfg.action_shape)
-		print("Action range:", np.min(env.action_space.low), np.max(env.action_space.high))
-		# seed
-		np.random.seed(cfg.seed)
-		torch.manual_seed(cfg.seed)
-		# model
-		net_a = Net(cfg.state_shape, hidden_sizes=cfg.hidden_sizes, device=cfg.device)
-		actor = Actor(
-			net_a, cfg.action_shape, max_action=cfg.max_action, device=cfg.device
-		).to(cfg.device)
-		actor_optim = torch.optim.Adam(actor.parameters(), lr=cfg.actor_lr)
-		net_c = Net(
-			cfg.state_shape,
-			cfg.action_shape,
-			hidden_sizes=cfg.hidden_sizes,
-			concat=True,
-			device=cfg.device,
-		)
-		critic = Critic(net_c, device=cfg.device).to(cfg.device)
-		critic_optim = torch.optim.Adam(critic.parameters(), lr=cfg.critic_lr)
-		policy = DDPGPolicy(
-			actor,
-			actor_optim,
-			critic,
-			critic_optim,
-			tau=cfg.tau,
-			gamma=cfg.gamma,
-			exploration_noise=GaussianNoise(sigma=cfg.exploration_noise),
-			estimation_step=cfg.n_step,
-			action_space=env.action_space,
-			cfg=cfg,
-		)
-
-		# collector
-		if cfg.training_num > 1:
-			buffer = VectorReplayBuffer(cfg.buffer_size, len(train_envs))
-		else:
-			buffer = ReplayBuffer(cfg.buffer_size)
-		train_collector = Collector(policy, train_envs, buffer, exploration_noise=True)
-		test_collector = Collector(policy, test_envs)
-		train_collector.collect(n_step=cfg.start_timesteps, random=True)
-
-		# log
-		now = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
-		cfg.algo_name = "ddpg"
-		log_name = os.path.join(cfg.task, cfg.algo_name, str(cfg.seed), now)
-		log_path = os.path.join(cfg.logdir, log_name)
-
-		# logger
-		if cfg.logger == "wandb":
-			logger = WandbLogger(
-				save_interval=1,
-				name=log_name.replace(os.path.sep, "__"),
-				run_id=cfg.resume_id,
-				config=cfg,
-				project=cfg.wandb_project,
-			)
-		writer = SummaryWriter(log_path)
-		writer.add_text("args", str(cfg))
-		if cfg.logger == "tensorboard":
-			logger = TensorboardLogger(writer)
-		else:  # wandb
-			logger.load(writer)
-
-		def save_best_fn(policy):
-			torch.save(policy.state_dict(), os.path.join(log_path, "policy.pth"))
-
-		if not cfg.watch:
-			# trainer
-			result = offpolicy_trainer(
-				policy,
-				train_collector,
-				test_collector,
-				cfg.epoch,
-				cfg.step_per_epoch,
-				cfg.step_per_collect,
-				cfg.test_num,
-				cfg.batch_size,
-				save_best_fn=save_best_fn,
-				logger=logger,
-				update_per_step=cfg.update_per_step,
-				test_in_train=False,
-			)
-			pprint.pprint(result)
-
-		# Let's watch its performance!
-		policy.eval()
-		test_envs.seed(cfg.seed)
-		test_collector.reset()
-		result = test_collector.collect(n_episode=cfg.test_num, render=cfg.render)
-		print(f'Final reward: {result["rews"].mean()}, length: {result["lens"].mean()}')
-
-
 """new implementation"""
 
 class OfflineRLRunner(DefaultRLRunner):
@@ -2341,11 +2340,13 @@ class TD3Runner(TD3SACRunner):
 
 	def update_critic(self, batch):
 		pre_sz = list(batch.done.shape)
+
+		if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
+			value_mask = batch.terminated
+		else:
+			value_mask = batch.done
+
 		with torch.no_grad():
-			if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
-				value_mask = batch.terminated
-			else:
-				value_mask = batch.done
 			target_q = (batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * \
 				torch.min(
 					self.critic1_old(batch.c_in_online_next)[0],
@@ -2463,12 +2464,13 @@ class SACRunner(TD3SACRunner):
 	def update_critic(self, batch):
 		# cal target_q
 		pre_sz = list(batch.done.shape)
+		
+		if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
+			value_mask = batch.terminated
+		else:
+			value_mask = batch.done
+		
 		with torch.no_grad():
-			if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
-				value_mask = batch.terminated
-			else:
-				value_mask = batch.done
-			
 			v_next = torch.min(
 				self.critic1_old(batch.c_in_online_next)[0],
 				self.critic2_old(batch.c_in_online_next)[0]
@@ -2666,11 +2668,13 @@ class DDPGRunner(TD3SACRunner):
 	ALGORITHM = "ddpg"
 	def update_critic(self, batch):
 		pre_sz = list(batch.done.shape)
+		
+		if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
+			value_mask = batch.terminated
+		else:
+			value_mask = batch.done
+		
 		with torch.no_grad():
-			if self.cfg.global_cfg.debug.use_terminated_mask_for_value:
-				value_mask = batch.terminated
-			else:
-				value_mask = batch.done
 			target_q = (batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * \
 				self.critic1_old(batch.c_in_online_next)[0].squeeze(-1)
 			).reshape(*pre_sz,-1)
