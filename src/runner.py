@@ -1759,7 +1759,6 @@ class DefaultRLRunner:
 		self.log = self.console.log
 		self.log("Logger init done!")
 
-
 class SACRunner_(DefaultRLRunner):
 	def start(self, cfg):
 		self.log("SACRunner init start ...")
