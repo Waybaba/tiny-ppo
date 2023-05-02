@@ -614,10 +614,10 @@ class CustomRecurrentCritic(nn.Module):
 		self.hps = kwargs
 		assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
 		if self.hps["global_cfg"].critic_input.history_merge_method == "cat_mlp":
-			input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
+			input_dim = state_shape[0] + action_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
 			output_dim = 1
 		elif self.hps["global_cfg"].critic_input.history_merge_method == "stack_rnn":
-			input_dim = state_shape[0] + action_shape[0]
+			input_dim = state_shape[0] + action_shape[0] + action_shape[0]
 			output_dim = 1
 		elif self.hps["global_cfg"].critic_input.history_merge_method == "none":
 			input_dim = state_shape[0] + action_shape[0]
@@ -1939,10 +1939,11 @@ class TD3SACRunner(OfflineRLRunner):
 		only keep keys used in update
 		input keys: ["dobs", "dobs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done"]
 		output keys:
-			"a_in_cur", "a_in_next", "c_in_cur", "c_in_next"
-			"done", "rew", "act", "valid_mask"
+			"a_in_cur", "a_in_next", 
+			"c_in_online_cur", "c_in_online_next", "c_in_cur",
+			"done", "rew", "act", "valid_mask", "terminated"
 			(obs_pred) "pred_out_cur", "oobs", 
-
+			(obs_encode) 
 		"""
 		keeped_keys = ["a_in_cur", "a_in_next", "c_in_cur", "c_in_online_cur", "c_in_online_next", "done", "rew", "act", "valid_mask", "terminated"]
 		batch.to_torch(device=self.cfg.device, dtype=torch.float32)
@@ -2116,16 +2117,27 @@ class TD3SACRunner(OfflineRLRunner):
 		else:
 			raise ValueError("unknown obs_type: {}".format(self.global_cfg.critic_input.obs_type))
 
-		# critic - 2. others  ! TODO batch
-		if self.cfg.global_cfg.critic_input.history_merge_method == "none":
-			batch.c_in_online_cur = torch.cat([batch.c_in_cur, act_online], dim=-1)
-			batch.c_in_online_next = torch.cat([batch.c_in_next, act_online_next], dim=-1)
-			batch.c_in_cur = torch.cat([batch.c_in_cur, batch.act], dim=-1)
-		elif self.cfg.global_cfg.critic_input.history_merge_method == "cat_mlp":
-			print(123)
-		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
-			raise NotImplementedError
+		# critic - 2. merge act
+		batch.c_in_online_cur = torch.cat([batch.c_in_cur, act_online], dim=-1)
+		batch.c_in_online_next = torch.cat([batch.c_in_next, act_online_next], dim=-1)
+		batch.c_in_cur = torch.cat([batch.c_in_cur, batch.act], dim=-1)
 
+		# critic - 3. merge history
+		if self.cfg.global_cfg.critic_input.history_merge_method == "none":
+			pass
+		elif self.cfg.global_cfg.critic_input.history_merge_method == "cat_mlp":
+			if self.global_cfg.history_num > 0:
+				batch.c_in_online_cur = torch.cat([batch.c_in_online_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
+				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next.flatten(start_dim=-2)], dim=-1)
+				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
+		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			if self.global_cfg.hisory_num > 0:
+				batch.c_in_online_cur = torch.cat([batch.c_in_online_cur, batch.ahis_cur[...,-1,:]], dim=-1)
+				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next[...,-1,:]], dim=-1)
+				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur[...,-1,:]], dim=-1)
+		else:
+			raise ValueError("unknown history_merge_method: {}".format(self.cfg.global_cfg.critic_input.history_merge_method))
+		
 		# log
 		self.record("learn/obs_delayed_step_num", batch.obs_delayed_step_num.mean().item())
 		self.record("learn/obs_delayed_step_num_sample", batch.obs_delayed_step_num.flatten()[0].item())
