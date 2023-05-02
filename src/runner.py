@@ -2118,9 +2118,9 @@ class TD3SACRunner(OfflineRLRunner):
 
 		# critic - 2. others  ! TODO batch
 		if self.cfg.global_cfg.critic_input.history_merge_method == "none":
-			batch.c_in_cur = torch.cat([batch.c_in_cur, batch.act], dim=-1)
 			batch.c_in_online_cur = torch.cat([batch.c_in_cur, act_online], dim=-1)
 			batch.c_in_online_next = torch.cat([batch.c_in_next, act_online_next], dim=-1)
+			batch.c_in_cur = torch.cat([batch.c_in_cur, batch.act], dim=-1)
 		elif self.cfg.global_cfg.critic_input.history_merge_method == "cat_mlp":
 			print(123)
 		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
@@ -2667,7 +2667,7 @@ class DDPGRunner(TD3SACRunner):
 		}
 
 	def update_actor(self, batch):
-		actor_loss, _ = self.critic1(batch.c_in_online_cur,-1)
+		actor_loss, _ = self.critic1(batch.c_in_online_cur)
 		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss = 0. + actor_loss
 		# add pred loss
