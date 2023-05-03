@@ -1174,7 +1174,10 @@ class CustomRecurrentActorProb(nn.Module):
 			elif self.hps["global_cfg"].actor_input.obs_encode.turn_on:
 				self.input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
 			else:
-				self.input_dim = state_shape[0] + action_shape[0]
+				if self.hps["global_cfg"].history_num > 0:
+					self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
+				else:
+					self.input_dim = state_shape[0]
 			self.output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "none":
 			self.input_dim = int(np.prod(state_shape))
@@ -1244,7 +1247,10 @@ class ObsPredNet(nn.Module):
 		if self.hps["net_type"] in ["vae", "mlp"]:
 			self.input_dim = state_shape[0] + action_shape[0] * global_cfg.history_num
 		elif self.hps["net_type"] == "rnn":
-			self.input_dim = state_shape[0] + action_shape[0]
+			if self.hps["global_cfg"].history_num > 0:
+				self.input_dim = state_shape[0] + action_shape[0]
+			else:
+				self.input_dim = state_shape[0]
 		self.output_dim = state_shape[0]
 		self.feat_dim = self.hps["feat_dim"]
 		self.encoder_input_dim = self.input_dim
@@ -1308,8 +1314,15 @@ class ObsEncodeNet(nn.Module):
 		super().__init__()
 		self.global_cfg = global_cfg
 		self.hps = kwargs
-		self.normal_encode_dim = state_shape[0] + action_shape[0] * global_cfg.history_num
-		self.oracle_encode_dim = state_shape[0]
+
+		if self.hps["net_type"] in ["mlp"]:
+			self.normal_encode_dim = state_shape[0] + action_shape[0] * global_cfg.history_num
+		elif self.hps["net_type"] == "rnn":
+			if self.hps["global_cfg"].history_num > 0:
+				self.normal_encode_dim = state_shape[0] + action_shape[0]
+			else:
+				self.normal_encode_dim = state_shape[0]
+
 		self.feat_dim = self.hps["feat_dim"]
 		self.normal_encoder_net = self.hps["encoder_net"](self.normal_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
 		self.oracle_encoder_net = self.hps["encoder_net"](self.oracle_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)

@@ -144,7 +144,7 @@ critic1:
   net: 
     _target_: src.runner.RNN_MLP_Net
     _partial_: true
-    rnn_layer_num: 1
+    rnn_layer_num: 0
     rnn_hidden_layer_size: 256
     mlp_hidden_sizes: [256,256]
     mlp_softmax: false
