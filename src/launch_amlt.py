@@ -357,6 +357,7 @@ class AmltLauncher:
                 sku = self.launcher_args['search.job_template.sku']
                 if "P40" in sku: gpu_name = "P40"
                 elif "P100" in sku: gpu_name = "P100"
+                elif "V100" in sku: gpu_name = "V100"
                 elif sku == "G1": gpu_name = "P100"
                 name += f"___{gpu_name}___"
             name += "-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=4))

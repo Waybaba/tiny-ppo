@@ -870,148 +870,6 @@ class TianshouTD3Wrapper(TD3Policy):
 		self.state_space = kwargs.pop("state_space")
 		super().__init__(*args, **kwargs)
 
-# net
-
-class RNN_MLP_Net(nn.Module):
-	""" RNNS with MLPs as the core network
-	ps. assume input is one dim
-	ps. head_num = 1 for critic
-	"""
-	def __init__(
-		self,
-		input_dim: int,
-		output_dim: int,
-		rnn_layer_num: int,
-		rnn_hidden_layer_size: int,
-		mlp_hidden_sizes: Sequence[int],
-		mlp_softmax: bool,  # TODO add
-		device: str,
-		head_num: int,
-		dropout: float = None,
-	):
-		super().__init__()
-		self.device = device
-		self.input_dim = input_dim
-		self.output_dim = output_dim
-		self.rnn_layer_num = rnn_layer_num
-		self.rnn_hidden_layer_size = rnn_hidden_layer_size
-		self.mlp_hidden_sizes = mlp_hidden_sizes
-		self.dropout = dropout
-		# build rnn
-		if rnn_layer_num:
-			self.nn = nn.GRU(
-				input_size=input_dim,
-				hidden_size=rnn_hidden_layer_size,
-				num_layers=rnn_layer_num,
-				batch_first=True,
-			)
-		else:
-			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
-		# build mlp
-		assert len(mlp_hidden_sizes) > 0, "mlp_hidden_sizes must be > 0"
-		before_head_mlp_hidden_sizes = mlp_hidden_sizes[:-1]
-		
-		self.mlp_before_head = []
-		self.mlp_before_head.append(MLP(
-			rnn_hidden_layer_size if rnn_layer_num else input_dim,
-			mlp_hidden_sizes[-1],
-			before_head_mlp_hidden_sizes,
-			device=self.device,
-			activation=nn.ReLU
-		))
-		self.mlp_before_head.append(nn.ReLU())
-		if self.dropout:
-			self.mlp_before_head.append(nn.Dropout(self.dropout))
-		
-		self.heads = []
-		for _ in range(head_num):
-			head = MLP(
-				mlp_hidden_sizes[-1],
-				output_dim,
-				hidden_sizes=(),
-				device=self.device,
-			)
-			self.heads.append(head.to(self.device))
-		
-		self.mlp_before_head = nn.Sequential(*self.mlp_before_head)
-		self.heads = nn.ModuleList(self.heads)
-	
-	def forward(
-		self,
-		obs: Union[np.ndarray, torch.Tensor],
-		state: Optional[Dict[str, torch.Tensor]] = None,
-		info: Dict[str, Any] = {},
-		):
-		"""
-		input
-		"""
-		obs = torch.as_tensor(obs, device=self.device, dtype=torch.float32)
-		### forward rnn
-		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
-		# In short, the tensor's shape in training phase is longer than which
-		# in evaluation phase. 
-		if self.rnn_layer_num: 
-			to_unsqueeze_from_1 = False
-			to_unsqueeze = False
-			if len(obs.shape) == 1: 
-				obs = obs.unsqueeze(0)
-				to_unsqueeze_from_1 = True
-			assert len(obs.shape) == 3 or len(obs.shape) == 2, "obs.shape: {}".format(obs.shape)
-			
-			if len(obs.shape) == 2: 
-				to_unsqueeze = True
-				obs = obs.unsqueeze(-2) # make seq_len dim
-			B, L, D = obs.shape
-			self.nn.flatten_parameters()
-			if state is None or state["hidden"] is None:
-				# first step of online or offline
-				hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
-				after_rnn, hidden = self.nn(obs, hidden)
-
-				# # two step debug
-				# hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
-				# after_rnn, hidden = self.nn(obs[:,:-1,:], hidden)
-				# after_rnn, hidden = self.nn(obs[:,-1:,:], hidden)
-				# print(hidden[0,0])
-			else: 
-				# normal step of online
-
-				after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
-			if to_unsqueeze: 
-				after_rnn = after_rnn.squeeze(-2)
-			if to_unsqueeze_from_1:
-				after_rnn = after_rnn.squeeze(0)
-		else: # skip rnn
-			after_rnn = obs
-		### forward mlp
-		before_head = self.flatten_foward(self.mlp_before_head, after_rnn)
-		### forward head
-		outputs = []
-		for head in self.heads:
-			outputs.append(self.flatten_foward(head, before_head))
-		return outputs, {
-			"hidden": hidden.transpose(0, 1).detach(),
-		} if self.rnn_layer_num else None
-
-	def flatten_foward(self, net, input):
-		"""Flatten input for mlp forward, then reshape output to original shape.
-		input: 
-			mlp: a mlp module
-			after_rnn: tensor [N1, N2, ..., Nk, D_in]
-		output:
-			tensor [N1, N2, ..., Nk, D_out]
-		"""
-		# flatten
-		shape = input.shape
-		input = input.reshape(-1, shape[-1])
-		# forward
-		output = net(input)
-		# reshape
-		shape = list(shape)
-		shape[-1] = output.shape[-1]
-		output = output.reshape(*shape)
-		return output
-
 class Critic(nn.Module):
 	"""Simple critic network. Will create an actor operated in continuous \
 	action space with structure of preprocess_net ---> 1(q value).
@@ -1081,6 +939,149 @@ class Critic(nn.Module):
 		logits = self.last(logits)
 		return logits
 
+# net
+
+class RNN_MLP_Net(nn.Module):
+	""" RNNS with MLPs as the core network
+	ps. assume input is one dim
+	ps. head_num = 1 for critic
+	"""
+	def __init__(
+		self,
+		input_dim: int,
+		output_dim: int,
+		head_num: int,
+		device: str,
+		rnn_layer_num: int, # in config
+		rnn_hidden_layer_size: int, # in config
+		mlp_hidden_sizes: Sequence[int], # in config
+		mlp_softmax: bool,  # TODO add # in config
+		dropout: float = None, # in config
+	):
+		super().__init__()
+		self.device = device
+		self.input_dim = input_dim
+		self.output_dim = output_dim
+		self.rnn_layer_num = rnn_layer_num
+		self.rnn_hidden_layer_size = rnn_hidden_layer_size
+		self.mlp_hidden_sizes = mlp_hidden_sizes
+		self.dropout = dropout
+		# build rnn
+		if rnn_layer_num:
+			self.nn = nn.GRU(
+				input_size=input_dim,
+				hidden_size=rnn_hidden_layer_size,
+				num_layers=rnn_layer_num,
+				batch_first=True,
+			)
+		else:
+			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
+		# build mlp
+		assert len(mlp_hidden_sizes) > 0, "mlp_hidden_sizes must be > 0"
+		before_head_mlp_hidden_sizes = mlp_hidden_sizes[:-1]
+		
+		self.mlp_before_head = []
+		self.mlp_before_head.append(MLP(
+			rnn_hidden_layer_size if rnn_layer_num else input_dim,
+			mlp_hidden_sizes[-1],
+			before_head_mlp_hidden_sizes,
+			device=self.device,
+			activation=nn.ReLU
+		))
+		self.mlp_before_head.append(nn.ReLU())
+		if self.dropout:
+			self.mlp_before_head.append(nn.Dropout(self.dropout))
+		
+		self.heads = []
+		for _ in range(head_num):
+			head = MLP(
+				mlp_hidden_sizes[-1],
+				output_dim,
+				hidden_sizes=(),
+				device=self.device,
+			)
+			self.heads.append(head.to(self.device))
+		
+		self.mlp_before_head = nn.Sequential(*self.mlp_before_head)
+		self.heads = nn.ModuleList(self.heads)
+	
+	def forward(
+		self,
+		obs: Union[np.ndarray, torch.Tensor],
+		state: Optional[Dict[str, torch.Tensor]] = None,
+		info: Dict[str, Any] = {},
+		):
+		"""
+		input
+		"""
+		obs = torch.as_tensor(obs, device=self.device, dtype=torch.float32)
+		### forward rnn
+		# obs [bsz, len, dim] (training) or [bsz, dim] (evaluation)
+		# In short, the tensor's shape in training phase is longer than which
+		# in evaluation phase. 
+		# TODO check the format when inputed, to make this neat
+		if self.rnn_layer_num: 
+			to_unsqueeze_from_1 = False
+			to_unsqueeze = False
+			if len(obs.shape) == 1: 
+				obs = obs.unsqueeze(0)
+				to_unsqueeze_from_1 = True
+			assert len(obs.shape) == 3 or len(obs.shape) == 2, "obs.shape: {}".format(obs.shape)
+			
+			if len(obs.shape) == 2: 
+				to_unsqueeze = True
+				obs = obs.unsqueeze(-2) # make seq_len dim
+			B, L, D = obs.shape
+			self.nn.flatten_parameters()
+			if state is None or state["hidden"] is None:
+				# first step of online or offline
+				hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
+				after_rnn, hidden = self.nn(obs, hidden)
+
+				# # two step debug
+				# hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
+				# after_rnn, hidden = self.nn(obs[:,:-1,:], hidden)
+				# after_rnn, hidden = self.nn(obs[:,-1:,:], hidden)
+				# print(hidden[0,0])
+			else: 
+				# normal step of online
+
+				after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
+			if to_unsqueeze: 
+				after_rnn = after_rnn.squeeze(-2)
+			if to_unsqueeze_from_1:
+				after_rnn = after_rnn.squeeze(0)
+		else: # skip rnn
+			after_rnn = obs
+		
+		### forward mlp
+		before_head = self.flatten_foward(self.mlp_before_head, after_rnn)
+		
+		### forward head
+		outputs = [self.flatten_foward(head, before_head) for head in self.heads]
+
+		return outputs, {
+			"hidden": hidden.transpose(0, 1).detach(),
+		} if self.rnn_layer_num else None
+
+	def flatten_foward(self, net, input):
+		"""Flatten input for mlp forward, then reshape output to original shape.
+		input: 
+			mlp: a mlp module
+			after_rnn: tensor [*, D_in]
+		output:
+			tensor [*, D_out]
+		"""
+		# flatten
+		pre_sz, dim_in = input.shape[:-1], input.shape[-1]
+		input = input.reshape(-1, dim_in)
+		# forward
+		output = net(input)
+		# reshape
+		dim_out = output.shape[-1]
+		output = output.reshape(*pre_sz, dim_out)
+		return output
+
 class CustomRecurrentCritic(nn.Module):
 	def __init__(
 		self,
@@ -1092,25 +1093,33 @@ class CustomRecurrentCritic(nn.Module):
 		self.hps = kwargs
 		assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
 		if self.hps["global_cfg"].critic_input.history_merge_method == "cat_mlp":
-			input_dim = state_shape[0] + action_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
-			output_dim = 1
+			self.input_dim = state_shape[0] + action_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
+			self.output_dim = 1
 		elif self.hps["global_cfg"].critic_input.history_merge_method == "stack_rnn":
-			input_dim = state_shape[0] + action_shape[0] + action_shape[0]
-			output_dim = 1
+			if self.hps["global_cfg"].history_num > 0:
+				self.input_dim = state_shape[0] + action_shape[0] + action_shape[0]
+			else:
+				self.input_dim = state_shape[0] + action_shape[0]
+			self.output_dim = 1
 		elif self.hps["global_cfg"].critic_input.history_merge_method == "none":
-			input_dim = state_shape[0] + action_shape[0]
-			output_dim = 1
+			self.input_dim = state_shape[0] + action_shape[0]
+			self.output_dim = 1
 		else:
 			raise NotImplementedError
-		self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=1)
+		self.net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
 
 	def forward(
 		self,
 		critic_input: Union[np.ndarray, torch.Tensor],
+		state: Dict[str, torch.Tensor],
 		info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
+		"""
+		ps. different from actor, the state_ of critic is usually not used, so the pipeline is simpler
+		"""
 		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
-		output, state_ = self.net(critic_input)
+		assert type(state) == dict or state is None, "state should be a dict with 'hidden' or None"
+		output, state_ = self.net(critic_input, state)
 		value = output[0]
 		return value, state_
 
@@ -1144,40 +1153,40 @@ class CustomRecurrentActorProb(nn.Module):
 		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
 			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
 				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
-					input_dim = self.hps["global_cfg"].actor_input.obs_pred.feat_dim
+					self.input_dim = self.hps["global_cfg"].actor_input.obs_pred.feat_dim
 				elif self.hps["global_cfg"].actor_input.obs_pred.input_type == "obs":
-					input_dim = state_shape[0]
+					self.input_dim = state_shape[0]
 				else:
 					raise ValueError("invalid input_type")
 			elif self.hps["global_cfg"].actor_input.obs_encode.turn_on:
-				input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
+				self.input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
 			else:
-				input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
-			output_dim = int(np.prod(action_shape))
+				self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
+			self.output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "stack_rnn":
 			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
 				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
-					input_dim = self.hps["global_cfg"].actor_input.obs_pred.feat_dim
+					self.input_dim = self.hps["global_cfg"].actor_input.obs_pred.feat_dim
 				elif self.hps["global_cfg"].actor_input.obs_pred.input_type == "obs":
-					input_dim = state_shape[0]
+					self.input_dim = state_shape[0]
 				else:
 					raise ValueError("invalid input_type")
 			elif self.hps["global_cfg"].actor_input.obs_encode.turn_on:
-				input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
+				self.input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
 			else:
-				input_dim = state_shape[0] + action_shape[0]
-			output_dim = int(np.prod(action_shape))
+				self.input_dim = state_shape[0] + action_shape[0]
+			self.output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "none":
-			input_dim = int(np.prod(state_shape))
-			output_dim = int(np.prod(action_shape))
+			self.input_dim = int(np.prod(state_shape))
+			self.output_dim = int(np.prod(action_shape))
 		else:
 			raise NotImplementedError
-		self.net = self.hps["net"](input_dim, output_dim, device=self.hps["device"], head_num=2)
+		self.net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=2)
 
 	def forward(
 		self,
 		actor_input: Union[np.ndarray, torch.Tensor],
-		state: Optional[Dict[str, torch.Tensor]],
+		state: Dict[str, torch.Tensor],
 		info: Dict[str, Any] = {},
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		"""Almost the same as :class:`~tianshou.utils.net.common.Recurrent`."""
@@ -1215,7 +1224,7 @@ class CustomRecurrentActorProb(nn.Module):
 		log_prob = (log_prob - torch.log(1 - y_t.pow(2) + ESP)).sum(dim=-1,keepdim=True) # (*, 1)
 		mean = torch.tanh(mu) * self.hps["max_action"]
 		return action, log_prob
-	
+
 class ObsPredNet(nn.Module):
 	"""
 	input delayed state and action, output the non-delayed state
@@ -2246,7 +2255,7 @@ class TD3SACRunner(OfflineRLRunner):
 		of source module."""
 		for tgt_param, src_param in zip(tgt.parameters(), src.parameters()):
 			tgt_param.data.copy_(tau * src_param.data + (1 - tau) * tgt_param.data)
-                # update the target network
+				# update the target network
 
 	def _burnin_num(self):
 		if "burnin_num" not in self.cfg.global_cfg: return 0
@@ -2349,17 +2358,17 @@ class TD3Runner(TD3SACRunner):
 		with torch.no_grad():
 			target_q = (batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * \
 				torch.min(
-					self.critic1_old(batch.c_in_online_next)[0],
-					self.critic2_old(batch.c_in_online_next)[0]
+					self.critic1_old(batch.c_in_online_next, None)[0],
+					self.critic2_old(batch.c_in_online_next, None)[0]
 				).squeeze(-1)
 			).reshape(*pre_sz,-1)
 		
 		critic_loss = \
 			F.mse_loss(self.critic1(
-				batch.c_in_cur
+				batch.c_in_cur, None
 			)[0].reshape(*pre_sz,-1), target_q, reduce=False) + \
 			F.mse_loss(self.critic2(
-				batch.c_in_cur
+				batch.c_in_cur, None
 			)[0].reshape(*pre_sz,-1), target_q, reduce=False)
 			
 		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
@@ -2374,7 +2383,7 @@ class TD3Runner(TD3SACRunner):
 
 	def update_actor(self, batch):
 		res_info = {}
-		actor_loss, _ = self.critic1(batch.c_in_online_cur)
+		actor_loss, _ = self.critic1(batch.c_in_online_cur, None)
 		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss = 0. + actor_loss
 		# add pred loss
@@ -2472,18 +2481,18 @@ class SACRunner(TD3SACRunner):
 		
 		with torch.no_grad():
 			v_next = torch.min(
-				self.critic1_old(batch.c_in_online_next)[0],
-				self.critic2_old(batch.c_in_online_next)[0]
+				self.critic1_old(batch.c_in_online_next, None)[0],
+				self.critic2_old(batch.c_in_online_next, None)[0]
 			).reshape(*pre_sz) - self._log_alpha.exp().detach() * batch.logprob_online_next.reshape(*pre_sz)
 			target_q = batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * v_next
 		
 		# critic loss
 		critic_loss = \
 		F.mse_loss(self.critic1(
-			batch.c_in_cur
+			batch.c_in_cur, None
 		)[0].reshape(*pre_sz), target_q, reduce=False) + \
 		F.mse_loss(self.critic2(
-			batch.c_in_cur
+			batch.c_in_cur, None
 		)[0].reshape(*pre_sz), target_q, reduce=False)
 
 		# use mask
@@ -2507,8 +2516,8 @@ class SACRunner(TD3SACRunner):
 		combined_loss = 0.
 		
 		### actor loss
-		current_q1a, _ = self.critic1(batch.c_in_online_cur)
-		current_q2a, _ = self.critic2(batch.c_in_online_cur)
+		current_q1a, _ = self.critic1(batch.c_in_online_cur, None)
+		current_q2a, _ = self.critic2(batch.c_in_online_cur, None)
 		actor_loss = self._log_alpha.exp().detach() * batch.logprob_online_cur - torch.min(current_q1a, current_q2a)
 		actor_loss = apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss += actor_loss
@@ -2676,11 +2685,11 @@ class DDPGRunner(TD3SACRunner):
 		
 		with torch.no_grad():
 			target_q = (batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * \
-				self.critic1_old(batch.c_in_online_next)[0].squeeze(-1)
+				self.critic1_old(batch.c_in_online_next, None)[0].squeeze(-1)
 			).reshape(*pre_sz,-1)
 		
 		critic_loss = F.mse_loss(
-			self.critic1(batch.c_in_cur)[0].reshape(*pre_sz,-1), 
+			self.critic1(batch.c_in_cur, None)[0].reshape(*pre_sz,-1), 
 			target_q, 
 			reduce=False
 		)
@@ -2698,7 +2707,7 @@ class DDPGRunner(TD3SACRunner):
 		}
 
 	def update_actor(self, batch):
-		actor_loss, _ = self.critic1(batch.c_in_online_cur)
+		actor_loss, _ = self.critic1(batch.c_in_online_cur, None)
 		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss = 0. + actor_loss
 		# add pred loss

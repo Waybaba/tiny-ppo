@@ -34,7 +34,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
 
 actor:
   net: 
-    rnn_layer_num: 0
+    rnn_layer_num: 1
     rnn_hidden_layer_size: 256
     mlp_hidden_sizes: [256]
 

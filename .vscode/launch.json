@@ -43,10 +43,12 @@
 				// "start_timesteps=10000",
 				"start_timesteps=25000",
 
-				"trainer.batch_size=256", 
+				// "trainer.batch_size=256", 
+				// "trainer.batch_seq_len=1",
+				"trainer.batch_size=256",
 				"trainer.batch_seq_len=1",
-				// "trainer.batch_size=32",
-				// "trainer.batch_seq_len=64",
+				// "trainer.batch_size=2048", 
+				// "trainer.batch_seq_len=1",
 				
 
 			],
