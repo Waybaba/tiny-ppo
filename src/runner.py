@@ -1265,6 +1265,7 @@ class CustomRecurrentActorProb(nn.Module):
 		self.device = self.hps["device"]
 		self.state_shape, self.action_shape = state_shape, action_shape
 		self.act_num = action_shape[0]
+
 		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
 			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
 				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
@@ -1295,10 +1296,24 @@ class CustomRecurrentActorProb(nn.Module):
 					self.input_dim = state_shape[0]
 			self.output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "none":
-			self.input_dim = int(np.prod(state_shape))
+			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
+				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
+					self.input_dim = self.hps["global_cfg"].actor_input.obs_pred.feat_dim
+				elif self.hps["global_cfg"].actor_input.obs_pred.input_type == "obs":
+					self.input_dim = state_shape[0]
+				else:
+					raise ValueError("invalid input_type")
+			elif self.hps["global_cfg"].actor_input.obs_encode.turn_on:
+				self.input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
+			else:
+				if self.hps["global_cfg"].history_num > 0:
+					self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
+				else:
+					self.input_dim = state_shape[0]
 			self.output_dim = int(np.prod(action_shape))
 		else:
 			raise NotImplementedError
+		
 		self.net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=2)
 
 	def forward(
@@ -1374,13 +1389,19 @@ class ObsPredNet(nn.Module):
 		self.hps = kwargs
 		# assert head_num == 1, the rnn layer of decoder is 0
 		assert self.hps["net_type"] in ["vae", "mlp", "rnn"], "invalid net_type {}".format(self.hps["net_type"])
-		if self.hps["net_type"] in ["vae", "mlp"]:
+		
+		# cal input dim
+		if self.global_cfg.actor_input.history_merge_method in ["cat_mlp"]:
 			self.input_dim = state_shape[0] + action_shape[0] * global_cfg.history_num
-		elif self.hps["net_type"] == "rnn":
+		elif self.global_cfg.actor_input.history_merge_method in ["stack_rnn"]:
 			if self.hps["global_cfg"].history_num > 0:
 				self.input_dim = state_shape[0] + action_shape[0]
 			else:
 				self.input_dim = state_shape[0]
+		elif self.global_cfg.actor_input.history_merge_method in ["none"]:
+			self.input_dim = state_shape[0]
+		
+		# cal output dim
 		self.output_dim = state_shape[0]
 		self.feat_dim = self.hps["feat_dim"]
 		self.encoder_input_dim = self.input_dim
@@ -1445,13 +1466,19 @@ class ObsEncodeNet(nn.Module):
 		self.global_cfg = global_cfg
 		self.hps = kwargs
 
-		if self.hps["net_type"] in ["mlp"]:
+		# cal input dim
+		if self.global_cfg.actor_input.history_merge_method in ["cat_mlp"]:
 			self.normal_encode_dim = state_shape[0] + action_shape[0] * global_cfg.history_num
-		elif self.hps["net_type"] == "rnn":
+		elif self.global_cfg.actor_input.history_merge_method in ["stack_rnn"]:
 			if self.hps["global_cfg"].history_num > 0:
 				self.normal_encode_dim = state_shape[0] + action_shape[0]
 			else:
 				self.normal_encode_dim = state_shape[0]
+		elif self.global_cfg.actor_input.history_merge_method in ["none"]:
+			self.normal_encode_dim = state_shape[0]
+		
+		# cal output dim
+		self.oracle_encode_dim = state_shape[0]
 
 		self.feat_dim = self.hps["feat_dim"]
 		self.normal_encoder_net = self.hps["encoder_net"](self.normal_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
@@ -1894,13 +1921,6 @@ class TD3SACRunner(OfflineRLRunner):
 		elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
 
 		if self.global_cfg.actor_input.history_merge_method == "none":
-			pass
-		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
-			if self.global_cfg.history_num > 0: # only cat when > 0
-				a_in = np.concatenate([
-					a_in,
-					batch.info["historical_act"].flatten()
-				], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				pred_out, pred_info = self.pred_net(a_in)
 				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
@@ -1917,6 +1937,33 @@ class TD3SACRunner(OfflineRLRunner):
 					pred_obs_output_cur, _ = self.encode_net.decode(encode_output)
 					pred_abs_error_online = ((pred_obs_output_cur - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
 					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
+		
+		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
+			if self.global_cfg.history_num > 0: # only cat when > 0
+				a_in = np.concatenate([
+					a_in,
+					batch.info["historical_act"].flatten()
+				], axis=-1)
+			
+			if self.global_cfg.actor_input.obs_pred.turn_on:
+				pred_out, pred_info = self.pred_net(a_in)
+				if self.global_cfg.actor_input.obs_pred.input_type == "obs":
+					a_in = pred_out.cpu()
+				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
+					a_in = pred_info["feats"].cpu()
+				else: raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
+				
+				pred_abs_error_online = ((pred_out - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
+				self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
+			
+			elif self.global_cfg.actor_input.obs_encode.turn_on:
+				encode_output, encode_info = self.encode_net.normal_encode(a_in)
+				a_in = encode_output.cpu()
+				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+					pred_obs_output_cur, _ = self.encode_net.decode(encode_output)
+					pred_abs_error_online = ((pred_obs_output_cur - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
+					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
+		
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if self.global_cfg.history_num > 0:
 				latest_act = batch.info["historical_act"][-1]
@@ -1937,6 +1984,7 @@ class TD3SACRunner(OfflineRLRunner):
 				raise NotImplementedError("stack_rnn + obs_encode not implemented")
 				encode_output, res_state = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
+		
 		else:
 			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")
 		
@@ -2114,7 +2162,65 @@ class TD3SACRunner(OfflineRLRunner):
 
 		# actor - 2. others ! TODO batch
 		if self.global_cfg.actor_input.history_merge_method == "none":
-			pass
+			# TODO seems that the obs_pred and obs_encode can be outside
+			if self.global_cfg.actor_input.obs_pred.turn_on:
+				keeped_keys += ["pred_out_cur", "oobs"]
+				batch.pred_in_cur = batch.a_in_cur
+				batch.pred_in_next = batch.a_in_next
+				batch.pred_out_cur, pred_info_cur = self.pred_net(batch.pred_in_cur)
+				batch.pred_out_next, pred_info_next = self.pred_net(batch.pred_in_next)
+				
+				if self.global_cfg.actor_input.obs_pred.input_type == "obs": # a input
+					batch.a_in_cur = batch.pred_out_cur
+					batch.a_in_next = batch.pred_out_next
+				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
+					batch.a_in_cur = pred_info_cur["feats"]
+					batch.a_in_next = pred_info_next["feats"]
+				else:
+					raise NotImplementedError
+				
+				if self.global_cfg.actor_input.obs_pred.middle_detach: # detach
+					batch.a_in_cur = batch.a_in_cur.detach()
+					batch.a_in_next = batch.a_in_next.detach()
+				
+				if self.global_cfg.actor_input.obs_pred.net_type == "vae": # vae
+					keeped_keys += ["pred_info_cur_mu", "pred_info_cur_logvar"]
+					batch.pred_info_cur_mu = pred_info_cur["mu"]
+					batch.pred_info_cur_logvar = pred_info_cur["logvar"]
+				
+			if self.global_cfg.actor_input.obs_encode.turn_on:
+				keeped_keys += ["encode_oracle_info_cur_mu","encode_oracle_info_cur_logvar", "encode_normal_info_cur_mu", "encode_normal_info_cur_logvar"]
+				
+				batch.encode_obs_in_cur = batch.a_in_cur
+				batch.encode_obs_in_next = batch.a_in_next
+
+				batch.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch.encode_obs_in_cur)
+				batch.encode_obs_out_next, _ = self.encode_net.normal_encode(batch.encode_obs_in_next)
+				batch.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch.oobs)
+				batch.encode_oracle_obs_output_next, _ = self.encode_net.oracle_encode(batch.oobs_next)
+				
+				batch.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
+				batch.encode_normal_info_cur_logvar = encode_obs_info_cur["logvar"]
+				batch.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
+				batch.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
+				
+				if self.global_cfg.actor_input.obs_encode.train_eval_async == True:
+					batch.a_in_cur = batch.encode_oracle_obs_output_cur
+					batch.a_in_next = batch.encode_oracle_obs_output_next
+				elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
+					batch.a_in_cur = batch.encode_obs_out_cur
+					batch.a_in_next = batch.encode_obs_out_next
+				else:
+					raise ValueError("batch error")
+				
+				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+					keeped_keys += ["oobs", "pred_obs_output_cur"]
+					batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_out_cur)
+				
+				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
+					batch.a_in_cur = batch.a_in_cur.detach()
+					batch.a_in_next = batch.a_in_next.detach()
+				
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			if self.global_cfg.history_num > 0: 
 				batch.a_in_cur = torch.cat([batch.a_in_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
@@ -2177,6 +2283,7 @@ class TD3SACRunner(OfflineRLRunner):
 				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 					batch.a_in_cur = batch.a_in_cur.detach()
 					batch.a_in_next = batch.a_in_next.detach()
+				
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if self.global_cfg.history_num > 0: 
 				batch.a_in_cur = torch.cat([batch.a_in_cur, batch.ahis_cur[...,-1,:]], dim=-1) # [*, obs_dim+act_dim]

@@ -25,8 +25,8 @@
 				// "experiment=ddpg_rnn",
 				// "experiment=td3",
 				// "experiment=td3_rnn",
-				// "experiment=sac",
-				"experiment=sac_rnn",
+				"experiment=sac",
+				// "experiment=sac_rnn",
 				// "experiment=ddpg_tianshou",
 				
 				// "env.name=HalfCheetah-v4",
@@ -35,7 +35,7 @@
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
 
-				"env.delay=0",
+				"env.delay=4",
 				// "env.fixed_delay=false",
 				// "global_cfg.debug.delay_keep_order_method=expect1",
 
