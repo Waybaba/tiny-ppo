@@ -83,7 +83,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
           mlp_hidden_sizes: [256,256]
           mlp_softmax: false
   critic_input:
-    history_merge_method: "stack_rnn" # cat_mlp or stack_rnn or none
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
   log_interval: 100
   log_instant_commit: true # false would make the wandb sync only once per epoch
@@ -94,6 +94,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip
     use_terminated_mask_for_value: true
     delay_keep_order_method: expect1 # none, expect1
+    rnn_turn_on_burnin: true
 
 
 trainer:

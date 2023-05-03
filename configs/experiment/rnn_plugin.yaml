@@ -8,9 +8,9 @@ defaults:
 
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   history_num: 1 # [[obs, act],...] rnn only need one
+  burnin_num: 0.25 # only works for stack_rnn
   actor_input:
     history_merge_method: "stack_rnn" # cat_mlp or stack_rnn or none
-    burnin_num: 0.25 # only works for stack_rnn
     seq_mask: false 
     obs_pred: 
       # turn_on: false 

@@ -31,6 +31,119 @@ from rich.console import Console
 
 # utils
 
+def forward_with_burnin(
+	input,    
+	burnin_input,
+	net,
+	remaster_mode,
+	remaster_mask,
+	):
+	"""
+	Args:
+		input: (B, T, *)
+		burnin_input: (B, Tb, *)
+		net: a pytorch module (input, state_in) -> (output, state_out)
+			where state_in could be None for zero state
+		remaster_mask: (B, T)
+		ps. assume the last one of burnin is corresponding to the first in the cur of input
+	Return:
+		state
+	"""
+	B, T = input.shape[:2]
+	B_b, Tb = burnin_input.shape[:2]
+	assert B == B_b, "Batch sizes must match for input and burnin_input"
+
+	if remaster_mask is None:
+		remaster_mask = torch.ones(B, T, dtype=torch.bool, device=input.device)
+
+	# Perform burn-in to obtain initial state
+	state_cur, state_next = burnin_to_get_state(burnin_input, remaster_mask, net)
+
+	# Choose initial state depending on remaster_mode
+	initial_state = state_cur if remaster_mode == "cur" else state_next
+
+	# Forward pass with the initial state from burn-in
+	output, _ = net(input, initial_state)
+
+	return output
+
+def burnin_to_get_state(input, mask, net):
+	""" 
+	process input to the net to get the final state after the final valid mask
+
+	Structure:
+		... ,_ , 1, 2, 3, 4, 5, 6, 7, 8, 9, ... Memory Buffer
+		... ,_ , _, 3, 4, 5, _, _, _, _, ... main sequence
+		... ,_ , 2, 3, _, _, _, _, _, _, ... burnin
+		... ,0 , 1, 1, _, _, _, _, _, _, ... burn in mask
+		after shifting
+		burnin      = [2, 3, 0]
+		burnin_mask = [1, 1, 0]
+		so the full state would be [2, 3, 0]
+		so state_cur should be the state after 2 # after second last 1 in mask
+		and state_next should be the state after 2, 3 # = after all 1 in mask
+		e.g. in this case, the index should be 1 for state_cur and 2 for state_next
+		ps. special case:
+			if all invalid: impossible, since the main seq must be valid
+				so the last one of burn in must be valid
+			if only one (the one must be the first element),    
+				then state=1, second_last_burnin_idx=0
+				the the one must be
+	Args:
+		input: (B, T, in_dim_of_net)
+		mask: (B, T)
+		net:
+			forward a_in and return out, state
+			where state = {
+				"hidden": (B, num_layers, hidden_dim)
+			e.g. net(burnin_batch.a_in,state=None)[1]["hidden"].shape
+	Returns:
+		state_cur: (B, num_layers, hidden_dim)
+		state_next: (B, num_layers, hidden_dim)
+		for state_cur, it should be the state after the last second burnin (since the last one the start of the main sequence) 
+		for state_next, it should be the state after the last burnin
+	"""
+	assert len(input.shape) == 3 and len(mask.shape) == 2
+	B, T = input.shape[:2]
+	
+	with torch.no_grad():
+		# Compute hidden states for each time step
+		hidden_states = []
+		last_state = None
+		for t in range(T):
+			input_t = input[:, t].unsqueeze(1)
+			_, state = net(input_t, state=last_state)
+			assert state is not None, "state must not be None, the net should contains RNN when in burnin function"
+			hidden_states.append(state["hidden"])
+			last_state = state
+
+		# Stack hidden states along the time dimension
+		hidden_states = torch.stack(hidden_states, dim=1) # (B, T, num_layers, hidden_dim)
+
+	# Identify the last and second last burn-in indices
+	burnin_mask = mask == 1
+	burnin_cumsum = burnin_mask.cumsum(dim=-1)
+	burnin_cnt = burnin_cumsum.max(dim=-1).values
+	assert (burnin_cnt > 0).all(), "all must > 0, be valid"
+	
+	last_burnin_idx = burnin_cnt - 1 # (B,)
+	second_last_burnin_idx = burnin_cnt - 2 # (B,)
+
+	# Extract states for the last second and last burn-in steps
+	state_cur = {"hidden": hidden_states[torch.arange(B), second_last_burnin_idx, :, :]}
+	state_next = {"hidden": hidden_states[torch.arange(B), last_burnin_idx, :, :]}
+
+	# Initialize zero states for cases where burn-in index is less than 0
+	zero_state = torch.zeros_like(hidden_states[:, 0])
+
+	# Replace the states with zero state where burn-in index is less than 0
+	for k, v in state_cur.items():
+		state_cur[k] = torch.where(second_last_burnin_idx.unsqueeze(-1).unsqueeze(-1) < 0, zero_state, v)
+	for k, v in state_next.items():
+		state_next[k] = torch.where(last_burnin_idx.unsqueeze(-1).unsqueeze(-1) < 0, zero_state, v)
+
+	return state_cur, state_next
+
 def distill_state(state, key_maps):
 	"""
 	e.g. key_maps = {"hidden_pred_net_encoder": "hidden_encoder", "hidden_pred_net_decoder": "hidden_decoder"}
@@ -132,22 +245,23 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 		"""
 		assert seq_len == self._seq_len, "seq_len should be equal to self._seq_len"
 		idx_start = np.random.randint(0, self._remaster_idx_ptr - seq_len, batch_size) # B
-		idxes, valid_mask = self._remaster_expand(idx_start, seq_len, direction="right")
+		idxes_buf, idxes_remaster, valid_mask = self._remaster_expand(idx_start, seq_len, direction="right")
 		assert np.all(valid_mask.sum(axis=1) > 0), "There is at least one sequence without valid index"
-		return idxes, valid_mask
+		return idxes_buf, idxes_remaster, valid_mask
 
-	def create_burnin_pair(self, idxes, burnin_len):
+	def create_burnin_pair(self, idxes_remaster, burnin_len):
 		"""create burnin pair with main batch idxes
 		hint: walking left from idxes
 		"""
-		assert len(idxes.shape) == 2, "idxes should be 2-dim, should support more later"
-		return self._remaster_expand(idxes[:,0], burnin_len, direction="left", contain_head=True)
+		assert len(idxes_remaster.shape) == 2, "idxes should be 2-dim, should support more later"
+		return self._remaster_expand(idxes_remaster[:,0], burnin_len, direction="left", contain_head=True)
 	
 	def _remaster_expand(self, idx_start, seq_len, direction="left", contain_head=True):
 		""" expand the idxes to a sequence of idxes
 		idx_start: (*, )
 		return:
 			idxes: (*, seq_len)
+			remater_idxes: (*, seq_len)
 			valid_mask: (*, seq_len)
 		"""
 		assert self._remaster_idx_ptr < len(self._remaster_idx_buf), "ReMaster Buffer is full, not as expected, should  write related code"
@@ -157,29 +271,29 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 		buf = self._remaster_idx_buf
 		if direction == "right":
 			if contain_head:
-				idx_stack = np.array([np.arange(idx_start[i], idx_start[i] + seq_len) for i in range(len(idx_start))]) # B, L
+				idx_stack_remaster = np.array([np.arange(idx_start[i], idx_start[i] + seq_len) for i in range(len(idx_start))]) # B, L
 			else:
-				idx_stack = np.array([np.arange(idx_start[i] + 1, idx_start[i] + seq_len + 1) for i in range(len(idx_start))])
+				idx_stack_remaster = np.array([np.arange(idx_start[i] + 1, idx_start[i] + seq_len + 1) for i in range(len(idx_start))])
 		elif direction == "left":
 			if contain_head:
-				idx_stack = np.array([np.arange(idx_start[i] - seq_len + 1, idx_start[i] + 1) for i in range(len(idx_start))])
+				idx_stack_remaster = np.array([np.arange(idx_start[i] - seq_len + 1, idx_start[i] + 1) for i in range(len(idx_start))])
 			else:
-				idx_stack = np.array([np.arange(idx_start[i] - seq_len, idx_start[i]) for i in range(len(idx_start))])
+				idx_stack_remaster = np.array([np.arange(idx_start[i] - seq_len, idx_start[i]) for i in range(len(idx_start))])
 		else:
 			raise ValueError("Invalid direction value for ReMaster Buffer {}".format(direction))
-		valid_mask = buf[idx_stack] != None # B, L
+		valid_mask = buf[idx_stack_remaster] != None # B, L
 
 		# Find the first valid index in each sequence
 		first_valid_indices = np.argmax(valid_mask, axis=1)
 
 		# Shift the sequences and masks to the left to start with the first valid index
-		idx_stack_shifted = np.array([np.roll(idx_stack[i], -first_valid_indices[i]) for i in range(batch_size)])
+		idx_stack_remaster = np.array([np.roll(idx_stack_remaster[i], -first_valid_indices[i]) for i in range(batch_size)])
 		valid_mask_shifted = np.array([np.roll(valid_mask[i], -first_valid_indices[i]) for i in range(batch_size)])
 
 		# Turn to the original indices (replace None with 0)
-		idx_stack_res = buf[idx_stack_shifted]
-		idx_stack_res[~valid_mask_shifted] = 0
-		return idx_stack_res.astype(np.int), valid_mask_shifted
+		idx_stack_buf = buf[idx_stack_remaster]
+		idx_stack_buf[~valid_mask_shifted] = 0
+		return idx_stack_buf.astype(np.int), idx_stack_remaster.astype(np.int), valid_mask_shifted
 
 
 	def get(
@@ -508,6 +622,7 @@ class DDPGTianshouRunner(TianshouRunner):
 		print(f'Final reward: {result["rews"].mean()}, length: {result["lens"].mean()}')
 
 # bak
+
 class AsyncACDDPGPolicy(DDPGPolicy):
 	@staticmethod
 	def _mse_optimizer(
@@ -1228,6 +1343,21 @@ class CustomRecurrentActorProb(nn.Module):
 		mean = torch.tanh(mu) * self.hps["max_action"]
 		return action, log_prob
 
+	def foward_with_burnin(
+		self,
+		actor_input: Union[np.ndarray, torch.Tensor],
+		burnin_input: Union[np.ndarray, torch.Tensor],
+		burnin_valid_mask: Union[np.ndarray, torch.Tensor],
+		) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
+		output, burnin_state = self.net(burnin_input, state=None)
+		# process state
+		# TODO not implemented yet
+		in_state = burnin_state
+		# forward
+		return self.forward(actor_input, in_state)
+
+		
+
 class ObsPredNet(nn.Module):
 	"""
 	input delayed state and action, output the non-delayed state
@@ -1881,11 +2011,11 @@ class TD3SACRunner(OfflineRLRunner):
 
 	def update_once(self):
 		# indices = self.buf.sample_indices(self.cfg.trainer.batch_size)
-		idxes, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.trainer.batch_seq_len)
+		idxes, idxes_remaster, valid_mask = self.buf.sample_indices_remaster(self.cfg.trainer.batch_size, self.cfg.trainer.batch_seq_len)
 		batch = self._indices_to_batch(idxes)
 		batch.valid_mask = valid_mask
-		if self._burnin_num():
-			burnin_idxes, burnin_mask = self.buf.create_burnin_pair(idxes, self._burnin_num())
+		if self._burnin_num(): # TODO move all of this to buffer would make the logic nicer
+			burnin_idxes, _, burnin_mask = self.buf.create_burnin_pair(idxes_remaster, self._burnin_num())
 			burnin_batch = self._indices_to_batch(burnin_idxes)
 			burnin_batch.valid_mask = burnin_mask
 			batch = self._pre_update_process(batch, burnin_batch) # would become state in batch.state
@@ -1975,15 +2105,10 @@ class TD3SACRunner(OfflineRLRunner):
 		if self.global_cfg.actor_input.obs_type == "normal": 
 			batch.a_in_cur = batch.dobs
 			batch.a_in_next = batch.dobs_next
-			if self._burnin_num():
-				burnin_batch.a_in_cur = burnin_batch.dobs
-				burnin_batch.a_in_next = burnin_batch.dobs_next
+			if self._burnin_num(): burnin_batch.a_in = burnin_batch.dobs # only need a_in since we dont dont forward twice, the last state of cur would be used in next
 		elif self.global_cfg.actor_input.obs_type == "oracle": 
 			batch.a_in_cur  = batch.oobs
-			batch.a_in_next = batch.oobs_next
-			if self._burnin_num():
-				burnin_batch.a_in_cur  = burnin_batch.oobs
-				burnin_batch.a_in_next = burnin_batch.oobs_next
+			if self._burnin_num(): burnin_batch.a_in  = burnin_batch.oobs
 		else:
 			raise ValueError("unknown obs_type: {}".format(self.global_cfg.actor_input.obs_type))
 
@@ -2056,11 +2181,12 @@ class TD3SACRunner(OfflineRLRunner):
 			if self.global_cfg.history_num > 0: 
 				batch.a_in_cur = torch.cat([batch.a_in_cur, batch.ahis_cur[...,-1,:]], dim=-1) # [*, obs_dim+act_dim]
 				batch.a_in_next = torch.cat([batch.a_in_next, batch.ahis_next[...,-1,:]], dim=-1)
-				if self._burnin_num():
-					keeped_keys += ["state_cur", "state_next"]
-					burnin_batch.a_in = torch.cat([burnin_batch.a_in_cur, burnin_batch.ahis_cur[...,-1,:]], dim=-1) # [B, T, obs_dim+act_dim]
-					# forward to get state
-					batch.state_cur, batch.state_next = self._burnin_to_get_state(burnin_batch.a_in, burnin_batch.valid_mask, self.actor)
+				if self._burnin_num(): 
+					burnin_batch.a_in = torch.cat([burnin_batch.a_in, burnin_batch.ahis_cur[...,-1,:]], dim=-1) # [B, T, obs_dim+act_dim]
+			
+			if self._burnin_num():
+				keeped_keys += ["burnin_a_in", "burnin_remaster_mask"] # mask reused by critic
+				batch.burnin_a_in, batch.burnin_remaster_mask = burnin_batch.a_in, burnin_batch.valid_mask
 
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				raise NotImplementedError
@@ -2133,9 +2259,11 @@ class TD3SACRunner(OfflineRLRunner):
 		if self.global_cfg.critic_input.obs_type == "normal": 
 			batch.c_in_cur = batch.dobs
 			batch.c_in_next = batch.dobs_next
+			if self._burnin_num(): burnin_batch.c_in  = burnin_batch.dobs
 		elif self.global_cfg.critic_input.obs_type == "oracle": 
 			batch.c_in_cur  = batch.oobs
 			batch.c_in_next = batch.oobs_next
+			if self._burnin_num(): burnin_batch.c_in  = burnin_batch.oobs
 		else:
 			raise ValueError("unknown obs_type: {}".format(self.global_cfg.critic_input.obs_type))
 
@@ -2143,6 +2271,7 @@ class TD3SACRunner(OfflineRLRunner):
 		batch.c_in_online_cur = torch.cat([batch.c_in_cur, act_online], dim=-1)
 		batch.c_in_online_next = torch.cat([batch.c_in_next, act_online_next], dim=-1)
 		batch.c_in_cur = torch.cat([batch.c_in_cur, batch.act], dim=-1)
+		if self._burnin_num(): burnin_batch.c_in = torch.cat([burnin_batch.c_in, burnin_batch.act], dim=-1) # [B, T, obs_dim+act_dim]
 
 		# critic - 3. merge history
 		if self.cfg.global_cfg.critic_input.history_merge_method == "none":
@@ -2153,10 +2282,19 @@ class TD3SACRunner(OfflineRLRunner):
 				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next.flatten(start_dim=-2)], dim=-1)
 				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
 		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			raise NotImplementedError("stack_rnn for critic is not implemented")
+			# TODO the state for critic varies a lot across critic1, critic2, criticold, so we cannot save the state then process
 			if self.global_cfg.history_num > 0:
 				batch.c_in_online_cur = torch.cat([batch.c_in_online_cur, batch.ahis_cur[...,-1,:]], dim=-1)
 				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next[...,-1,:]], dim=-1)
 				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur[...,-1,:]], dim=-1)
+				if self._burnin_num(): 
+					burnin_batch.c_in = torch.cat([burnin_batch.c_in, burnin_batch.ahis_cur[...,-1,:]], dim=-1) # [B, T, obs_dim+act_dim+act_dim*act_dim]
+			if self._burnin_num():
+				keeped_keys += ["burnin_c_in", "burnin_remaster_mask"] # mask reused by critic
+				batch.burnin_c_in, batch.burnin_remaster_mask = burnin_batch.c_in, burnin_batch.valid_mask
+
+			
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.cfg.global_cfg.critic_input.history_merge_method))
 		
@@ -2279,68 +2417,6 @@ class TD3SACRunner(OfflineRLRunner):
 			burnin_num = self.cfg.global_cfg.burnin_num
 		return burnin_num
 
-	def _burnin_to_get_state(self, input, mask, net):
-		""" 
-		process input to the net to get the final state after the final valid mask
-
-		Structure:
-			... ,_ , 1, 2, 3, 4, 5, 6, 7, 8, 9, ... Memory Buffer
-			... ,_ , _, 3, 4, 5, _, _, _, _, ... mean sequence
-			... ,_ , 2, 3, _, _, _, _, _, _, ... burnin
-			... ,0 , 1, 1, _, _, _, _, _, _, ... burn in mask
-			after shifting
-			burnin      = [2, 3, 0]
-			burnin_mask = [1, 1, 0]
-			so the full state would be [2, 3, 0]
-			so state_cur should be the state after 2
-			and state_next should be the state after 2, 3
-		Args:
-			input: (B, T, in_dim_of_net)
-			mask: (B, T)
-			net:
-				forward a_in and return out, state
-				where state = {
-					"hidden": (B, num_layers, hidden_dim)
-				e.g. net(burnin_batch.a_in,state=None)[1]["hidden"].shape
-		Returns:
-			state_cur: (B, num_layers, hidden_dim)
-			state_next: (B, num_layers, hidden_dim)
-			for state_cur, it should be the state after the last second burnin (since the last one the start of the main sequence) 
-			for state_next, it should be the state after the last burnin
-		"""
-		assert len(input.shape) == 3 and len(mask.shape) == 2
-		B, T = input.shape[:2]
-		
-		with torch.no_grad():
-			# Compute hidden states for each time step
-			hidden_states = []
-			last_state = None
-			for t in range(T):
-				input_t = input[:, t].unsqueeze(1)
-				_, state = net(input_t, state=last_state)
-				hidden_states.append(state["hidden"])
-				last_state = state
-
-			# Stack hidden states along the time dimension
-			hidden_states = torch.stack(hidden_states, dim=1) # (B, T, num_layers, hidden_dim)
-
-		# Identify the last and second last burn-in indices
-		burnin_mask = mask == 1
-		burnin_cumsum = burnin_mask.cumsum(dim=-1)
-		
-		last_burnin_idx = burnin_cumsum.max(dim=-1).indices
-		second_last_burnin_idx = (burnin_cumsum - 1).clamp(min=0).max(dim=-1).indices
-
-		# Extract states for the last second and last burn-in steps
-		state_cur = {
-			"hidden": hidden_states[torch.arange(B), second_last_burnin_idx]
-		}
-		state_next = {
-			"hidden": hidden_states[torch.arange(B), last_burnin_idx]
-		}
-
-		return state_cur, state_next
-
 	def get_act_online(self, batch) -> Tuple[torch.Tensor, torch.Tensor]:
 		"""
 		Returns the current and next actions to be taken by the agent.
@@ -2462,12 +2538,12 @@ class TD3Runner(TD3SACRunner):
 	def get_act_online(self, batch):
 		act_online_cur = self.actor(
 			batch.a_in_cur, 
-			state=batch.state_cur if self._burnin_num() else None
+			state=batch.a_state_cur if self._burnin_num() else None
 		)[0][0]
 		with torch.no_grad():
 			a_next_online_old = self.actor_old(
 				batch.a_in_next, 
-				state=batch.state_next if self._burnin_num() else None
+				state=batch.a_state_next if self._burnin_num() else None
 			)[0][0]
 			noise = torch.randn(size=a_next_online_old.shape, device=a_next_online_old.device)
 			noise *= self.cfg.policy.policy_noise
@@ -2635,10 +2711,36 @@ class SACRunner(TD3SACRunner):
 		}
 
 	def get_act_online(self, batch):
-		(mu, var), _ = self.actor(batch.a_in_cur, state=batch.state_cur if self._burnin_num() else None)
+		# cur
+		if self._burnin_num():
+			if self.cfg.global_cfg.debug.rnn_turn_on_burnin:
+				mu, var = forward_with_burnin(
+					input=batch.a_in_cur,
+					burnin_input=batch.burnin_a_in,
+					net=self.actor,
+					remaster_mask=batch.burnin_remaster_mask,
+					remaster_mode="cur"
+				)
+			else:
+				(mu, var), _ = self.actor(batch.a_in_cur, None)
+		else:
+			(mu, var), _ = self.actor(batch.a_in_cur, None)
 		act_online_cur, logprob_online_cur = self.actor.sample_act(mu, var)
+		# next
 		with torch.no_grad():
-			(mu, var), _ = self.actor(batch.a_in_next, state=batch.state_next if self._burnin_num() else None)
+			if self._burnin_num():
+				if self.cfg.global_cfg.debug.rnn_turn_on_burnin:
+					mu, var = forward_with_burnin(
+						input=batch.a_in_next,
+						burnin_input=batch.burnin_a_in,
+						net=self.actor,
+						remaster_mask=batch.burnin_remaster_mask,
+						remaster_mode="next"
+					)
+				else:
+					(mu, var), _ = self.actor(batch.a_in_next, state=None)
+			else:
+				(mu, var), _ = self.actor(batch.a_in_next, state=None)
 			act_online_next, logprob_online_next = self.actor.sample_act(mu, var)
 		return act_online_cur, act_online_next, {
 			"logprob_online_cur": logprob_online_cur,
@@ -2786,11 +2888,11 @@ class DDPGRunner(TD3SACRunner):
 	def get_act_online(self, batch):
 		act_online_cur = self.actor(
 			batch.a_in_cur, 
-			state=batch.state_cur if self._burnin_num() else None
+			state=batch.a_state_cur if self._burnin_num() else None
 		)[0][0]
 		with torch.no_grad():
 			act_online_next = self.actor_old(
 				batch.a_in_next, 
-				state=batch.state_next if self._burnin_num() else None
+				state=batch.a_state_next if self._burnin_num() else None
 			)[0][0]
 		return act_online_cur, act_online_next, {}
