@@ -1775,10 +1775,9 @@ class TD3SACRunner(OfflineRLRunner):
 					pred_abs_error_online = ((pred_obs_output_cur - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
 					self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
-			assert "historical_act" in batch.info, "must have historical act"
-			assert self.global_cfg.history_num > 0, "stack rnn must len > 0"
-			latest_act = batch.info["historical_act"][-1]
-			a_in = np.concatenate([a_in, latest_act], axis=-1)
+			if self.global_cfg.history_num > 0:
+				latest_act = batch.info["historical_act"][-1]
+				a_in = np.concatenate([a_in, latest_act], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				state_for_obs_pred = distill_state(state, {"hidden_pred_net_encoder": "hidden_encoder", "hidden_pred_net_decoder": "hidden_decoder"})
 				pred_out, pred_info = self.pred_net(a_in, state=state_for_obs_pred)
