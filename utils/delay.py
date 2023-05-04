@@ -20,7 +20,13 @@ class DelayedRoboticEnv(gym.Wrapper):
     """
     metadata = {'render.modes': ['human', 'text']}
 
-    def __init__(self, base_env: gym.Env, delay_steps, fixed_delay, global_config):
+    def __init__(
+            self, 
+            base_env: gym.Env, 
+            delay_steps, 
+            fixed_delay, 
+            global_config
+        ):
         super().__init__(base_env)
         
         self.env = base_env
@@ -43,26 +49,25 @@ class DelayedRoboticEnv(gym.Wrapper):
     def reset(self):
         # get obs_next_nodelay
         res = self.env.reset()
-        if isinstance(res, tuple): # (obs, {}) # discard info {}
-            obs_next_nodelay, info = res
-        else:
-            obs_next_nodelay, info = res, {}
+        if isinstance(res, tuple): obs_next_nodelay, info = res
+        else: obs_next_nodelay, info = res, {}
         
-        # empty then fill the delay_buf with zeros
+        # reset delay_buf - empty then fill the delay_buf with zeros
         while not self.delay_buf.empty(): self.delay_buf.get()
         while not self.delay_buf.full(): self.delay_buf.put(np.zeros_like(obs_next_nodelay))
         
-        # empty then fill the act_buf with zeros
+        # reset act_buf,prev_act - empty then fill the act_buf with zeros
         self.prev_act = np.zeros(self.env.action_space.shape)
         if self.history_num > 0:
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
             info["historical_act"] = np.stack(self.act_buf, axis=0)
         
-        # get obs_next_delayed
+        # update delay_buf
         self.delay_buf.get()
-        self.delay_buf.put(obs_next_nodelay)
+        self.delay_buf.put(obs_next_nodelay) # [max,max-1, ..., 1, 0]
 
-        if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
+        # get index
+        if not self.fixed_delay:
             if not self.global_cfg.debug.delay_keep_order_method:
                 self.last_delayed_step = np.random.randint(0, self.delay_steps) if self.delay_steps > 0 else 0
             elif self.global_cfg.debug.delay_keep_order_method == "expect1":
@@ -74,13 +79,17 @@ class DelayedRoboticEnv(gym.Wrapper):
         else:
             self.last_delayed_step = self.delay_steps
 
-        obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
+        # get
+        obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step] # 0 -> 0
 
-        self.last_oracle_obs = obs_next_nodelay
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
         info["obs_nodelay"] = None
         info["obs_delayed_step_num"] = self.last_delayed_step
+        
+        # end
+        self.last_oracle_obs = obs_next_nodelay
+
         return obs_next_delayed, info
 
     def preprocess_fn(self, res, action):
@@ -94,28 +103,32 @@ class DelayedRoboticEnv(gym.Wrapper):
         else:
             raise ValueError("Invalid return value from env.step()")
         
-        # operate the delayed observation queue
-        assert self.delay_buf.full(), "delay_buf should be filled with zeros in reset()"
+        # update delay_buf
         obs_next_delayed = self.delay_buf.get()
         self.delay_buf.put(obs_next_nodelay)
 
+        # get index
         if not self.fixed_delay: # replace obs_next_delayed and self.last_delayed_step
             if not self.global_cfg.debug.delay_keep_order_method:
-                self.last_delayed_step = np.random.randint(0, self.delay_steps) if self.delay_steps > 0 else 0
+                self.last_delayed_step = np.random.randint(0, self.delay_steps+1) if self.delay_steps > 0 else 0
             elif self.global_cfg.debug.delay_keep_order_method == "expect1":
                 self.last_delayed_step = np.random.randint(self.last_delayed_step-1, self.last_delayed_step+2)
-                self.last_delayed_step = np.clip(self.last_delayed_step, 0, self.delay_steps-1)
+                self.last_delayed_step = np.clip(self.last_delayed_step, 0, self.delay_steps)
             else:
                 raise ValueError("Invalid delay_keep_order_method {}".format(self.global_cfg.debug.delay_keep_order_method))
         else:
             self.last_delayed_step = self.delay_steps
         
-        obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step -1]
+        # get
+        obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step]
+        
         
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
         info["obs_nodelay"] = self.last_oracle_obs
         info["obs_delayed_step_num"] = self.last_delayed_step
+        
+        # end
         self.last_oracle_obs = obs_next_nodelay
 
         # history merge
@@ -126,6 +139,7 @@ class DelayedRoboticEnv(gym.Wrapper):
             self.act_buf.pop(0)
         elif self.history_num == 0:
             info["historical_act"] = False
+        
         return (deepcopy(obs_next_delayed), deepcopy(reward), deepcopy(done), deepcopy(truncated), deepcopy(info))
 
     def step(self, action):
@@ -137,11 +151,9 @@ class DelayedRoboticEnv(gym.Wrapper):
         res = self.env.step(action)
         return self.preprocess_fn(res, action)
 
-# RLlib version
-class RLlibDelayedRoboticEnv(DelayedRoboticEnv):
-    def __init__(self, env0: gym.Env, env_config):
-        super().__init__(env0, env_config["delay_steps"])
 
+
+# utils
 
 class ListAsQueue:
     """ A queue implemented by list, which support indexing.

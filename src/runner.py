@@ -1055,7 +1055,6 @@ class Critic(nn.Module):
 		return logits
 
 # net
-
 class RNN_MLP_Net(nn.Module):
 	""" RNNS with MLPs as the core network
 	ps. assume input is one dim
@@ -1371,8 +1370,6 @@ class CustomRecurrentActorProb(nn.Module):
 		# forward
 		return self.forward(actor_input, in_state)
 
-		
-
 class ObsPredNet(nn.Module):
 	"""
 	input delayed state and action, output the non-delayed state
@@ -1525,7 +1522,7 @@ class ObsEncodeNet(nn.Module):
 		eps = torch.randn_like(std)
 		return eps.mul(std).add_(mu)
 		# use reparameterization trick to push the sampling out as input (pytorch)
-		from torch.distributions import Normal
+		# from torch.distributions import Normal
 
 	def decode(
 			self,
@@ -1543,6 +1540,7 @@ class ObsEncodeNet(nn.Module):
 
 # Runner
 
+"""new implementation"""
 class DefaultRLRunner:
 	""" Runner for RL algorithms
 	Work flow: 
@@ -1560,58 +1558,10 @@ class DefaultRLRunner:
 		cfg.env.global_cfg = self.cfg.global_cfg
 		seed = int(time()) if cfg.seed is None else cfg.seed
 		utils.seed_everything(seed) # TODO add env seed
-		self.train_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.train_num)])
-		self.test_envs = tianshou.env.DummyVectorEnv([partial(utils.make_env, cfg.env) for _ in range(cfg.env.test_num)])
 		self.env = utils.make_env(cfg.env) # to get obs_space and act_space
 		self.console = Console()
 		self.log = self.console.log
 		self.log("Logger init done!")
-
-class SACRunner_(DefaultRLRunner):
-	def start(self, cfg):
-		self.log("SACRunner init start ...")
-		# TODO add cfg check here e.g. global_cfg == rnn, rnn_layer > 0
-		super().start(cfg)
-		env = self.env
-		train_envs = self.train_envs
-		test_envs = self.test_envs
-		actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0]).to(cfg.device)
-		actor_optim = cfg.actor_optim(actor.parameters())
-		critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
-		critic1_optim = cfg.critic1_optim(critic1.parameters())
-		critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape).to(cfg.device)
-		critic2_optim = cfg.critic2_optim(critic2.parameters())
-		policy = cfg.policy(
-			actor, actor_optim,
-			critic1, critic1_optim,
-			critic2, critic2_optim,
-			action_space=env.action_space,
-			state_space=env.observation_space,
-		)
-		# collector
-		train_collector = cfg.collector.train_collector(policy, train_envs)
-		test_collector = cfg.collector.test_collector(policy, test_envs)
-		train_collector.collect(n_step=cfg.start_timesteps, random=True)
-		# train
-		logger = tianshou.utils.WandbLogger(config=cfg)
-		logger.load(SummaryWriter(cfg.output_dir))
-		trainer = cfg.trainer(
-			policy, train_collector, test_collector, 
-			stop_fn=lambda mean_reward: mean_reward >= 10000,
-			logger=logger,
-		)
-		for epoch, epoch_stat, info in trainer:
-			to_log = {
-				"key/reward": epoch_stat["test_reward"],
-				"eval/reward": epoch_stat["test_reward"],
-			}
-			to_log.update(epoch_stat)
-			to_log.update(info)
-			wandb.log(to_log)
-		wandb.finish()
-		self.log("SACRunner init end!")
-
-"""new implementation"""
 
 class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
@@ -2539,6 +2489,7 @@ class TD3SACRunner(OfflineRLRunner):
 		"""
 		raise NotImplementedError
 
+# algorithmss
 class TD3Runner(TD3SACRunner):
 	ALGORITHM = "td3"
 
