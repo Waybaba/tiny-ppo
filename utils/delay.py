@@ -34,12 +34,12 @@ class DelayedRoboticEnv(gym.Wrapper):
         self.fixed_delay = fixed_delay
         self.global_cfg = global_config
 
-        # delayed observations
+        # setup for delayed observations
         self.delay_buf = ListAsQueue(maxsize=delay_steps+1)
         self.last_oracle_obs = None
         self.last_delayed_step = None # for debug
 
-        # history merge
+        # setup history merge
         if self.global_cfg.history_num:
             self.history_num = self.global_cfg.history_num
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
@@ -57,10 +57,11 @@ class DelayedRoboticEnv(gym.Wrapper):
         while not self.delay_buf.full(): self.delay_buf.put(np.zeros_like(obs_next_nodelay))
         
         # reset act_buf,prev_act - empty then fill the act_buf with zeros
-        self.prev_act = np.zeros(self.env.action_space.shape)
         if self.history_num > 0:
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
             info["historical_act"] = np.stack(self.act_buf, axis=0)
+        else:
+            info["historical_act"] = False
         
         # update delay_buf
         self.delay_buf.get()
@@ -131,9 +132,8 @@ class DelayedRoboticEnv(gym.Wrapper):
         # end
         self.last_oracle_obs = obs_next_nodelay
 
-        # history merge
+        # act merge
         if self.history_num > 0:
-            # info["historical_act"] = np.concatenate(self.act_buf, axis=0)
             info["historical_act"] = np.stack(self.act_buf, axis=0)
             self.act_buf.append(action)
             self.act_buf.pop(0)
