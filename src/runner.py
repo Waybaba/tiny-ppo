@@ -1305,10 +1305,7 @@ class CustomRecurrentActorProb(nn.Module):
 			elif self.hps["global_cfg"].actor_input.obs_encode.turn_on:
 				self.input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
 			else:
-				if self.hps["global_cfg"].history_num > 0:
-					self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
-				else:
-					self.input_dim = state_shape[0]
+				self.input_dim = state_shape[0]
 			self.output_dim = int(np.prod(action_shape))
 		else:
 			raise NotImplementedError
@@ -2106,6 +2103,7 @@ class TD3SACRunner(OfflineRLRunner):
 			if self._burnin_num(): burnin_batch.a_in = burnin_batch.dobs # only need a_in since we dont dont forward twice, the last state of cur would be used in next
 		elif self.global_cfg.actor_input.obs_type == "oracle": 
 			batch.a_in_cur  = batch.oobs
+			batch.a_in_next = batch.oobs_next
 			if self._burnin_num(): burnin_batch.a_in  = burnin_batch.oobs
 		else:
 			raise ValueError("unknown obs_type: {}".format(self.global_cfg.actor_input.obs_type))
