@@ -1290,7 +1290,7 @@ class CustomRecurrentActorProb(nn.Module):
 				self.input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
 			else:
 				if self.hps["global_cfg"].history_num > 0:
-					self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
+					self.input_dim = state_shape[0] + action_shape[0]
 				else:
 					self.input_dim = state_shape[0]
 			self.output_dim = int(np.prod(action_shape))
