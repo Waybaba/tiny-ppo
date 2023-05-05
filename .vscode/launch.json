@@ -35,9 +35,9 @@
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
 
-				"env.delay=4",
-				// "env.fixed_delay=false",
-				// "global_cfg.debug.delay_keep_order_method=expect1",
+				"env.delay=12",
+				"env.fixed_delay=false",
+				"global_cfg.debug.delay_keep_order_method=expect1",
 
 				"start_timesteps=1000",
 				// "start_timesteps=10000",

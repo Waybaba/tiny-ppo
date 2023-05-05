@@ -70,11 +70,12 @@ class DelayedRoboticEnv(gym.Wrapper):
         # get index
         if not self.fixed_delay:
             if not self.global_cfg.debug.delay_keep_order_method:
-                self.last_delayed_step = np.random.randint(0, self.delay_steps) if self.delay_steps > 0 else 0
+                self.last_delayed_step = np.random.randint(0, self.delay_steps+1) if self.delay_steps > 0 else 0
             elif self.global_cfg.debug.delay_keep_order_method == "expect1":
-                self.last_delayed_step = len(self.delay_buf) - 1 # start from the max delay step
+                self.last_delayed_step = self.delay_steps # start from the max delay step
+                # self.last_delayed_step = self.delay_steps // 2 # start from the middle delay step
                 self.last_delayed_step = np.random.randint(self.last_delayed_step-1, self.last_delayed_step+2)
-                self.last_delayed_step = np.clip(self.last_delayed_step, 0, self.delay_steps-1)
+                self.last_delayed_step = np.clip(self.last_delayed_step, 0, self.delay_steps)
             else:
                 raise ValueError("Invalid delay_keep_order_method {}".format(self.global_cfg.debug.delay_keep_order_method))
         else:
