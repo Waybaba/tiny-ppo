@@ -29,34 +29,37 @@
 				// "experiment=sac_rnn",
 				// "experiment=ddpg_tianshou",
 				
-				// "env.name=HalfCheetah-v4",
-				"env.name=Hopper-v4",
+				"env.name=HalfCheetah-v4",
+				// "env.name=Hopper-v4",
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
 
 				"env.delay=12",
-				"env.fixed_delay=false",
-				"global_cfg.debug.delay_keep_order_method=expect1",
+				// "env.fixed_delay=false",
+				// "global_cfg.debug.delay_keep_order_method=expect1",
 
 				"start_timesteps=1000",
 				// "start_timesteps=10000",
 				// "start_timesteps=25000",
 
-				"trainer.batch_size=256", 
-				"trainer.batch_seq_len=1",
+				// "trainer.batch_size=256", 
+				// "trainer.batch_seq_len=1",
 				// "trainer.batch_size=2048", 
 				// "trainer.batch_seq_len=1",
-				// "trainer.batch_size=32",
-				// "trainer.batch_seq_len=64",
+				"trainer.batch_size=32",
+				"trainer.batch_seq_len=64",
 
-				"trainer.max_epoch=10",
-				"trainer.step_per_epoch=50",
-				"trainer.episode_per_test=2",
+				// DEBUG
+				// "trainer.max_epoch=3",
+				// "trainer.step_per_epoch=50",
+				// "trainer.episode_per_test=2",
+				"actor.heads_share_pre_net=false",
 
-				"global_cfg.actor_input.obs_encode.auto_kl_target=null",
-				"global_cfg.actor_input.obs_encode.norm_kl_loss_weight=1e+2",
-				"basic_net.activation=tahn",
+				// == misc
+				// "global_cfg.actor_input.obs_encode.auto_kl_target=null",
+				// "global_cfg.actor_input.obs_encode.norm_kl_loss_weight=1e+2",
+				// "basic_net.activation=tanh",
 			],
 		},
 

@@ -117,6 +117,7 @@ actor:
   net: ${basic_net}
   unbounded: ???
   conditioned_sigma: ???
+  heads_share_pre_net: true
   pure_random: false
 critic1:
   _target_: src.runner.CustomRecurrentCritic

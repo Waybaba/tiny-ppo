@@ -1321,7 +1321,11 @@ class CustomRecurrentActorProb(nn.Module):
 		else:
 			raise NotImplementedError
 		
-		self.net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=2)
+		if self.hps["heads_share_pre_net"]:
+			self.net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=2)
+		else:
+			self.mu_net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
+			self.logsigma_net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
 
 	def forward(
 		self,
@@ -1331,13 +1335,17 @@ class CustomRecurrentActorProb(nn.Module):
 	) -> Tuple[Tuple[torch.Tensor, torch.Tensor], Dict[str, torch.Tensor]]:
 		"""Almost the same as :class:`~tianshou.utils.net.common.Recurrent`."""
 		### forward
-		output, state_ = self.net(actor_input, state)
-		assert len(output) == 2, "output should be a tuple of (mu, sigma), as there are two heads for actor network"
-		mu, sigma = output
+		if self.hps["heads_share_pre_net"]:
+			output, state_ = self.net(actor_input, state)
+			mu, logsigma = output
+		else:
+			if state is not None: raise NotImplementedError("here there are two heads, the state has not be implemented yet")
+			(mu,), state_ = self.mu_net(actor_input, state)
+			(logsigma,), _ = self.logsigma_net(actor_input, state)
 		if not self.hps["unbounded"]:
 			mu = self.hps["max_action"] * torch.tanh(mu)
 		if self.hps["conditioned_sigma"]:
-			sigma = torch.clamp(sigma, min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
+			sigma = torch.clamp(logsigma, min=self.SIGMA_MIN, max=self.SIGMA_MAX).exp()
 		else:
 			raise NotImplementedError
 		if self.hps["pure_random"]:
@@ -1347,14 +1355,14 @@ class CustomRecurrentActorProb(nn.Module):
 			sigma = sigma * 1e-10
 		return (mu, sigma), state_
 
-	def sample_act(self, mu, var):
+	def sample_act(self, mu, sigma):
 		"""
 		Use torch distribution to sample action and return
 		act, log_prob
 		"""
 		ESP = np.finfo(np.float32).eps.item()
 		pre_sz = list(mu.size()[:-1])
-		normal = Normal(mu, var)
+		normal = Normal(mu, sigma)
 		x_t = normal.rsample() # (*, act_dim)
 		y_t = torch.tanh(x_t) # (*, act_dim)
 		action = y_t * self.hps["max_action"] + 0.0 # TODO use more stable version
