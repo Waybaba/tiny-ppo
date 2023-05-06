@@ -2745,7 +2745,7 @@ class SACRunner(TD3SACRunner):
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
 				if self.global_cfg.debug.auto_kl_use_log:  # in paper
 					kl_weight_loss = - self.kl_weight_log * (
-						torch.log10(torch.clamp(kl_loss_normed, 1e-9, np.inf)) - \
+						torch.log10(torch.clamp(kl_loss_normed.detach(), 1e-9, np.inf)) - \
 						np.log10(self.global_cfg.actor_input.obs_encode.auto_kl_target)
 					)
 				else:
