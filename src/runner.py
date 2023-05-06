@@ -2743,7 +2743,7 @@ class SACRunner(TD3SACRunner):
 				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
 				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				if self.global_cfg.actor_input.obs_encode.auto_kl_use_log:  # in paper
+				if self.global_cfg.debug.auto_kl_use_log:  # in paper
 					kl_weight_loss = - self.kl_weight_log * (
 						torch.log10(torch.clamp(kl_loss_normed, 1e-9, np.inf)) - \
 						np.log10(self.global_cfg.actor_input.obs_encode.auto_kl_target)

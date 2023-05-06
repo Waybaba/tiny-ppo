@@ -54,7 +54,8 @@
 				// "trainer.max_epoch=3",
 				// "trainer.step_per_epoch=50",
 				// "trainer.episode_per_test=2",
-				"actor.heads_share_pre_net=false",
+				// "actor.heads_share_pre_net=false",
+				"global_cfg.debug.auto_kl_use_log=true",
 
 				// == misc
 				// "global_cfg.actor_input.obs_encode.auto_kl_target=null",

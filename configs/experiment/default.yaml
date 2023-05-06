@@ -73,7 +73,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     use_terminated_mask_for_value: true
     delay_keep_order_method: expect1 # none, expect1
     rnn_turn_on_burnin: true
-    auto_kl_use_log: false
+    auto_kl_use_log: true
 
 trainer:
   batch_size: 32 # 256,1 for normal, 32,64 for donqi
@@ -118,7 +118,7 @@ actor:
   net: ${basic_net}
   unbounded: ???
   conditioned_sigma: ???
-  heads_share_pre_net: true
+  heads_share_pre_net: false
   pure_random: false
 critic1:
   _target_: src.runner.CustomRecurrentCritic
