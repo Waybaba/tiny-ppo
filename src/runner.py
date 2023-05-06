@@ -2571,7 +2571,7 @@ class TD3Runner(TD3SACRunner):
 				)
 				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
 				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight # ! TODO here the kl is not updated
 				self.record("learn/obs_pred/loss_kl", kl_loss.item())
 				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
 				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
@@ -2753,6 +2753,10 @@ class SACRunner(TD3SACRunner):
 						kl_loss_normed.detach() - \
 						self.global_cfg.actor_input.obs_encode.auto_kl_target
 					) 
+				
+				if self.global_cfg.debug.auto_kl_divide_act_dim:
+					kl_weight_loss = kl_weight_loss / self.actor.act_num
+				
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
