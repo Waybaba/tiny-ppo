@@ -33,20 +33,8 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
         device: ${device}
         feat_dim: ${global_cfg.actor_input.obs_pred.feat_dim}
         net_type: ${global_cfg.actor_input.obs_pred.net_type}
-        encoder_net: 
-          _target_: src.runner.RNN_MLP_Net
-          _partial_: true
-          rnn_layer_num: 0
-          rnn_hidden_layer_size: 256 
-          mlp_hidden_sizes: [256,256]
-          mlp_softmax: false
-        decoder_net:
-          _target_: src.runner.RNN_MLP_Net
-          _partial_: true
-          rnn_layer_num: 0
-          rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [256]
-          mlp_softmax: false
+        encoder_net: ${basic_net}
+        decoder_net: ${basic_net}
     obs_encode:
       turn_on: true 
       feat_dim: 256
@@ -70,20 +58,8 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
         net_type: ${global_cfg.actor_input.obs_pred.net_type}
         feat_dim: ${global_cfg.actor_input.obs_encode.feat_dim}
         device: ${device}
-        encoder_net: 
-          _target_: src.runner.RNN_MLP_Net
-          _partial_: true
-          rnn_layer_num: 0
-          rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [256,256]
-          mlp_softmax: false
-        decoder_net:
-          _target_: src.runner.RNN_MLP_Net
-          _partial_: true
-          rnn_layer_num: 0
-          rnn_hidden_layer_size: 256
-          mlp_hidden_sizes: [256,256]
-          mlp_softmax: false
+        encoder_net: ${basic_net}
+        decoder_net: ${basic_net}
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
@@ -97,7 +73,6 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     use_terminated_mask_for_value: true
     delay_keep_order_method: expect1 # none, expect1
     rnn_turn_on_burnin: true
-
 
 trainer:
   batch_size: 32 # 256,1 for normal, 32,64 for donqi
@@ -125,18 +100,21 @@ runner:
   _target_: ???
   _partial_: true
 
+basic_net:
+  _target_: src.runner.RNN_MLP_Net
+  _partial_: true
+  rnn_layer_num: 0
+  rnn_hidden_layer_size: 256
+  mlp_hidden_sizes: [256,256]
+  mlp_softmax: false
+  activation: relu
+
 
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
   device: ${device}
-  net: 
-    _target_: src.runner.RNN_MLP_Net
-    _partial_: true
-    rnn_layer_num: 0
-    rnn_hidden_layer_size: 256
-    mlp_hidden_sizes: [256,256]
-    mlp_softmax: false
+  net: ${basic_net}
   unbounded: ???
   conditioned_sigma: ???
   pure_random: false
@@ -144,13 +122,7 @@ critic1:
   _target_: src.runner.CustomRecurrentCritic
   _partial_: true
   device: ${device}
-  net: 
-    _target_: src.runner.RNN_MLP_Net
-    _partial_: true
-    rnn_layer_num: 0
-    rnn_hidden_layer_size: 256
-    mlp_hidden_sizes: [256,256]
-    mlp_softmax: false
+  net: ${basic_net}
 critic2: ${critic1}
 actor_optim:
   _target_: torch.optim.Adam

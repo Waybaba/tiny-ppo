@@ -49,8 +49,14 @@
 				// "trainer.batch_seq_len=1",
 				// "trainer.batch_size=32",
 				// "trainer.batch_seq_len=64",
-				
 
+				"trainer.max_epoch=10",
+				"trainer.step_per_epoch=50",
+				"trainer.episode_per_test=2",
+
+				"global_cfg.actor_input.obs_encode.auto_kl_target=null",
+				"global_cfg.actor_input.obs_encode.norm_kl_loss_weight=1e+2",
+				"basic_net.activation=tahn",
 			],
 		},
 

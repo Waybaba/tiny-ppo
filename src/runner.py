@@ -1069,6 +1069,7 @@ class RNN_MLP_Net(nn.Module):
 		rnn_layer_num: int, # in config
 		rnn_hidden_layer_size: int, # in config
 		mlp_hidden_sizes: Sequence[int], # in config
+		activation: str, # in config
 		mlp_softmax: bool,  # TODO add # in config
 		dropout: float = None, # in config
 	):
@@ -1080,6 +1081,16 @@ class RNN_MLP_Net(nn.Module):
 		self.rnn_hidden_layer_size = rnn_hidden_layer_size
 		self.mlp_hidden_sizes = mlp_hidden_sizes
 		self.dropout = dropout
+
+		if activation == "relu":
+			self.activation = nn.ReLU
+		elif activation == "tanh":
+			self.activation = nn.Tanh
+		elif activation == "sigmoid":
+			self.activation = nn.Sigmoid
+		else:
+			raise NotImplementedError
+
 		# build rnn
 		if rnn_layer_num:
 			self.nn = nn.GRU(
@@ -1090,6 +1101,7 @@ class RNN_MLP_Net(nn.Module):
 			)
 		else:
 			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
+		
 		# build mlp
 		assert len(mlp_hidden_sizes) > 0, "mlp_hidden_sizes must be > 0"
 		before_head_mlp_hidden_sizes = mlp_hidden_sizes[:-1]
@@ -1100,12 +1112,11 @@ class RNN_MLP_Net(nn.Module):
 			mlp_hidden_sizes[-1],
 			before_head_mlp_hidden_sizes,
 			device=self.device,
-			activation=nn.ReLU
+			activation=self.activation,
 		))
-		self.mlp_before_head.append(nn.ReLU())
+		self.mlp_before_head.append(self.activation())
 		if self.dropout:
 			self.mlp_before_head.append(nn.Dropout(self.dropout))
-		
 		self.heads = []
 		for _ in range(head_num):
 			head = MLP(
