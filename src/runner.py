@@ -19,6 +19,7 @@ from functools import partial
 import torch.nn.functional as F
 
 
+
 import warnings
 warnings.filterwarnings('ignore')
 from src.tianshou.policy import DDPGPolicy
@@ -1524,8 +1525,7 @@ class ObsEncodeNet(nn.Module):
 	
 	def net_forward(self, net, input, info):
 		info = {}
-		encoder_outputs, state_ = net(input)
-		mu, logvar = encoder_outputs
+		(mu, logvar), state_ = net(input)
 		feats = self.vae_sampling(mu, logvar)
 		info["mu"] = mu
 		info["logvar"] = logvar
@@ -1537,8 +1537,11 @@ class ObsEncodeNet(nn.Module):
 		std = torch.exp(0.5*log_var)
 		eps = torch.randn_like(std)
 		return eps.mul(std).add_(mu)
-		# use reparameterization trick to push the sampling out as input (pytorch)
-		# from torch.distributions import Normal
+	
+	def torch_sampling(self, mu, log_var):
+		z_dist = Normal(mu, 0.5*log_var)
+		z = z_dist.rsample()
+		return z
 
 	def decode(
 			self,
@@ -2740,7 +2743,16 @@ class SACRunner(TD3SACRunner):
 				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
 				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
 			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
+				if self.global_cfg.actor_input.obs_encode.auto_kl_use_log:  # in paper
+					kl_weight_loss = - self.kl_weight_log * (
+						torch.log10(torch.clamp(kl_loss_normed, 1e-9, np.inf)) - \
+						np.log10(self.global_cfg.actor_input.obs_encode.auto_kl_target)
+					)
+				else:
+					kl_weight_loss = - torch.exp(self.kl_weight_log) * (
+						kl_loss_normed.detach() - \
+						self.global_cfg.actor_input.obs_encode.auto_kl_target
+					) 
 				self._auto_kl_optim.zero_grad()
 				kl_weight_loss.backward()
 				self._auto_kl_optim.step()
