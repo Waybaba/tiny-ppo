@@ -59,9 +59,9 @@ class DelayedRoboticEnv(gym.Wrapper):
         # reset act_buf,prev_act - empty then fill the act_buf with zeros
         if self.history_num > 0:
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
-            info["historical_act"] = np.stack(self.act_buf, axis=0)
+            info["historical_act_next"] = np.stack(self.act_buf, axis=0)
         else:
-            info["historical_act"] = False
+            info["historical_act_next"] = False
         
         # update delay_buf
         self.delay_buf.get()
