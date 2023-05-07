@@ -147,6 +147,7 @@ class DelayedRoboticEnv(gym.Wrapper):
         elif self.history_num == 0:
             info["historical_act"] = False # for DEBUG, can be removed
             info["historical_act_next"] = False
+            info["historical_act_cur"] = False
         
         return (deepcopy(obs_next_delayed), deepcopy(reward), deepcopy(done), deepcopy(truncated), deepcopy(info))
 
