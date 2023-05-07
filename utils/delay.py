@@ -135,9 +135,10 @@ class DelayedRoboticEnv(gym.Wrapper):
 
         # act merge
         if self.history_num > 0:
-            info["historical_act"] = np.stack(self.act_buf, axis=0)
+            info["historical_act_cur"] = np.stack(self.act_buf, axis=0)
             self.act_buf.append(action)
             self.act_buf.pop(0)
+            info["historical_act_next"] = np.stack(self.act_buf, axis=0)
         elif self.history_num == 0:
             info["historical_act"] = False
         

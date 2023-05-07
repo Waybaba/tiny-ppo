@@ -75,6 +75,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     rnn_turn_on_burnin: true
     auto_kl_use_log: true
     auto_kl_divide_act_dim: true
+    new_his_act: true # return cur next in info
 
 trainer:
   batch_size: 32 # 256,1 for normal, 32,64 for donqi

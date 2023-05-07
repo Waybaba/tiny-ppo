@@ -1917,7 +1917,8 @@ class TD3SACRunner(OfflineRLRunner):
 			if self.global_cfg.history_num > 0: # only cat when > 0
 				a_in = np.concatenate([
 					a_in,
-					batch.info["historical_act"].flatten()
+					batch.info["historical_act"].flatten() if not self.cfg.global_cfg.debug.new_his_act \
+					else batch.info["historical_act_next"].flatten()
 				], axis=-1)
 			
 			if self.global_cfg.actor_input.obs_pred.turn_on:
@@ -1941,7 +1942,8 @@ class TD3SACRunner(OfflineRLRunner):
 		
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if self.global_cfg.history_num > 0:
-				latest_act = batch.info["historical_act"][-1]
+				latest_act = batch.info["historical_act"][-1] if not self.cfg.global_cfg.debug.new_his_act \
+				else batch.info["historical_act_next"][-1]
 				a_in = np.concatenate([a_in, latest_act], axis=-1)
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				state_for_obs_pred = distill_state(state, {"hidden_pred_net_encoder": "hidden_encoder", "hidden_pred_net_decoder": "hidden_decoder"})
@@ -2097,8 +2099,14 @@ class TD3SACRunner(OfflineRLRunner):
 		batch = self.buf[indices]
 		batch.dobs, batch.dobs_next = batch.obs, batch.obs_next
 		batch.oobs, batch.oobs_next = batch.info["obs_nodelay"], batch.info["obs_next_nodelay"]
-		batch.ahis_cur = batch.info["historical_act"]
-		batch.ahis_next = self.buf[self.buf.next(indices)].info["historical_act"]
+		
+		if self.cfg.global_cfg.debug.new_his_act:
+			batch.ahis_cur = batch.info["historical_act_cur"]
+			batch.ahis_next = batch.info["historical_act_next"]
+		else:
+			batch.ahis_cur = batch.info["historical_act"]
+			batch.ahis_next = self.buf[self.buf.next(indices)].info["historical_act"]
+		
 		batch.obs_delayed_step_num = batch.info["obs_delayed_step_num"]
 		for k in list(batch.keys()): 
 			if k not in keeped_keys:
