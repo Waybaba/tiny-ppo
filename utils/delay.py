@@ -47,7 +47,7 @@ class DelayedRoboticEnv(gym.Wrapper):
             self.history_num = 0
 
     def reset(self):
-        # get obs_next_nodelay
+        # pre: adapt to different envs
         res = self.env.reset()
         if isinstance(res, tuple): obs_next_nodelay, info = res
         else: obs_next_nodelay, info = res, {}
@@ -60,8 +60,10 @@ class DelayedRoboticEnv(gym.Wrapper):
         if self.history_num > 0:
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
             info["historical_act_next"] = np.stack(self.act_buf, axis=0)
+            info["historical_act"] = np.stack(self.act_buf, axis=0) # for DEBUG, can be removed
         else:
             info["historical_act_next"] = False
+            info["historical_act"] = False # for DEBUG, can be removed
         
         # update delay_buf
         self.delay_buf.get()
@@ -98,8 +100,10 @@ class DelayedRoboticEnv(gym.Wrapper):
         """
         preprocess the observation before the agent decision
         """
+        # pre: adapt to different envs
         if len(res) == 4: 
             obs_next_nodelay, reward, done, info = res
+            truncated = False
         elif len(res) == 5:
             obs_next_nodelay, reward, done, truncated, info = res
         else:
@@ -136,11 +140,13 @@ class DelayedRoboticEnv(gym.Wrapper):
         # act merge
         if self.history_num > 0:
             info["historical_act_cur"] = np.stack(self.act_buf, axis=0)
+            info["historical_act"] = np.stack(self.act_buf, axis=0) # for DEBUG, can be removed
             self.act_buf.append(action)
             self.act_buf.pop(0)
             info["historical_act_next"] = np.stack(self.act_buf, axis=0)
         elif self.history_num == 0:
-            info["historical_act"] = False
+            info["historical_act"] = False # for DEBUG, can be removed
+            info["historical_act_next"] = False
         
         return (deepcopy(obs_next_delayed), deepcopy(reward), deepcopy(done), deepcopy(truncated), deepcopy(info))
 

@@ -1919,7 +1919,7 @@ class TD3SACRunner(OfflineRLRunner):
 					a_in,
 					batch.info["historical_act"].flatten() if not self.cfg.global_cfg.debug.new_his_act \
 					else batch.info["historical_act_next"].flatten()
-				], axis=-1)
+			], axis=-1)
 			
 			if self.global_cfg.actor_input.obs_pred.turn_on:
 				pred_out, pred_info = self.pred_net(a_in)
