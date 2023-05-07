@@ -2523,6 +2523,73 @@ class TD3SACRunner(OfflineRLRunner):
 		"""
 		raise NotImplementedError
 
+	def add_obs_pred_loss(self, batch, combined_loss):
+		pred_cfg = self.global_cfg.actor_input.obs_pred
+		pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
+		pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+		pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
+		combined_loss += pred_loss.mean() * pred_cfg.pred_loss_weight
+		self.record("learn/obs_pred/pred_loss", pred_loss.item())
+		self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
+		self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
+		self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
+		if pred_cfg.net_type == "vae":
+			kl_loss = kl_divergence(
+				batch.pred_info_cur_mu,
+				batch.pred_info_cur_logvar,
+				torch.zeros_like(batch.pred_info_cur_mu),
+				torch.zeros_like(batch.pred_info_cur_logvar),
+			)
+			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
+			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
+			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach()
+			self.record("learn/obs_pred/loss_kl", kl_loss.item())
+			self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
+			if pred_cfg.auto_kl_target:
+				kl_weight_loss = - (kl_loss_normed.detach() - pred_cfg.auto_kl_target) * torch.exp(self.kl_weight_log)
+				self._auto_kl_optim.zero_grad()
+				kl_weight_loss.backward()
+				self._auto_kl_optim.step()
+				self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+				self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		return combined_loss
+	
+	def add_obs_encode_loss(self, batch, combined_loss):
+		encode_cfg = self.global_cfg.actor_input.obs_encode
+		kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
+		kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
+		kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
+		combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
+		self.record("learn/obs_encode/loss_kl", kl_loss.item())
+		self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
+		if encode_cfg.pred_loss_weight:
+			pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
+			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
+			self.record("learn/obs_encode/loss_pred", pred_loss.item())
+			self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
+			combined_loss += pred_loss * encode_cfg.pred_loss_weight
+		if encode_cfg.auto_kl_target:
+			if self.global_cfg.debug.auto_kl_use_log:  # in paper
+				kl_weight_loss = - self.kl_weight_log * (
+					torch.log10(torch.clamp(kl_loss_normed.detach(), 1e-9, np.inf)) - \
+					np.log10(encode_cfg.auto_kl_target)
+				)
+			else: # previous
+				kl_weight_loss = - torch.exp(self.kl_weight_log) * (
+					kl_loss_normed.detach() - \
+					encode_cfg.auto_kl_target
+				) 
+			
+			if self.global_cfg.debug.auto_kl_divide_act_dim: # in paper
+				kl_weight_loss = kl_weight_loss / self.actor.act_num
+			
+			self._auto_kl_optim.zero_grad()
+			kl_weight_loss.backward()
+			self._auto_kl_optim.step()
+			self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
+			self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+		return combined_loss
+		
 # algorithmss
 class TD3Runner(TD3SACRunner):
 	ALGORITHM = "td3"
@@ -2566,57 +2633,15 @@ class TD3Runner(TD3SACRunner):
 		actor_loss, _ = self.critic1(batch.c_in_online_cur, None)
 		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss = 0. + actor_loss
-		# add pred loss
+
+		# add obs_pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
-			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
-			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
-			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
-			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
-			self.record("learn/obs_pred/pred_loss", pred_loss.item())
-			self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
-			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
-			self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
-			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
-				kl_loss = kl_divergence(
-					batch.pred_info_cur_mu,
-					batch.pred_info_cur_logvar,
-					torch.zeros_like(batch.pred_info_cur_mu),
-					torch.zeros_like(batch.pred_info_cur_logvar),
-				)
-				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight # ! TODO here the kl is not updated
-				self.record("learn/obs_pred/loss_kl", kl_loss.item())
-				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
-				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
-					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
-					self._auto_kl_optim.zero_grad()
-					kl_weight_loss.backward()
-					self._auto_kl_optim.step()
-					self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
-		# add encode loss
-		elif self.global_cfg.actor_input.obs_encode.turn_on:
-			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
-			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
-			self.record("learn/obs_encode/loss_kl", kl_loss.item())
-			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
-			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-				pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
-				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
-				self.record("learn/obs_encode/loss_pred", pred_loss.item())
-				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
-				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
-			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
-				self._auto_kl_optim.zero_grad()
-				kl_weight_loss.backward()
-				self._auto_kl_optim.step()
-				self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-				self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+			combined_loss = self.add_obs_pred_loss(batch, combined_loss)
 		
+		# add obs_encode loss
+		if self.global_cfg.actor_input.obs_encode.turn_on:
+			combined_loss = self.add_obs_encode_loss(batch, combined_loss)
+
 		# backward and optim
 		self.actor_optim.zero_grad()
 		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.zero_grad()
@@ -2650,6 +2675,7 @@ class TD3Runner(TD3SACRunner):
 	
 class SACRunner(TD3SACRunner):
 	ALGORITHM = "sac"
+
 	def update_critic(self, batch):
 		# cal target_q
 		pre_sz = list(batch.done.shape)
@@ -2690,7 +2716,7 @@ class SACRunner(TD3SACRunner):
 		return {
 			"critic_loss": critic_loss.cpu().item()
 		}
-	
+
 	def update_actor(self, batch):
 		res_info = {}
 		combined_loss = 0.
@@ -2704,79 +2730,14 @@ class SACRunner(TD3SACRunner):
 		self.record("learn/loss_actor", actor_loss.item())
 		self.record("learn/loss_actor_normed", actor_loss.item()/batch.valid_mask.float().mean().item())
 
-		if self.global_cfg.debug.dongqi_mu_sigma_reg_ratio:
-			# calculate pow(2) for mu and sigma (use mask)
-			reg_loss = (mu ** 2).sum(-1) + (var ** 2).sum(-1)
-			reg_loss = apply_mask(reg_loss, batch.valid_mask).mean()
-			combined_loss += reg_loss * self.global_cfg.debug.dongqi_mu_sigma_reg_ratio
-			self.record("learn/loss_actor_reg", reg_loss.item())
-			self.record("learn/loss_actor_reg_normed", reg_loss.item()/batch.valid_mask.float().mean().item())
-
-		# add pred loss
+		# add obs_pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
-			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
-			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
-			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
-			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
-			self.record("learn/obs_pred/pred_loss", pred_loss.item())
-			self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
-			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
-			self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
-			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
-				kl_loss = kl_divergence(
-					batch.pred_info_cur_mu,
-					batch.pred_info_cur_logvar,
-					torch.zeros_like(batch.pred_info_cur_mu),
-					torch.zeros_like(batch.pred_info_cur_logvar),
-				)
-				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
-				self.record("learn/obs_pred/loss_kl", kl_loss.item())
-				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
-				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
-					kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
-					self._auto_kl_optim.zero_grad()
-					kl_weight_loss.backward()
-					self._auto_kl_optim.step()
-					self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+			combined_loss = self.add_obs_pred_loss(batch, combined_loss)
 		
-		# add encode loss
+		# add obs_encode loss
 		if self.global_cfg.actor_input.obs_encode.turn_on:
-			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
-			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
-			self.record("learn/obs_encode/loss_kl", kl_loss.item())
-			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
-			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-				pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
-				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
-				self.record("learn/obs_encode/loss_pred", pred_loss.item())
-				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
-				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
-			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				if self.global_cfg.debug.auto_kl_use_log:  # in paper
-					kl_weight_loss = - self.kl_weight_log * (
-						torch.log10(torch.clamp(kl_loss_normed.detach(), 1e-9, np.inf)) - \
-						np.log10(self.global_cfg.actor_input.obs_encode.auto_kl_target)
-					)
-				else: # previous
-					kl_weight_loss = - torch.exp(self.kl_weight_log) * (
-						kl_loss_normed.detach() - \
-						self.global_cfg.actor_input.obs_encode.auto_kl_target
-					) 
-				
-				if self.global_cfg.debug.auto_kl_divide_act_dim: # in paper
-					kl_weight_loss = kl_weight_loss / self.actor.act_num
-				
-				self._auto_kl_optim.zero_grad()
-				kl_weight_loss.backward()
-				self._auto_kl_optim.step()
-				self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-				self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
-		
+			combined_loss = self.add_obs_encode_loss(batch, combined_loss)
+
 		# backward and optim
 		self.actor_optim.zero_grad()
 		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.zero_grad()
@@ -2831,6 +2792,7 @@ class SACRunner(TD3SACRunner):
 		else:
 			(mu, var), _ = self.actor(batch.a_in_cur, None)
 		act_online_cur, logprob_online_cur = self.actor.sample_act(mu, var)
+		
 		# next
 		with torch.no_grad():
 			if self._burnin_num():
@@ -2894,6 +2856,7 @@ class SACRunner(TD3SACRunner):
 
 class DDPGRunner(TD3SACRunner):
 	ALGORITHM = "ddpg"
+	
 	def update_critic(self, batch):
 		pre_sz = list(batch.done.shape)
 		
@@ -2929,57 +2892,15 @@ class DDPGRunner(TD3SACRunner):
 		actor_loss, _ = self.critic1(batch.c_in_online_cur, None)
 		actor_loss =  - apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss = 0. + actor_loss
-		# add pred loss
+
+		# add obs_pred loss
 		if self.global_cfg.actor_input.obs_pred.turn_on:
-			pred_loss = (batch.pred_out_cur - batch.oobs) ** 2
-			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
-			pred_loss_normed = pred_loss / batch.valid_mask.float().mean()
-			combined_loss += pred_loss.mean() * self.global_cfg.actor_input.obs_pred.pred_loss_weight
-			self.record("learn/obs_pred/pred_loss", pred_loss.item())
-			self.record("learn/obs_pred/pred_loss_normed", pred_loss_normed.item())
-			self.record("learn/obs_pred/pred_abs_error", pred_loss.item() ** 0.5)
-			self.record("learn/obs_pred/pred_abs_error_normed", pred_loss_normed.item() ** 0.5)
-			if self.global_cfg.actor_input.obs_pred.net_type == "vae":
-				kl_loss = kl_divergence(
-					batch.pred_info_cur_mu,
-					batch.pred_info_cur_logvar,
-					torch.zeros_like(batch.pred_info_cur_mu),
-					torch.zeros_like(batch.pred_info_cur_logvar),
-				)
-				kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-				kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-				combined_loss += kl_loss * self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
-				self.record("learn/obs_pred/loss_kl", kl_loss.item())
-				self.record("learn/obs_pred/loss_kl_normed", kl_loss_normed.item())
-				if self.global_cfg.actor_input.obs_pred.auto_kl_target:
-					kl_weight_loss = - (kl_loss.detach() - self.global_cfg.actor_input.obs_pred.auto_kl_target) * torch.exp(self.kl_weight_log)
-					self._auto_kl_optim.zero_grad()
-					kl_weight_loss.backward()
-					self._auto_kl_optim.step()
-					self.record("learn/obs_pred/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-					self.record("learn/obs_pred/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
-		# add encode loss
-		elif self.global_cfg.actor_input.obs_encode.turn_on:
-			kl_loss = kl_divergence(batch.encode_oracle_info_cur_mu, batch.encode_oracle_info_cur_logvar, batch.encode_normal_info_cur_mu, batch.encode_normal_info_cur_logvar)
-			kl_loss = apply_mask(kl_loss, batch.valid_mask).mean()
-			kl_loss_normed = kl_loss / batch.valid_mask.float().mean()
-			combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
-			self.record("learn/obs_encode/loss_kl", kl_loss.item())
-			self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
-			if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
-				pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
-				pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
-				self.record("learn/obs_encode/loss_pred", pred_loss.item())
-				self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
-				combined_loss += pred_loss * self.global_cfg.actor_input.obs_encode.pred_loss_weight
-			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
-				kl_weight_loss = - (kl_loss_normed.detach() - self.global_cfg.actor_input.obs_encode.auto_kl_target) * torch.exp(self.kl_weight_log)
-				self._auto_kl_optim.zero_grad()
-				kl_weight_loss.backward()
-				self._auto_kl_optim.step()
-				self.record("learn/obs_encode/kl_weight_log", self.kl_weight_log.detach().cpu().item())
-				self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
+			combined_loss = self.add_obs_pred_loss(batch, combined_loss)
 		
+		# add obs_encode loss
+		if self.global_cfg.actor_input.obs_encode.turn_on:
+			combined_loss = self.add_obs_encode_loss(batch, combined_loss)
+
 		# backward and optim
 		self.actor_optim.zero_grad()
 		if self.global_cfg.actor_input.obs_pred.turn_on: self._pred_optim.zero_grad()

@@ -69,13 +69,13 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     entropy_mask_loss_renorm: false # true: mask->mean->renorm->loss # false: loss -> mask -> mean
     use_log_alpha_for_mul_logprob: true
     dongqi_log_prob_clamp: false 
-    dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip
-    use_terminated_mask_for_value: true
+    dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip # deprecated, can be used later
+    use_terminated_mask_for_value: trueA
     delay_keep_order_method: expect1 # none, expect1
     rnn_turn_on_burnin: true
     auto_kl_use_log: true
     auto_kl_divide_act_dim: true
-    new_his_act: false # return cur next in info
+    new_his_act: true # return cur next in info
 
 trainer:
   batch_size: 32 # 256,1 for normal, 32,64 for donqi
@@ -120,7 +120,7 @@ actor:
   net: ${basic_net}
   unbounded: ???
   conditioned_sigma: ???
-  heads_share_pre_net: false
+  heads_share_pre_net: true
   pure_random: false
 critic1:
   _target_: src.runner.CustomRecurrentCritic
