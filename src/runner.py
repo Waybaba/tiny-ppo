@@ -176,7 +176,12 @@ def kl_divergence(mu1, logvar1, mu2, logvar2):
 	output:
 		kl: (B, )
 	"""
-	kl = 0.5 * (logvar2 - logvar1 + (torch.exp(logvar1) + (mu1 - mu2).pow(2)) / torch.exp(logvar2) - 1)
+	kl = 0.5 * (
+		logvar2 - logvar1 + \
+		(torch.exp(logvar1) + (mu1 - mu2).pow(2)) \
+		/ torch.exp(logvar2) \
+		- 1
+		)
 	return kl.sum(dim=-1)
 
 def apply_mask(tensor, mask):
@@ -1526,7 +1531,8 @@ class ObsEncodeNet(nn.Module):
 	def net_forward(self, net, input, info):
 		info = {}
 		(mu, logvar), state_ = net(input)
-		feats = self.vae_sampling(mu, logvar)
+		# feats = self.vae_sampling(mu, logvar)
+		feats = self.torch_sampling(mu, logvar)
 		info["mu"] = mu
 		info["logvar"] = logvar
 		info["state"] = state_
@@ -1539,7 +1545,7 @@ class ObsEncodeNet(nn.Module):
 		return eps.mul(std).add_(mu)
 	
 	def torch_sampling(self, mu, log_var):
-		z_dist = Normal(mu, 0.5*log_var)
+		z_dist = Normal(mu, torch.exp(0.5*log_var))
 		z = z_dist.rsample()
 		return z
 
@@ -2748,13 +2754,13 @@ class SACRunner(TD3SACRunner):
 						torch.log10(torch.clamp(kl_loss_normed.detach(), 1e-9, np.inf)) - \
 						np.log10(self.global_cfg.actor_input.obs_encode.auto_kl_target)
 					)
-				else:
+				else: # previous
 					kl_weight_loss = - torch.exp(self.kl_weight_log) * (
 						kl_loss_normed.detach() - \
 						self.global_cfg.actor_input.obs_encode.auto_kl_target
 					) 
 				
-				if self.global_cfg.debug.auto_kl_divide_act_dim:
+				if self.global_cfg.debug.auto_kl_divide_act_dim: # in paper
 					kl_weight_loss = kl_weight_loss / self.actor.act_num
 				
 				self._auto_kl_optim.zero_grad()
