@@ -1887,9 +1887,10 @@ class TD3SACRunner(OfflineRLRunner):
 		self.actor_optim = cfg.actor_optim(self.actor.parameters())
 		self.actor_old = deepcopy(self.actor)
 
-		self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
+		if cfg.global_cfg.critic_input.bi_or_si_rnn == "si":
+			self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
-		self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
 		self.critic1_old = deepcopy(self.critic1)
 		self.critic2_old = deepcopy(self.critic2)
@@ -2678,7 +2679,8 @@ class TD3SACRunner(OfflineRLRunner):
 			self.record("learn/obs_encode/kl_weight", torch.exp(self.kl_weight_log).detach().cpu().item())
 		return combined_loss
 		
-# algorithmss
+# algorithms
+
 class TD3Runner(TD3SACRunner):
 	ALGORITHM = "td3"
 

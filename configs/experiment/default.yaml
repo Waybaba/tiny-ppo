@@ -80,6 +80,8 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
+    bi_or_si_rnn: "si" # "bi" or "si" or "both"
+    
   log_interval: 100
   log_instant_commit: true # false would make the wandb sync only once per epoch
   debug: # default value is the better one

@@ -68,6 +68,7 @@
 				"global_cfg.burnin_num=0.",
 				"global_cfg.history_num=1",
 				"critic1.net_rnn.bidirectional=true",
+				"bi_or_si_rnn=both",
 
 				// ### symmetricCatMlp
 				// "global_cfg.critic_input.obs_type=normal",
