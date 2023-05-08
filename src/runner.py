@@ -2578,7 +2578,7 @@ class TD3SACRunner(OfflineRLRunner):
 			z_1, z_2 = dist.sample(), dist.sample()
 			(a_mu_1, a_var_1), _ = self.actor(z_1, None)
 			(a_mu_2, a_var_2), _ = self.actor(z_2, None)
-			robust_loss = (a_mu_1 - a_mu_2) ** 2 + (a_var_1.sqrt() - a_var_2.sqrt*()) ** 2
+			robust_loss = (a_mu_1 - a_mu_2) ** 2 + (a_var_1.sqrt() - a_var_2.sqrt()) ** 2
 			robust_loss = apply_mask(robust_loss, batch.valid_mask).mean()
 			robust_loss_normed = robust_loss / batch.valid_mask.float().mean()
 			self.record("learn/obs_encode/loss_robust", robust_loss.item())
