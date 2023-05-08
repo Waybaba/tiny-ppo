@@ -2844,13 +2844,17 @@ class SACRunner(TD3SACRunner):
 
 		self.critic1_optim.zero_grad()
 		self.critic2_optim.zero_grad()
-		self.critic_sirnn_1_optim.zero_grad()
-		self.critic_sirnn_2_optim.zero_grad()
+		if self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn" \
+			and self.cfg.global_cfg.critic_input.bi_or_si_rnn == "both":
+			self.critic_sirnn_1_optim.zero_grad()
+			self.critic_sirnn_2_optim.zero_grad()
 		critic_loss.backward()
 		self.critic1_optim.step()
 		self.critic2_optim.step()
-		self.critic_sirnn_1_optim.step()
-		self.critic_sirnn_2_optim.step()
+		if self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn" \
+			and self.cfg.global_cfg.critic_input.bi_or_si_rnn == "both":
+			self.critic_sirnn_1_optim.step()
+			self.critic_sirnn_2_optim.step()
 
 		return {
 			"critic_loss": critic_loss.cpu().item()
