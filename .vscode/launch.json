@@ -29,13 +29,13 @@
 				// "experiment=sac_rnn",
 				// "experiment=ddpg_tianshou",
 				
-				"env.name=HalfCheetah-v4",
-				// "env.name=Hopper-v4",
+				// "env.name=HalfCheetah-v4",
+				"env.name=Hopper-v4",
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
 
-				"env.delay=12",
+				"env.delay=4",
 				// "env.fixed_delay=false",
 				// "global_cfg.debug.delay_keep_order_method=expect1",
 
@@ -50,7 +50,23 @@
 				"trainer.batch_size=32",
 				"trainer.batch_seq_len=64",
 
-				// DEBUG
+				// // ### obs pred
+				// "global_cfg.actor_input.obs_pred.turn_on=true",
+				// "global_cfg.actor_input.obs_encode.turn_on=false",
+
+				// ### obs encode
+				"global_cfg.actor_input.obs_pred.turn_on=false",
+				"global_cfg.actor_input.obs_encode.turn_on=true",
+				"global_cfg.actor_input.obs_encode.policy_robust_weight=0.1",
+
+
+				// ### rnn critic
+				// "global_cfg.critic_input.obs_type=normal",
+				// "global_cfg.critic_input.history_merge_method=stack_rnn",
+				// "global_cfg.actor_input.obs_type=normal",
+				// "global_cfg.actor_input.history_merge_method=cat_mlp",
+
+				// ### DEBUG
 				// "trainer.max_epoch=3",
 				// "trainer.step_per_epoch=50",
 				// "trainer.episode_per_test=2",
@@ -58,7 +74,7 @@
 				// "global_cfg.debug.auto_kl_use_log=true",
 
 
-				// == misc
+				// ### misc
 				// "global_cfg.actor_input.obs_encode.auto_kl_target=null",
 				// "global_cfg.actor_input.obs_encode.norm_kl_loss_weight=1e+2",
 				// "basic_net.activation=tanh",

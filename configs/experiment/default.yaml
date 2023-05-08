@@ -4,6 +4,13 @@
 # default -> td3 -> td3_rnn <- rnn_plugin
 # default -> ddpg -> ddpg_rnn <- rnn_plugin
 # default -> rnn_plugin
+defaults:
+  # - /net@pre_net: mlp_basic.yaml
+  - /net@basic_net: mlp_basic.yaml
+  # - /net@global_cfg.actor_input.obs_pred.net.encoder_net: mlp_basic.yaml
+  # - /net@global_cfg.actor_input.obs_pred.net.decoder_net: mlp_basic.yaml
+  # - /net@global_cfg.actor_input.obs_encode.net.encoder_net: mlp_basic.yaml
+  # - /net@global_cfg.actor_input.obs_encode.net.decoder_net: mlp_basic.yaml
 
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   history_num: ${env.delay} # decide the info["historical_act"] length # would use ${env.delay}
@@ -13,7 +20,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     obs_pred:
       turn_on: false 
       feat_dim: 256
-      middle_detach: false 
+      middle_detach: true 
       input_type: "feat" # obs or feat
       net_type: mlp # vae or mlp
       norm_kl_loss_weight: 1.0
@@ -44,6 +51,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
       norm_kl_loss_weight: 0.0001
       auto_kl_target: 50
       pred_loss_weight: 0.0
+      policy_robust_weight: 0.0 # 0.0 for skip
       optim:
         _target_: torch.optim.Adam
         _partial_: true
@@ -70,10 +78,10 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     use_log_alpha_for_mul_logprob: true
     dongqi_log_prob_clamp: false 
     dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip # deprecated, can be used later
-    use_terminated_mask_for_value: trueA
-    delay_keep_order_method: expect1 # none, expect1
+    use_terminated_mask_for_value: true # FIXED
+    delay_keep_order_method: expect1 # FIXED none, expect1
     rnn_turn_on_burnin: true
-    auto_kl_use_log: true
+    auto_kl_use_log: true # FIXED
     auto_kl_divide_act_dim: true
     new_his_act: true # return cur next in info
 
@@ -104,14 +112,7 @@ runner:
   _partial_: true
 
 basic_net:
-  _target_: src.runner.RNN_MLP_Net
-  _partial_: true
-  rnn_layer_num: 0
-  rnn_hidden_layer_size: 256
-  mlp_hidden_sizes: [256,256]
-  mlp_softmax: false
   activation: relu
-
 
 actor:
   _target_: src.runner.CustomRecurrentActorProb
@@ -122,6 +123,7 @@ actor:
   conditioned_sigma: ???
   heads_share_pre_net: true
   pure_random: false
+
 critic1:
   _target_: src.runner.CustomRecurrentCritic
   _partial_: true

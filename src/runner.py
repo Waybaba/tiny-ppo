@@ -1223,6 +1223,7 @@ class CustomRecurrentCritic(nn.Module):
 		super().__init__()
 		self.hps = kwargs
 		assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
+
 		if self.hps["global_cfg"].critic_input.history_merge_method == "cat_mlp":
 			self.input_dim = state_shape[0] + action_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
 			self.output_dim = 1
@@ -1237,6 +1238,7 @@ class CustomRecurrentCritic(nn.Module):
 			self.output_dim = 1
 		else:
 			raise NotImplementedError
+		
 		self.net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
 
 	def forward(
@@ -1489,7 +1491,7 @@ class ObsEncodeNet(nn.Module):
 		if self.global_cfg.actor_input.history_merge_method in ["cat_mlp"]:
 			self.normal_encode_dim = state_shape[0] + action_shape[0] * global_cfg.history_num
 		elif self.global_cfg.actor_input.history_merge_method in ["stack_rnn"]:
-			if self.hps["global_cfg"].history_num > 0:
+			if self.global_cfg.history_num > 0:
 				self.normal_encode_dim = state_shape[0] + action_shape[0]
 			else:
 				self.normal_encode_dim = state_shape[0]
@@ -2266,8 +2268,7 @@ class TD3SACRunner(OfflineRLRunner):
 				
 				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 					batch.a_in_cur = batch.a_in_cur.detach()
-					batch.a_in_next = batch.a_in_next.detach()
-				
+					batch.a_in_next = batch.a_in_next.detach()	
 		elif self.global_cfg.actor_input.history_merge_method == "stack_rnn":
 			if self.global_cfg.history_num > 0: 
 				batch.a_in_cur = torch.cat([batch.a_in_cur, batch.ahis_cur[...,-1,:]], dim=-1) # [*, obs_dim+act_dim]
@@ -2373,7 +2374,6 @@ class TD3SACRunner(OfflineRLRunner):
 				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next.flatten(start_dim=-2)], dim=-1)
 				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
 		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
-			raise NotImplementedError("stack_rnn for critic is not implemented")
 			# TODO the state for critic varies a lot across critic1, critic2, criticold, so we cannot save the state then process
 			if self.global_cfg.history_num > 0:
 				batch.c_in_online_cur = torch.cat([batch.c_in_online_cur, batch.ahis_cur[...,-1,:]], dim=-1)
@@ -2562,12 +2562,29 @@ class TD3SACRunner(OfflineRLRunner):
 		combined_loss += kl_loss * torch.exp(self.kl_weight_log).detach().mean()
 		self.record("learn/obs_encode/loss_kl", kl_loss.item())
 		self.record("learn/obs_encode/loss_kl_normed", kl_loss_normed.item())
+
 		if encode_cfg.pred_loss_weight:
 			pred_loss = (batch.pred_obs_output_cur - batch.oobs) ** 2
 			pred_loss = apply_mask(pred_loss, batch.valid_mask).mean()
 			self.record("learn/obs_encode/loss_pred", pred_loss.item())
 			self.record("learn/obs_encode/abs_error_pred", pred_loss.item() ** 0.5)
 			combined_loss += pred_loss * encode_cfg.pred_loss_weight
+		
+		if encode_cfg.policy_robust_weight:
+			dist = Normal(
+				batch.encode_normal_info_cur_mu, 
+				torch.exp(0.5*batch.encode_normal_info_cur_logvar)
+			)
+			z_1, z_2 = dist.sample(), dist.sample()
+			(a_mu_1, a_var_1), _ = self.actor(z_1, None)
+			(a_mu_2, a_var_2), _ = self.actor(z_2, None)
+			robust_loss = (a_mu_1 - a_mu_2) ** 2 + (a_var_1.sqrt() - a_var_2.sqrt*()) ** 2
+			robust_loss = apply_mask(robust_loss, batch.valid_mask).mean()
+			robust_loss_normed = robust_loss / batch.valid_mask.float().mean()
+			self.record("learn/obs_encode/loss_robust", robust_loss.item())
+			self.record("learn/obs_encode/loss_robust_normed", robust_loss_normed.item())
+			combined_loss += robust_loss * encode_cfg.policy_robust_weight
+
 		if encode_cfg.auto_kl_target:
 			if self.global_cfg.debug.auto_kl_use_log:  # in paper
 				kl_weight_loss = - self.kl_weight_log * (
