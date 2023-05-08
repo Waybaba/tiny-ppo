@@ -5,13 +5,18 @@
 # default -> ddpg -> ddpg_rnn <- rnn_plugin
 # default -> rnn_plugin
 defaults:
-  # - /net@pre_net: mlp_basic.yaml
   - /net@basic_mlp: mlp_basic.yaml
   - /net@basic_rnn: rnn_basic.yaml
-  # - /net@global_cfg.actor_input.obs_pred.net.encoder_net: mlp_basic.yaml
-  # - /net@global_cfg.actor_input.obs_pred.net.decoder_net: mlp_basic.yaml
-  # - /net@global_cfg.actor_input.obs_encode.net.encoder_net: mlp_basic.yaml
-  # - /net@global_cfg.actor_input.obs_encode.net.decoder_net: mlp_basic.yaml
+  - /net@critic1.net_mlp: mlp_basic.yaml
+  - /net@critic1.net_rnn: rnn_basic.yaml
+  - /net@actor.net_mlp: mlp_basic.yaml
+  - /net@actor.net_rnn: rnn_basic.yaml
+  - /net@global_cfg.actor_input.obs_pred.net.encoder_net_mlp: mlp_basic.yaml
+  - /net@global_cfg.actor_input.obs_pred.net.encoder_net_rnn: rnn_basic.yaml
+  - /net@global_cfg.actor_input.obs_pred.net.decoder_net: mlp_basic.yaml
+  - /net@global_cfg.actor_input.obs_encode.net.encoder_net_mlp: mlp_basic.yaml
+  - /net@global_cfg.actor_input.obs_encode.net.encoder_net_rnn: rnn_basic.yaml
+  - /net@global_cfg.actor_input.obs_encode.net.decoder_net: mlp_basic.yaml
 
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   history_num: ${env.delay} # decide the info["historical_act"] length # would use ${env.delay}
@@ -42,9 +47,9 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
         device: ${device}
         feat_dim: ${global_cfg.actor_input.obs_pred.feat_dim}
         net_type: ${global_cfg.actor_input.obs_pred.net_type}
-        encoder_net_mlp: ${basic_mlp}
-        encoder_net_rnn: ${basic_rnn}
-        decoder_net: ${basic_mlp}
+        encoder_net_mlp: ???
+        encoder_net_rnn: ???
+        decoder_net: ???
     obs_encode:
       turn_on: false 
       feat_dim: 256
@@ -69,9 +74,9 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
         net_type: ${global_cfg.actor_input.obs_pred.net_type}
         feat_dim: ${global_cfg.actor_input.obs_encode.feat_dim}
         device: ${device}
-        encoder_net_mlp: ${basic_mlp}
-        encoder_net_rnn: ${basic_rnn}
-        decoder_net: ${basic_mlp}
+        encoder_net_mlp: ???
+        encoder_net_rnn: ???
+        decoder_net: ???
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
@@ -115,20 +120,14 @@ runner:
   _target_: ???
   _partial_: true
 
-basic_mlp:
-  activation: relu
-
-basic_rnn:
-  activation: ${basic_mlp.activation}
-
 
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
   device: ${device}
   unbounded: ???
-  net_mlp: ${basic_mlp}
-  net_rnn: ${basic_rnn}
+  net_mlp: ???
+  net_rnn: ???
   conditioned_sigma: ???
   heads_share_pre_net: true
   pure_random: false
@@ -137,8 +136,8 @@ critic1:
   _target_: src.runner.CustomRecurrentCritic
   _partial_: true
   device: ${device}
-  net_mlp: ${basic_mlp}
-  net_rnn: ${basic_rnn}
+  net_mlp: ???
+  net_rnn: ???
 critic2: ${critic1}
 actor_optim:
   _target_: torch.optim.Adam

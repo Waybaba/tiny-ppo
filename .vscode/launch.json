@@ -67,12 +67,13 @@
 				"global_cfg.actor_input.history_merge_method=cat_mlp",
 				"global_cfg.burnin_num=0.",
 				"global_cfg.history_num=1",
+				"critic1.net_rnn.bidirectional=true",
 
 				// ### symmetricCatMlp
-				"global_cfg.critic_input.obs_type=normal",
-				"global_cfg.critic_input.history_merge_method=cat_mlp",
-				"global_cfg.actor_input.obs_type=normal",
-				"global_cfg.actor_input.history_merge_method=cat_mlp",
+				// "global_cfg.critic_input.obs_type=normal",
+				// "global_cfg.critic_input.history_merge_method=cat_mlp",
+				// "global_cfg.actor_input.obs_type=normal",
+				// "global_cfg.actor_input.history_merge_method=cat_mlp",
 
 				// ### DEBUG
 				// "trainer.max_epoch=3",

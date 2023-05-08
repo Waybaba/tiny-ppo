@@ -4,3 +4,4 @@ rnn_layer_num: 0
 rnn_hidden_layer_size: 256
 mlp_hidden_sizes: [256,256]
 mlp_softmax: false
+activation: relu

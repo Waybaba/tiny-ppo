@@ -32,6 +32,64 @@ from rich.console import Console
 
 # utils
 
+def forward_with_preinput(
+		input,
+		preinput,
+		net,
+		stage,
+		forward_strategy="once",
+	):
+	"""
+	Args:
+		input: (B, T, *)
+		preinput: (B, T, *)
+		net: a pytorch module (input, state_in) -> (output, state_out)
+			where state_in could be None for zero state
+		stage: cur or next, would be used to choose the state
+	"""
+	B, T = input.shape[:2]
+
+	# make state
+	if forward_strategy == "once":
+		with torch.no_grad():
+			_, info = net(preinput, state=None) # (B, T, D*hidden_dim) # note that there is only one hidden available
+			hidden_states = info["hidden_all"]
+			hidden_dim = net.net.nn.hidden_size
+			hidden_states = hidden_states.reshape(B, T, -1, hidden_dim) # (B, T, D, hidden_dim)
+			hidden_states = hidden_states.unsqueeze(-2) # (B, T, D, num_layers, hidden_dim)
+			hidden_states = hidden_states.reshape(B, T, -1, hidden_dim) # (B, T, D*num_layers, hidden_dim)
+
+	elif forward_strategy == "multi":
+		with torch.no_grad():
+			# Compute hidden states for each time step
+			hidden_states = []
+			last_state = None
+			for t in range(T):
+				input_t = preinput[:, t].unsqueeze(1)
+				_, state = net(input_t, state=last_state)
+				assert state is not None, "state must not be None, the net should contains RNN when in burnin function"
+				hidden_states.append(state["hidden"])
+				last_state = state
+			# Stack hidden states along the time dimension
+			hidden_states = torch.stack(hidden_states, dim=1) # (B, T, D*num_layers, hidden_dim)
+
+	# select the state
+	hidden_states = torch.cat([torch.zeros_like(hidden_states[:,0:1]), hidden_states], dim=1)
+	if stage == "cur":
+		hidden_states = hidden_states[:, :-1]
+	elif stage == "next":
+		hidden_states = hidden_states[:, 1:]
+	
+	# hidden_states: (B, T, D*num_layers, hidden_dim)
+	input = input.reshape(B*T, 1, -1)
+	hidden_states = hidden_states.reshape(B*T, *hidden_states.shape[2:]) # (B*T, D*num_layers, hidden_dim)
+	# hidden_states = hidden_states.permute(1, 0, 2) # (D*num_layers, B*T, hidden_dim) # the inner layer would do the transpose
+	output, _ = net(input, {"hidden":hidden_states}) # (B*T, out_dim)
+	output = output.reshape(B, T, -1)
+	return output
+
+
+
 def forward_with_burnin(
 	input,    
 	burnin_input,
@@ -1078,8 +1136,10 @@ class RNN_MLP_Net(nn.Module):
 		activation: str, # in config
 		mlp_softmax: bool,  # TODO add # in config
 		dropout: float = None, # in config
+		bidirectional: bool = False, # in config
 	):
 		super().__init__()
+		self.bidirectional = bidirectional
 		self.device = device
 		self.input_dim = input_dim
 		self.output_dim = output_dim
@@ -1104,6 +1164,7 @@ class RNN_MLP_Net(nn.Module):
 				hidden_size=rnn_hidden_layer_size,
 				num_layers=rnn_layer_num,
 				batch_first=True,
+				bidirectional=bidirectional,
 			)
 		else:
 			self.nn = DummyNet(input_dim=input_dim, input_size=input_dim)
@@ -1111,10 +1172,16 @@ class RNN_MLP_Net(nn.Module):
 		# build mlp
 		assert len(mlp_hidden_sizes) > 0, "mlp_hidden_sizes must be > 0"
 		before_head_mlp_hidden_sizes = mlp_hidden_sizes[:-1]
-		
+		if rnn_layer_num:
+			if bidirectional:
+				mlp_input_dim = rnn_hidden_layer_size * 2
+			else:
+				mlp_input_dim = rnn_hidden_layer_size
+		else:
+			mlp_input_dim = input_dim
 		self.mlp_before_head = []
 		self.mlp_before_head.append(MLP(
-			rnn_hidden_layer_size if rnn_layer_num else input_dim,
+			mlp_input_dim,
 			mlp_hidden_sizes[-1],
 			before_head_mlp_hidden_sizes,
 			device=self.device,
@@ -1166,22 +1233,13 @@ class RNN_MLP_Net(nn.Module):
 			self.nn.flatten_parameters()
 			if state is None or state["hidden"] is None:
 				# first step of online or offline
-				hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
+				hidden = torch.zeros(self.rnn_layer_num*(2 if self.bidirectional else 1), B, self.rnn_hidden_layer_size, device=self.device)
 				after_rnn, hidden = self.nn(obs, hidden)
-
-				# # two step debug
-				# hidden = torch.zeros(self.rnn_layer_num, B, self.rnn_hidden_layer_size, device=self.device)
-				# after_rnn, hidden = self.nn(obs[:,:-1,:], hidden)
-				# after_rnn, hidden = self.nn(obs[:,-1:,:], hidden)
-				# print(hidden[0,0])
 			else: 
 				# normal step of online
-
 				after_rnn, hidden = self.nn(obs, state["hidden"].transpose(0, 1).contiguous())
-			if to_unsqueeze: 
-				after_rnn = after_rnn.squeeze(-2)
-			if to_unsqueeze_from_1:
-				after_rnn = after_rnn.squeeze(0)
+			if to_unsqueeze: after_rnn = after_rnn.squeeze(-2)
+			if to_unsqueeze_from_1: after_rnn = after_rnn.squeeze(0)
 		else: # skip rnn
 			after_rnn = obs
 		
@@ -1193,6 +1251,7 @@ class RNN_MLP_Net(nn.Module):
 
 		return outputs, {
 			"hidden": hidden.transpose(0, 1).detach(),
+			"hidden_all": after_rnn.detach(),
 		} if self.rnn_layer_num else None
 
 	def flatten_foward(self, net, input):
@@ -2384,41 +2443,15 @@ class TD3SACRunner(OfflineRLRunner):
 				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
 		elif self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
 			# TODO the state for critic varies a lot across critic1, critic2, criticold, so we cannot save the state then process
-			if self.global_cfg.history_num > 0:
-				batch.c_in_online_cur = torch.cat([batch.c_in_online_cur, batch.ahis_cur[...,-1,:]], dim=-1)
-				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next[...,-1,:]], dim=-1)
-				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur[...,-1,:]], dim=-1)
-				# get state
-				# input c_in_cur: (B, T, obs_dim+act_dim+ahis_dim)
-				# net: self.critic_net
-				# TODO! should be different for different critic
-				input = batch.c_in_cur
-				net = self.critic1
-				B, T = input.shape[:2]
-				with torch.no_grad():
-					# Compute hidden states for each time step
-					hidden_states = []
-					last_state = None
-					for t in range(T):
-						input_t = input[:, t].unsqueeze(1)
-						_, state = net(input_t, state=last_state)
-						assert state is not None, "state must not be None, the net should contains RNN when in burnin function"
-						hidden_states.append(state["hidden"])
-						last_state = state
-
-					# Stack hidden states along the time dimension
-					hidden_states = torch.stack(hidden_states, dim=1) # (B, T, num_layers, hidden_dim)
-
-				# make point wise mask
-				hidden_states = torch.cat([torch.zeros_like(hidden_states[:,0:1]), hidden_states], dim=1) # (B, T+1, num_layers, hidden_dim)
-				if state == "cur":
-					hidden_states = hidden_states[:, :-1]
-				elif state == "next":
-					hidden_states = hidden_states[:, 1:]
-				
-
-				if self._burnin_num(): # TODO
-					burnin_batch.c_in = torch.cat([burnin_batch.c_in, burnin_batch.ahis_cur[...,-1,:]], dim=-1) # [B, T, obs_dim+act_dim+act_dim*act_dim]
+			assert self.global_cfg.history_num == 1, "in stack_rnn, history_num must be 1"
+			assert 1, "RNN layer must be 1 since in current implementation we can only get state of last layer"
+			keeped_keys += ["preinput"]
+			batch.c_in_online_cur = torch.cat([batch.c_in_online_cur, batch.ahis_cur[...,-1,:]], dim=-1)
+			batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next[...,-1,:]], dim=-1)
+			batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur[...,-1,:]], dim=-1)
+			batch.preinput = batch.c_in_cur
+			if self._burnin_num(): # TODO
+				burnin_batch.c_in = torch.cat([burnin_batch.c_in, burnin_batch.ahis_cur[...,-1,:]], dim=-1) # [B, T, obs_dim+act_dim+act_dim*act_dim]
 			if self._burnin_num():
 				keeped_keys += ["burnin_c_in", "burnin_remaster_mask"] # mask reused by critic
 				batch.burnin_c_in, batch.burnin_remaster_mask = burnin_batch.c_in, burnin_batch.valid_mask
@@ -2740,21 +2773,29 @@ class SACRunner(TD3SACRunner):
 		else:
 			value_mask = batch.done
 		
+		# target
 		with torch.no_grad():
+			if self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+				v_next_1 = forward_with_preinput(batch.c_in_online_next, batch.preinput, self.critic1_old, "next")
+				v_next_2 = forward_with_preinput(batch.c_in_online_next, batch.preinput, self.critic2_old, "next")
+			else:
+				v_next_1 = self.critic1_old(batch.c_in_online_next, None)[0]
+				v_next_2 = self.critic2_old(batch.c_in_online_next, None)[0]
 			v_next = torch.min(
-				self.critic1_old(batch.c_in_online_next, None)[0],
-				self.critic2_old(batch.c_in_online_next, None)[0]
+				v_next_1, v_next_2
 			).reshape(*pre_sz) - self._log_alpha.exp().detach() * batch.logprob_online_next.reshape(*pre_sz)
 			target_q = batch.rew + self.cfg.policy.gamma * (1 - value_mask.int()) * v_next
 		
-		# critic loss
+		# cur
+		if self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			v_cur_1 = forward_with_preinput(batch.c_in_cur, batch.preinput, self.critic1, "cur")
+			v_cur_2 = forward_with_preinput(batch.c_in_cur, batch.preinput, self.critic2, "cur")
+		else:
+			v_cur_1 = self.critic1(batch.c_in_cur, None)[0]
+			v_cur_2 = self.critic2(batch.c_in_cur, None)[0]
 		critic_loss = \
-		F.mse_loss(self.critic1(
-			batch.c_in_cur, None
-		)[0].reshape(*pre_sz), target_q, reduce=False) + \
-		F.mse_loss(self.critic2(
-			batch.c_in_cur, None
-		)[0].reshape(*pre_sz), target_q, reduce=False)
+		F.mse_loss(v_cur_1.reshape(*pre_sz), target_q, reduce=False) + \
+		F.mse_loss(v_cur_2.reshape(*pre_sz), target_q, reduce=False)
 
 		# use mask
 		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
@@ -2777,8 +2818,12 @@ class SACRunner(TD3SACRunner):
 		combined_loss = 0.
 		
 		### actor loss
-		current_q1a, _ = self.critic1(batch.c_in_online_cur, None)
-		current_q2a, _ = self.critic2(batch.c_in_online_cur, None)
+		if self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			current_q1a = forward_with_preinput(batch.c_in_online_cur, batch.preinput, self.critic1, "cur")
+			current_q2a = forward_with_preinput(batch.c_in_online_cur, batch.preinput, self.critic2, "cur")
+		else:
+			current_q1a, _ = self.critic1(batch.c_in_online_cur, None)
+			current_q2a, _ = self.critic2(batch.c_in_online_cur, None)
 		actor_loss = self._log_alpha.exp().detach() * batch.logprob_online_cur - torch.min(current_q1a, current_q2a)
 		actor_loss = apply_mask(actor_loss, batch.valid_mask).mean()
 		combined_loss += actor_loss
