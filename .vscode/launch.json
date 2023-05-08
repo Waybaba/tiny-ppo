@@ -55,16 +55,18 @@
 				// "global_cfg.actor_input.obs_encode.turn_on=false",
 
 				// ### obs encode
-				"global_cfg.actor_input.obs_pred.turn_on=false",
-				"global_cfg.actor_input.obs_encode.turn_on=true",
-				"global_cfg.actor_input.obs_encode.policy_robust_weight=0.1",
+				// "global_cfg.actor_input.obs_pred.turn_on=false",
+				// "global_cfg.actor_input.obs_encode.turn_on=true",
+				// "global_cfg.actor_input.obs_encode.policy_robust_weight=0.1",
 
 
 				// ### rnn critic
-				// "global_cfg.critic_input.obs_type=normal",
-				// "global_cfg.critic_input.history_merge_method=stack_rnn",
-				// "global_cfg.actor_input.obs_type=normal",
-				// "global_cfg.actor_input.history_merge_method=cat_mlp",
+				"global_cfg.critic_input.obs_type=normal",
+				"global_cfg.critic_input.history_merge_method=cat_mlp",
+				"global_cfg.actor_input.obs_type=normal",
+				"global_cfg.actor_input.history_merge_method=cat_mlp",
+				"global_cfg.burnin_num=0.",
+				"global_cfg.history_num=1",
 
 				// ### DEBUG
 				// "trainer.max_epoch=3",

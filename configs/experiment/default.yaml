@@ -6,7 +6,8 @@
 # default -> rnn_plugin
 defaults:
   # - /net@pre_net: mlp_basic.yaml
-  - /net@basic_net: mlp_basic.yaml
+  - /net@basic_mlp: mlp_basic.yaml
+  - /net@basic_rnn: rnn_basic.yaml
   # - /net@global_cfg.actor_input.obs_pred.net.encoder_net: mlp_basic.yaml
   # - /net@global_cfg.actor_input.obs_pred.net.decoder_net: mlp_basic.yaml
   # - /net@global_cfg.actor_input.obs_encode.net.encoder_net: mlp_basic.yaml
@@ -14,6 +15,7 @@ defaults:
 
 global_cfg: # would be passed to actor, critic1, critic2, policy, env
   history_num: ${env.delay} # decide the info["historical_act"] length # would use ${env.delay}
+  burnin_num: 0.25
   actor_input:
     history_merge_method: "cat_mlp" # cat_mlp or stack_rnn or none
     obs_type: "normal" # normal or oracle
@@ -40,10 +42,11 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
         device: ${device}
         feat_dim: ${global_cfg.actor_input.obs_pred.feat_dim}
         net_type: ${global_cfg.actor_input.obs_pred.net_type}
-        encoder_net: ${basic_net}
-        decoder_net: ${basic_net}
+        encoder_net_mlp: ${basic_mlp}
+        encoder_net_rnn: ${basic_rnn}
+        decoder_net: ${basic_mlp}
     obs_encode:
-      turn_on: true 
+      turn_on: false 
       feat_dim: 256
       net_type: mlp
       train_eval_async: true # true is VLOG, false is normal training. only affect the training input
@@ -66,8 +69,9 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
         net_type: ${global_cfg.actor_input.obs_pred.net_type}
         feat_dim: ${global_cfg.actor_input.obs_encode.feat_dim}
         device: ${device}
-        encoder_net: ${basic_net}
-        decoder_net: ${basic_net}
+        encoder_net_mlp: ${basic_mlp}
+        encoder_net_rnn: ${basic_rnn}
+        decoder_net: ${basic_mlp}
   critic_input:
     history_merge_method: "none" # cat_mlp or stack_rnn or none
     obs_type: "oracle" # normal or oracle
@@ -80,7 +84,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     dongqi_mu_sigma_reg_ratio: 0 # 1e-3 # 0 for skip # deprecated, can be used later
     use_terminated_mask_for_value: true # FIXED
     delay_keep_order_method: expect1 # FIXED none, expect1
-    rnn_turn_on_burnin: true
+    rnn_turn_on_burnin: true # DEBUG: if burnin_num() and this == True, would turn on burnin
     auto_kl_use_log: true # FIXED
     auto_kl_divide_act_dim: true
     new_his_act: true # return cur next in info
@@ -111,15 +115,20 @@ runner:
   _target_: ???
   _partial_: true
 
-basic_net:
+basic_mlp:
   activation: relu
+
+basic_rnn:
+  activation: ${basic_mlp.activation}
+
 
 actor:
   _target_: src.runner.CustomRecurrentActorProb
   _partial_: true
   device: ${device}
-  net: ${basic_net}
   unbounded: ???
+  net_mlp: ${basic_mlp}
+  net_rnn: ${basic_rnn}
   conditioned_sigma: ???
   heads_share_pre_net: true
   pure_random: false
@@ -128,7 +137,8 @@ critic1:
   _target_: src.runner.CustomRecurrentCritic
   _partial_: true
   device: ${device}
-  net: ${basic_net}
+  net_mlp: ${basic_mlp}
+  net_rnn: ${basic_rnn}
 critic2: ${critic1}
 actor_optim:
   _target_: torch.optim.Adam

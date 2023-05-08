@@ -1223,7 +1223,8 @@ class CustomRecurrentCritic(nn.Module):
 		super().__init__()
 		self.hps = kwargs
 		assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
-
+		
+		selected_net = self.hps["net_mlp"]
 		if self.hps["global_cfg"].critic_input.history_merge_method == "cat_mlp":
 			self.input_dim = state_shape[0] + action_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
 			self.output_dim = 1
@@ -1233,13 +1234,14 @@ class CustomRecurrentCritic(nn.Module):
 			else:
 				self.input_dim = state_shape[0] + action_shape[0]
 			self.output_dim = 1
+			selected_net = self.hps["net_rnn"]
 		elif self.hps["global_cfg"].critic_input.history_merge_method == "none":
 			self.input_dim = state_shape[0] + action_shape[0]
 			self.output_dim = 1
 		else:
 			raise NotImplementedError
 		
-		self.net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
+		self.net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
 
 	def forward(
 		self,
@@ -1284,6 +1286,7 @@ class CustomRecurrentActorProb(nn.Module):
 		self.state_shape, self.action_shape = state_shape, action_shape
 		self.act_num = action_shape[0]
 
+		selected_net = self.hps["net_mlp"]
 		if self.hps["global_cfg"].actor_input.history_merge_method == "cat_mlp":
 			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
 				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
@@ -1298,6 +1301,7 @@ class CustomRecurrentActorProb(nn.Module):
 				self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
 			self.output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "stack_rnn":
+			assert self.hps["global_cfg"].history_num == 1, "history_num should be 1 for stack_rnn to cat one more action"
 			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
 				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
 					self.input_dim = self.hps["global_cfg"].actor_input.obs_pred.feat_dim
@@ -1308,6 +1312,7 @@ class CustomRecurrentActorProb(nn.Module):
 			elif self.hps["global_cfg"].actor_input.obs_encode.turn_on:
 				self.input_dim = self.hps["global_cfg"].actor_input.obs_encode.feat_dim
 			else:
+				selected_net = self.hps["net_rnn"]
 				if self.hps["global_cfg"].history_num > 0:
 					self.input_dim = state_shape[0] + action_shape[0]
 				else:
@@ -1329,11 +1334,12 @@ class CustomRecurrentActorProb(nn.Module):
 		else:
 			raise NotImplementedError
 		
+
 		if self.hps["heads_share_pre_net"]:
-			self.net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=2)
+			self.net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=2)
 		else:
-			self.mu_net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
-			self.logsigma_net = self.hps["net"](self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
+			self.mu_net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
+			self.logsigma_net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
 
 	def forward(
 		self,
@@ -1412,9 +1418,11 @@ class ObsPredNet(nn.Module):
 		assert self.hps["net_type"] in ["vae", "mlp", "rnn"], "invalid net_type {}".format(self.hps["net_type"])
 		
 		# cal input dim
+		selected_encoder_net = self.hps["encoder_net_mlp"]
 		if self.global_cfg.actor_input.history_merge_method in ["cat_mlp"]:
 			self.input_dim = state_shape[0] + action_shape[0] * global_cfg.history_num
 		elif self.global_cfg.actor_input.history_merge_method in ["stack_rnn"]:
+			selected_encoder_net = self.hps["encoder_net_rnn"]
 			if self.hps["global_cfg"].history_num > 0:
 				self.input_dim = state_shape[0] + action_shape[0]
 			else:
@@ -1430,11 +1438,11 @@ class ObsPredNet(nn.Module):
 		self.decoder_input_dim = self.feat_dim
 		self.decoder_output_dim = self.output_dim
 		if self.hps["net_type"]=="vae":
-			self.encoder_net = self.hps["encoder_net"](self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=2)
+			self.encoder_net = selected_encoder_net(self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=2)
 		elif self.hps["net_type"]=="mlp":
-			self.encoder_net = self.hps["encoder_net"](self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=1)
+			self.encoder_net = selected_encoder_net(self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=1)
 		elif self.hps["net_type"]=="rnn":
-			self.encoder_net = self.hps["encoder_net"](self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=1)
+			self.encoder_net = selected_encoder_net(self.encoder_input_dim, self.encoder_output_dim, device=self.hps["device"], head_num=1)
 		self.decoder_net = self.hps["decoder_net"](self.decoder_input_dim, self.decoder_output_dim, device=self.hps["device"], head_num=1)
 		self.encoder_net.to(self.hps["device"])
 		self.decoder_net.to(self.hps["device"])
@@ -1488,9 +1496,11 @@ class ObsEncodeNet(nn.Module):
 		self.hps = kwargs
 
 		# cal input dim
+		selected_encoder_net = self.hps["encoder_net_mlp"]
 		if self.global_cfg.actor_input.history_merge_method in ["cat_mlp"]:
 			self.normal_encode_dim = state_shape[0] + action_shape[0] * global_cfg.history_num
 		elif self.global_cfg.actor_input.history_merge_method in ["stack_rnn"]:
+			selected_encoder_net = self.hps["encoder_net_rnn"]
 			if self.global_cfg.history_num > 0:
 				self.normal_encode_dim = state_shape[0] + action_shape[0]
 			else:
@@ -1502,8 +1512,8 @@ class ObsEncodeNet(nn.Module):
 		self.oracle_encode_dim = state_shape[0]
 
 		self.feat_dim = self.hps["feat_dim"]
-		self.normal_encoder_net = self.hps["encoder_net"](self.normal_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
-		self.oracle_encoder_net = self.hps["encoder_net"](self.oracle_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
+		self.normal_encoder_net = selected_encoder_net(self.normal_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
+		self.oracle_encoder_net = selected_encoder_net(self.oracle_encode_dim, self.feat_dim, device=self.hps["device"], head_num=2)
 		self.decoder_net = self.hps["decoder_net"](self.feat_dim, self.oracle_encode_dim, device=self.hps["device"], head_num=1)
 		self.normal_encoder_net.to(self.hps["device"])
 		self.oracle_encoder_net.to(self.hps["device"])
@@ -2146,7 +2156,7 @@ class TD3SACRunner(OfflineRLRunner):
 		else:
 			raise ValueError("unknown obs_type: {}".format(self.global_cfg.actor_input.obs_type))
 
-		# actor - 2. others ! TODO batch
+		# actor - 2. others
 		if self.global_cfg.actor_input.history_merge_method == "none":
 			# TODO seems that the obs_pred and obs_encode can be outside
 			if self.global_cfg.actor_input.obs_pred.turn_on:
@@ -2205,8 +2215,7 @@ class TD3SACRunner(OfflineRLRunner):
 				
 				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 					batch.a_in_cur = batch.a_in_cur.detach()
-					batch.a_in_next = batch.a_in_next.detach()
-				
+					batch.a_in_next = batch.a_in_next.detach()	
 		elif self.global_cfg.actor_input.history_merge_method == "cat_mlp":
 			if self.global_cfg.history_num > 0: 
 				batch.a_in_cur = torch.cat([batch.a_in_cur, batch.ahis_cur.flatten(start_dim=-2)], dim=-1)
@@ -2365,7 +2374,7 @@ class TD3SACRunner(OfflineRLRunner):
 		batch.c_in_cur = torch.cat([batch.c_in_cur, batch.act], dim=-1)
 		if self._burnin_num(): burnin_batch.c_in = torch.cat([burnin_batch.c_in, burnin_batch.act], dim=-1) # [B, T, obs_dim+act_dim]
 
-		# critic - 3. merge history
+		# critic - 3. merge act history
 		if self.cfg.global_cfg.critic_input.history_merge_method == "none":
 			pass
 		elif self.cfg.global_cfg.critic_input.history_merge_method == "cat_mlp":
@@ -2379,7 +2388,36 @@ class TD3SACRunner(OfflineRLRunner):
 				batch.c_in_online_cur = torch.cat([batch.c_in_online_cur, batch.ahis_cur[...,-1,:]], dim=-1)
 				batch.c_in_online_next = torch.cat([batch.c_in_online_next, batch.ahis_next[...,-1,:]], dim=-1)
 				batch.c_in_cur = torch.cat([batch.c_in_cur, batch.ahis_cur[...,-1,:]], dim=-1)
-				if self._burnin_num(): 
+				# get state
+				# input c_in_cur: (B, T, obs_dim+act_dim+ahis_dim)
+				# net: self.critic_net
+				# TODO! should be different for different critic
+				input = batch.c_in_cur
+				net = self.critic1
+				B, T = input.shape[:2]
+				with torch.no_grad():
+					# Compute hidden states for each time step
+					hidden_states = []
+					last_state = None
+					for t in range(T):
+						input_t = input[:, t].unsqueeze(1)
+						_, state = net(input_t, state=last_state)
+						assert state is not None, "state must not be None, the net should contains RNN when in burnin function"
+						hidden_states.append(state["hidden"])
+						last_state = state
+
+					# Stack hidden states along the time dimension
+					hidden_states = torch.stack(hidden_states, dim=1) # (B, T, num_layers, hidden_dim)
+
+				# make point wise mask
+				hidden_states = torch.cat([torch.zeros_like(hidden_states[:,0:1]), hidden_states], dim=1) # (B, T+1, num_layers, hidden_dim)
+				if state == "cur":
+					hidden_states = hidden_states[:, :-1]
+				elif state == "next":
+					hidden_states = hidden_states[:, 1:]
+				
+
+				if self._burnin_num(): # TODO
 					burnin_batch.c_in = torch.cat([burnin_batch.c_in, burnin_batch.ahis_cur[...,-1,:]], dim=-1) # [B, T, obs_dim+act_dim+act_dim*act_dim]
 			if self._burnin_num():
 				keeped_keys += ["burnin_c_in", "burnin_remaster_mask"] # mask reused by critic
@@ -2795,7 +2833,7 @@ class SACRunner(TD3SACRunner):
 
 	def get_act_online(self, batch):
 		# cur
-		if self._burnin_num():
+		if self.global_cfg.actor_input.history_merge_method == "stack_rnn" and self._burnin_num():
 			if self.cfg.global_cfg.debug.rnn_turn_on_burnin:
 				mu, var = forward_with_burnin(
 					input=batch.a_in_cur,
@@ -2812,7 +2850,7 @@ class SACRunner(TD3SACRunner):
 		
 		# next
 		with torch.no_grad():
-			if self._burnin_num():
+			if self.global_cfg.actor_input.history_merge_method == "stack_rnn" and self._burnin_num():
 				if self.cfg.global_cfg.debug.rnn_turn_on_burnin:
 					mu, var = forward_with_burnin(
 						input=batch.a_in_next,
