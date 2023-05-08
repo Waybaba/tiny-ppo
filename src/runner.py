@@ -1300,7 +1300,8 @@ class CustomRecurrentCritic(nn.Module):
 		else:
 			raise NotImplementedError
 		
-		self.net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=1)
+		bidirectional = True if "bidirectional" in kwargs and kwargs["bidirectional"] else False
+		self.net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=1, bidirectional=bidirectional)
 
 	def forward(
 		self,
@@ -1662,7 +1663,8 @@ class DefaultRLRunner:
 class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
 		super().start(cfg)
-
+		self.log("Checking cfg ...")
+		self.check_cfg()
 		self.log("_init_basic_components_for_all_alg ...")
 		self._init_basic_components_for_all_alg()
 		self.log("init_components ...")
@@ -1876,6 +1878,11 @@ class OfflineRLRunner(DefaultRLRunner):
 		return self.env_step_global >= self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
 
 class TD3SACRunner(OfflineRLRunner):
+	def check_cfg(self):
+		cfg = self.cfg
+		global_cfg = cfg.global_cfg
+		if global_cfg.critic_input.history_merge_method == "stack_rnn":
+			pass
 
 	def init_components(self):
 		self.log("Init networks ...")
@@ -1886,10 +1893,27 @@ class TD3SACRunner(OfflineRLRunner):
 		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0],global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.actor_optim = cfg.actor_optim(self.actor.parameters())
 		self.actor_old = deepcopy(self.actor)
-
-		if cfg.global_cfg.critic_input.bi_or_si_rnn == "si":
-			self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
-			self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
+		
+		# decide bi or two direction
+		if cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			if cfg.global_cfg.critic_input.bi_or_si_rnn == "si":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			elif cfg.global_cfg.critic_input.bi_or_si_rnn == "bi":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			elif cfg.global_cfg.critic_input.bi_or_si_rnn == "both":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_1_optim = cfg.critic1_optim(self.critic_sirnn_1.parameters())
+				self.critic_sirnn_2_optim = cfg.critic2_optim(self.critic_sirnn_2.parameters())
+			else:
+				raise NotImplementedError
+		else:
+			self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
 		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
 		self.critic1_old = deepcopy(self.critic1)
@@ -2682,6 +2706,9 @@ class TD3SACRunner(OfflineRLRunner):
 # algorithms
 
 class TD3Runner(TD3SACRunner):
+	"""
+	TODO the sirnn for TD3 and DDPG is not implemented yet
+	"""
 	ALGORITHM = "td3"
 
 	def update_critic(self, batch):
@@ -2795,9 +2822,19 @@ class SACRunner(TD3SACRunner):
 		else:
 			v_cur_1 = self.critic1(batch.c_in_cur, None)[0]
 			v_cur_2 = self.critic2(batch.c_in_cur, None)[0]
-		critic_loss = \
-		F.mse_loss(v_cur_1.reshape(*pre_sz), target_q, reduce=False) + \
-		F.mse_loss(v_cur_2.reshape(*pre_sz), target_q, reduce=False)
+		critic_loss = F.mse_loss(v_cur_1.reshape(*pre_sz), target_q, reduce=False) + \
+			F.mse_loss(v_cur_2.reshape(*pre_sz), target_q, reduce=False)
+
+		# add sirnn extra loss
+		if self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn" \
+			and self.cfg.global_cfg.critic_input.bi_or_si_rnn == "both":
+			v_cur_sirnn_1 = forward_with_preinput(batch.c_in_cur, batch.preinput, self.critic_sirnn_1, "cur")
+			v_cur_sirnn_2 = forward_with_preinput(batch.c_in_cur, batch.preinput, self.critic_sirnn_2, "cur")
+			sirnn_loss = F.mse_loss(v_cur_sirnn_1.reshape(*pre_sz), target_q, reduce=False) + \
+				F.mse_loss(v_cur_sirnn_2.reshape(*pre_sz), target_q, reduce=False)
+			critic_loss += sirnn_loss
+			self.record("learn/loss_critic_before_sirnn", critic_loss.detach().mean().item())
+			self.record("learn/loss_critic_sirnn", sirnn_loss.detach().mean().item())
 
 		# use mask
 		critic_loss = apply_mask(critic_loss, batch.valid_mask).mean()
@@ -2807,9 +2844,13 @@ class SACRunner(TD3SACRunner):
 
 		self.critic1_optim.zero_grad()
 		self.critic2_optim.zero_grad()
+		self.critic_sirnn_1_optim.zero_grad()
+		self.critic_sirnn_2_optim.zero_grad()
 		critic_loss.backward()
 		self.critic1_optim.step()
 		self.critic2_optim.step()
+		self.critic_sirnn_1_optim.step()
+		self.critic_sirnn_2_optim.step()
 
 		return {
 			"critic_loss": critic_loss.cpu().item()
@@ -2821,8 +2862,12 @@ class SACRunner(TD3SACRunner):
 		
 		### actor loss
 		if self.cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
-			current_q1a = forward_with_preinput(batch.c_in_online_cur, batch.preinput, self.critic1, "cur")
-			current_q2a = forward_with_preinput(batch.c_in_online_cur, batch.preinput, self.critic2, "cur")
+			if self.cfg.global_cfg.critic_input.bi_or_si_rnn == "both":
+				current_q1a = forward_with_preinput(batch.c_in_online_cur, batch.preinput, self.critic_sirnn_1, "cur")
+				current_q2a = forward_with_preinput(batch.c_in_online_cur, batch.preinput, self.critic_sirnn_2, "cur")
+			else:
+				current_q1a = forward_with_preinput(batch.c_in_online_cur, batch.preinput, self.critic1, "cur")
+				current_q2a = forward_with_preinput(batch.c_in_online_cur, batch.preinput, self.critic2, "cur")
 		else:
 			current_q1a, _ = self.critic1(batch.c_in_online_cur, None)
 			current_q2a, _ = self.critic2(batch.c_in_online_cur, None)
