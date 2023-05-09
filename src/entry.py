@@ -41,7 +41,7 @@ def move_output_to_wandb_dir(src_dir, dest_dir):
 	print("Moving output to wandb dir ...")
 	print(f"From: {src_dir}")
 	print(f"To: {dest_dir}")
-	utils.move_all_files(src_dir, dest_dir)
+	utils.copy_all_files(src_dir, dest_dir)
 	print("Moving wandb done!")
 
 
