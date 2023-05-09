@@ -124,7 +124,7 @@ def forward_with_burnin(
 
 	return output
 
-def burnin_to_get_state(input, mask, net, forward_strategy="multi"):
+def burnin_to_get_state(input, mask, net, forward_strategy="once"):
 	""" 
 	process input to the net to get the final state after the final valid mask
 
@@ -2611,6 +2611,7 @@ class TD3SACRunner(OfflineRLRunner):
 	def _burnin_num(self):
 		if "burnin_num" not in self.cfg.global_cfg: return 0
 		if not self.cfg.global_cfg.burnin_num: return 0
+		if self.cfg.global_cfg.actor_input.history_merge_method != "stack_rnn": return 0
 		burnin_num = self.cfg.global_cfg.burnin_num
 		if type(self.cfg.global_cfg.burnin_num) == float:
 			burnin_num = int(self.cfg.global_cfg.burnin_num * self.cfg.trainer.batch_seq_len)
