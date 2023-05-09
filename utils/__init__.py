@@ -293,10 +293,14 @@ def move_all_files(src_dir: str, dst_dir: str) -> None:
 def copy_all_files(src_dir: str, dst_dir: str) -> None:
     import os
     import shutil
-
-    os.makedirs(dst_dir, exist_ok=True)
-
+    if not os.path.exists(dst_dir):
+        os.makedirs(dst_dir)
+    
     for item in os.listdir(src_dir):
         src_path = os.path.join(src_dir, item)
         dst_path = os.path.join(dst_dir, item)
-        shutil.copy(src_path, dst_path)
+        
+        if os.path.isdir(src_path):
+            shutil.copytree(src_path, dst_path)
+        else:
+            shutil.copy2(src_path, dst_path)
