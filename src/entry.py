@@ -65,7 +65,7 @@ def main(cfg):
 		time_to_sleep = 5
 		for i in range(retry):
 			try:
-				move_output_to_wandb_dir(cfg.output_dir, wandb_dir)
+				move_output_to_wandb_dir(wandb_dir,cfg.output_dir)
 				break
 			except Exception as e:
 				print(f"Failed to move output to wandb dir. Retrying ({i+1}/{retry}) ...")
