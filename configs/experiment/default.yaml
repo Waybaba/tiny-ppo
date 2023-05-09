@@ -94,6 +94,7 @@ global_cfg: # would be passed to actor, critic1, critic2, policy, env
     auto_kl_use_log: true # FIXED
     auto_kl_divide_act_dim: true
     new_his_act: true # return cur next in info
+    abort_infer_state: false # DEBUG: find that when state is aborted, the performance is better
 
 trainer:
   batch_size: 32 # 256,1 for normal, 32,64 for donqi

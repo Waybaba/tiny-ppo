@@ -88,8 +88,6 @@ def forward_with_preinput(
 	output = output.reshape(B, T, -1)
 	return output
 
-
-
 def forward_with_burnin(
 	input,    
 	burnin_input,
@@ -126,7 +124,7 @@ def forward_with_burnin(
 
 	return output
 
-def burnin_to_get_state(input, mask, net, forward_strategy="once"):
+def burnin_to_get_state(input, mask, net, forward_strategy="multi"):
 	""" 
 	process input to the net to get the final state after the final valid mask
 
@@ -2081,7 +2079,10 @@ class TD3SACRunner(OfflineRLRunner):
 		
 		# forward
 		if not isinstance(a_in, torch.Tensor): a_in = torch.tensor(a_in, dtype=torch.float32).to(self.cfg.device)
-		state_for_a = distill_state(state, {"hidden": "hidden"})
+		if self.cfg.global_cfg.debug.abort_infer_state:
+			state_for_a = None
+		else:
+			state_for_a = distill_state(state, {"hidden": "hidden"})
 		a_out, actor_state = self.actor(a_in, state_for_a)
 		res_state = update_state(res_state, actor_state, {"hidden": "hidden"})
 		
