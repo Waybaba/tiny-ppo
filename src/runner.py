@@ -213,15 +213,15 @@ def distill_state(state, key_maps):
 		if k in state: res[v] = state[k]
 	return res if res else None
 
-def update_state(state_dict, state_for_update, key_maps):
+def update_state(state_dict_res, state_for_reference, key_maps):
 	"""
 	e.g. key_maps = {"hidden_encoder": "hidden_pred_net_encoder", "hidden_decoder": "hidden_pred_net_decoder"}
 	"""
-	assert state_dict is not None, "state should not be None"
-	res = state_dict
-	if state_for_update is None: state_for_update = {}
+	assert state_dict_res is not None, "state should not be None"
+	res = state_dict_res
+	if state_for_reference is None: state_for_reference = {}
 	for k, v in key_maps.items():
-		if k in state_for_update: res[v] = state_for_update[k]
+		if k in state_for_reference: res[v] = state_for_reference[k]
 	return res
 
 def kl_divergence(mu1, logvar1, mu2, logvar2):
@@ -1987,6 +1987,9 @@ class TD3SACRunner(OfflineRLRunner):
 	def preprocess_from_env(self, batch, state, mode=None):
 		assert len(batch.obs.shape) == 1, "for online batch, batch size must be 1"
 		res_state = {}
+
+		# add "hidden" since it is not used in this function
+		res_state = update_state(res_state, state, {"hidden": "hidden"})
 
 		if self.global_cfg.actor_input.obs_type == "normal": a_in = batch.obs
 		elif self.global_cfg.actor_input.obs_type == "oracle": a_in = batch.info["obs_next_nodelay"]
