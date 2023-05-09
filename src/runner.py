@@ -126,7 +126,7 @@ def forward_with_burnin(
 
 	return output
 
-def burnin_to_get_state(input, mask, net):
+def burnin_to_get_state(input, mask, net, forward_strategy="once"):
 	""" 
 	process input to the net to get the final state after the final valid mask
 
@@ -165,19 +165,29 @@ def burnin_to_get_state(input, mask, net):
 	assert len(input.shape) == 3 and len(mask.shape) == 2
 	B, T = input.shape[:2]
 	
-	with torch.no_grad():
-		# Compute hidden states for each time step
-		hidden_states = []
-		last_state = None
-		for t in range(T):
-			input_t = input[:, t].unsqueeze(1)
-			_, state = net(input_t, state=last_state)
-			assert state is not None, "state must not be None, the net should contains RNN when in burnin function"
-			hidden_states.append(state["hidden"])
-			last_state = state
+	if forward_strategy == "once":
+		with torch.no_grad():
+			_, info = net(input, state=None) # (B, T, D*hidden_dim) # note that there is only one hidden available
+			hidden_states = info["hidden_all"]
+			hidden_dim = net.net.nn.hidden_size
+			hidden_states = hidden_states.reshape(B, T, -1, hidden_dim) # (B, T, D, hidden_dim)
+			hidden_states = hidden_states.unsqueeze(-2) # (B, T, D, num_layers, hidden_dim)
+			hidden_states = hidden_states.reshape(B, T, -1, hidden_dim) # (B, T, D*num_layers, hidden_dim)
+
+	elif forward_strategy == "multi":
+		with torch.no_grad():
+			# Compute hidden states for each time step
+			hidden_states = []
+			last_state = None
+			for t in range(T):
+				input_t = input[:, t].unsqueeze(1)
+				_, state = net(input_t, state=last_state)
+				assert state is not None, "state must not be None, the net should contains RNN when in burnin function"
+				hidden_states.append(state["hidden"])
+				last_state = state
 
 		# Stack hidden states along the time dimension
-		hidden_states = torch.stack(hidden_states, dim=1) # (B, T, num_layers, hidden_dim)
+		hidden_states = torch.stack(hidden_states, dim=1) # (B, T, D*num_layers, hidden_dim)
 
 	# Identify the last and second last burn-in indices
 	burnin_mask = mask == 1
