@@ -1,34 +1,34 @@
-import pyrootutils
-root = pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
-from tianshou.data import Batch, ReplayBuffer
-import numpy as np
-from time import time
-import wandb
-import numpy as np
-from tianshou.policy import SACPolicy
-from typing import Any, Dict, Optional, Sequence, Tuple, Type, Union, Callable, List
+# Standard library
 from collections.abc import Iterable
-import numpy as np
-from torch import nn
-import torch
-from tianshou.utils.net.common import MLP
-import tianshou
-from torch.utils.tensorboard import SummaryWriter
-import utils
-from functools import partial
-import torch.nn.functional as F
-
-
-
-import warnings
-warnings.filterwarnings('ignore')
-from src.tianshou.policy import DDPGPolicy
-from tianshou.exploration import BaseNoise
-from torch.distributions import Independent, Normal
 from copy import deepcopy
-from rich.progress import Progress
-from rich.progress import track
+from functools import partial
+from time import time
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Type, Union
+import warnings
+
+# Third-party libraries
+import numpy as np
+import torch
+import torch.nn.functional as F
+import tianshou
+from torch import nn
+from torch.distributions import Independent, Normal
+from tianshou.data import Batch, ReplayBuffer
+from tianshou.policy import SACPolicy
+from tianshou.utils.net.common import MLP
+from tianshou.exploration import BaseNoise
+import wandb
 from rich.console import Console
+from rich.progress import Progress, track
+
+# Local modules
+import pyrootutils
+pyrootutils.setup_root(__file__, dotenv=True, pythonpath=True)
+import utils
+from src.tianshou.policy import DDPGPolicy
+
+# Setup and configurations
+warnings.filterwarnings('ignore')
 
 # utils
 

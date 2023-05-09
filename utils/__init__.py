@@ -276,3 +276,16 @@ def idx_is_start(indices, buffer):
 
 def idx_is_end(indices, buffer):
     return buffer.next(indices) == indices
+
+
+
+def move_all_files(src_dir: str, dst_dir: str) -> None:
+    import os
+    import shutil
+
+    os.makedirs(dst_dir, exist_ok=True)
+
+    for item in os.listdir(src_dir):
+        src_path = os.path.join(src_dir, item)
+        dst_path = os.path.join(dst_dir, item)
+        shutil.move(src_path, dst_path)

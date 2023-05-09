@@ -44,6 +44,10 @@ ckpt_path: null
 # seed for random number generators in pytorch, numpy and python.random
 seed: null
 
+wandb:
+  buf_dir: ??? # if null would just output in the $OUTPUT, would cause IO problem when mount cloud as path
+  mode: ??? # online, offline or disabled
+
 output_dir: "${paths.output_dir}"
 
 device: "cuda"

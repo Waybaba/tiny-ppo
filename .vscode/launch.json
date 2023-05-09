@@ -30,11 +30,11 @@
 				// "experiment=ddpg_tianshou",
 				
 				// "env.name=HalfCheetah-v4",
-				// "env.name=Hopper-v4",
+				"env.name=Hopper-v4",
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
-				"env.name=Humanoid-v4",
+				// "env.name=Humanoid-v4",
 				// "env.name=HumanoidStandup-v4",
 				
 
@@ -86,14 +86,18 @@
 				// "global_cfg.actor_input.obs_type=normal",
 				// "global_cfg.actor_input.history_merge_method=cat_mlp",
 
-				// ### DEBUG
-				// "trainer.max_epoch=3",
-				// "trainer.step_per_epoch=50",
-				// "trainer.episode_per_test=2",
-				// "actor.heads_share_pre_net=false",
+				// ### FOR VSCODE
+				"wandb.mode=disabled",
+				"wandb.buf_dir=output/",
+
+				// ### DEBUG - Fast
+				"trainer.max_epoch=3",
+				"trainer.step_per_epoch=50",
+				"trainer.episode_per_test=2",
+				"actor.heads_share_pre_net=false",
 				// "global_cfg.debug.auto_kl_use_log=true",
-
-
+				
+				
 				// ### misc
 				// "global_cfg.actor_input.obs_encode.auto_kl_target=null",
 				// "global_cfg.actor_input.obs_encode.norm_kl_loss_weight=1e+2",
