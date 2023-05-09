@@ -37,12 +37,12 @@ def initialize_wandb(cfg):
 	return wandb_dir
 
 def move_output_to_wandb_dir(src_dir, dest_dir):
-	console.log("\n\n###")
-	console.log("Moving output to wandb dir ...")
-	console.log(f"From: {src_dir}")
-	console.log(f"To: {dest_dir}")
+	print("\n\n###")
+	print("Moving output to wandb dir ...")
+	print(f"From: {src_dir}")
+	print(f"To: {dest_dir}")
 	utils.move_all_files(src_dir, dest_dir)
-	console.log("Moving wandb done!")
+	print("Moving wandb done!")
 
 
 @hydra.main(version_base=None, config_path=str(root / "configs"), config_name="train.yaml")	
@@ -50,13 +50,13 @@ def main(cfg):
 	# Print and set up the config
 	utils.print_config_tree(cfg, resolve=True)
 
-	console.log("Initializing wandb ...")
+	print("Initializing wandb ...")
 	wandb_dir = initialize_wandb(cfg)
 
-	console.log("Initializing and running Hydra config ...")
+	print("Initializing and running Hydra config ...")
 	cfg = hydra.utils.instantiate(cfg)
 
-	console.log("Initializing and running runner ...")
+	print("Initializing and running runner ...")
 	cfg.runner().start(cfg)
 
 	# Move output to wandb dir if necessary
@@ -68,11 +68,11 @@ def main(cfg):
 				move_output_to_wandb_dir(cfg.output_dir, wandb_dir)
 				break
 			except Exception as e:
-				console.log(f"Failed to move output to wandb dir. Retrying ({i+1}/{retry}) ...")
-				console.log(e)
+				print(f"Failed to move output to wandb dir. Retrying ({i+1}/{retry}) ...")
+				print(e)
 				sleep(time_to_sleep)
 
-	console.log("Done!")
+	print("Done!")
 
 if __name__ == "__main__":
 	main()
