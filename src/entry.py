@@ -24,9 +24,11 @@ def initialize_wandb(cfg):
 
 	# Create unique wandb directory
 	if cfg.wandb.buf_dir:
-		amlt_output_dir = os.environ['AMLT_OUTPUT_DIR'] if "AMLT_OUTPUT_DIR" in os.environ else None
+		# amlt_output_dir = os.environ['AMLT_OUTPUT_DIR'] if "AMLT_OUTPUT_DIR" in os.environ else None
+		amlt_output_dir = os.environ['AMLT_DIRSYNC_DIR'] if "AMLT_DIRSYNC_DIR" in os.environ else None
 		wandb_dir_prefix = amlt_output_dir if amlt_output_dir else os.path.join(root, "output")
 		wandb_dir = os.path.join(wandb_dir_prefix, unique_dir)  
+		print("Using wandb buffer dir: ", wandb_dir)
 	else: 
 		wandb_dir = cfg.output_dir
 
@@ -58,7 +60,6 @@ def main(cfg):
 	print("Initializing wandb ...")
 	wandb_dir = initialize_wandb(cfg)
 
-	raise Exception("Stop here")
 
 	print("Initializing and running Hydra config ...")
 	cfg = hydra.utils.instantiate(cfg)
