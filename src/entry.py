@@ -58,6 +58,8 @@ def main(cfg):
 	print("Initializing wandb ...")
 	wandb_dir = initialize_wandb(cfg)
 
+	raise Exception("Stop here")
+
 	print("Initializing and running Hydra config ...")
 	cfg = hydra.utils.instantiate(cfg)
 
