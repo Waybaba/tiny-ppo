@@ -88,7 +88,7 @@
 
 				// ### FOR VSCODE
 				"wandb.mode=disabled",
-				"wandb.buf_dir=output/",
+				"wandb.buf_dir=true",
 
 				// ### DEBUG - Fast
 				"trainer.max_epoch=3",

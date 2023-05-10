@@ -23,7 +23,12 @@ def initialize_wandb(cfg):
 	unique_dir = f"{timestamp}-{random_chars}"
 
 	# Create unique wandb directory
-	wandb_dir = os.path.join("./output", unique_dir) if cfg.wandb.buf_dir else cfg.output_dir
+	if cfg.wandb.buf_dir:
+		amlt_output_dir = os.environ['AMLT_OUTPUT_DIR'] if "AMLT_OUTPUT_DIR" in os.environ else None
+		wandb_dir_prefix = amlt_output_dir if amlt_output_dir else os.path.join(root, "output")
+		wandb_dir = os.path.join(wandb_dir_prefix, unique_dir)  
+	else: 
+		wandb_dir = cfg.output_dir
 
 	os.makedirs(wandb_dir, exist_ok=True)
 
