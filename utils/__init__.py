@@ -16,7 +16,7 @@ from torch import nn
 import torch
 import numpy as np
 from tianshou.utils.net.common import MLP
-from utils.delay import DelayedRoboticEnv
+from utils.delay import DelayedRoboticEnv, StickyActionWrapper, GaussianNoiseActionWrapper
 
 ModuleType = Type[nn.Module]
 
@@ -34,6 +34,10 @@ from pytorch_lightning.utilities.logger import (
 def make_env(env_cfg):
     env = gym.make(env_cfg.name)
     env = DelayedRoboticEnv(env, env_cfg.delay, env_cfg.fixed_delay, env_cfg.global_cfg)
+    if env_cfg.sticky_action_prob:
+        env = StickyActionWrapper(env, env_cfg.sticky_action_prob)
+    if env_cfg.noise_action_std:
+        env = GaussianNoiseActionWrapper(env, env_cfg.noise_action_std)
     return env
 
 def seed_everything(seed: int):

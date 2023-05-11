@@ -161,6 +161,48 @@ class DelayedRoboticEnv(gym.Wrapper):
         return self.preprocess_fn(res, action)
 
 
+class StickyActionWrapper(gym.Wrapper):
+    """
+    Source: https://github.com/openai/random-network-distillation/blob/master/atari_wrappers.py
+    """
+    def __init__(self, env, p=0.25):
+        super().__init__(env)
+        self.p = p
+
+    def reset(self):
+        self.last_action = np.zeros(self.env.action_space.shape, dtype=np.float32)
+        return self.env.reset()
+
+    def step(self, action):
+        if self.unwrapped.np_random.uniform() < self.p:
+            action = self.last_action
+        self.last_action = action
+        obs_next_nodelay, reward, done, truncated, info = self.env.step(action)
+        return obs_next_nodelay, reward, done, truncated, info
+
+
+class GaussianNoiseActionWrapper(gym.Wrapper):
+    def __init__(self, env, noise_fraction=0.2):
+        super().__init__(env)
+        self.noise_fraction = noise_fraction
+
+    def reset(self):
+        return self.env.reset()
+    
+    def step(self, action):
+        # Calculate the noise scale based on action space range
+        action_range = self.action_space.high - self.action_space.low
+        noise_scale = self.noise_fraction * action_range * 0.5
+
+        # Add Gaussian noise to the action
+        noisy_action = action + np.random.normal(0, noise_scale, size=action.shape)
+
+        # Clip the noisy action to the action range
+        clipped_action = np.clip(noisy_action, self.action_space.low, self.action_space.high)
+
+        # Take a step in the environment with the clipped action
+        return self.env.step(clipped_action)
+
 
 # utils
 

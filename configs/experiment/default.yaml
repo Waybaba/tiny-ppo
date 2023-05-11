@@ -162,7 +162,11 @@ env:
   train_num: 1
   test_num: 1
   delay: 0
-  fixed_delay: true 
+  fixed_delay: true
+  sticky_action_prob: 0.0
+  noise_action_std: 0.0
+
+
 start_timesteps: ???
 
 

@@ -54,18 +54,33 @@ def move_output_to_wandb_dir(src_dir, dest_dir):
 
 @hydra.main(version_base=None, config_path=str(root / "configs"), config_name="train.yaml")	
 def main(cfg):
-	# Print and set up the config
+	print("\n\n\n### Printing Hydra config ...")
 	utils.print_config_tree(cfg, resolve=True)
 
-	print("Initializing wandb ...")
-	wandb_dir = initialize_wandb(cfg)
+	print("\n\n\n### Initializing wandb ...")
+	try:
+		wandb_dir = initialize_wandb(cfg)
+	except Exception as e:
+		print("Exception caught! when initializing wandb ...")
+		print("This is a fatal error, main code would only run if wandb is initialized successfully.")
+		raise e
 
+	print("\n\n\nTrying to run main ...")
+	try:
+		print("Initializing and running Hydra config ...")
+		# assert False, "Not implemented"
+		cfg = hydra.utils.instantiate(cfg)
 
-	print("Initializing and running Hydra config ...")
-	cfg = hydra.utils.instantiate(cfg)
+		print("Initializing and running runner ...")
+		cfg.runner().start(cfg)
+	except Exception as e:
+		print("Exception caught! when running runner ...")
+		wandb.alert(title="Run Error!", text=f"cfg.tags: {cfg.tags}", level=wandb.AlertLevel.ERROR)
+		print(e)
 
-	print("Initializing and running runner ...")
-	cfg.runner().start(cfg)
+	print("\n\nClosing wandb ...")
+	wandb.alert(title="Run Finish!", text=f"cfg.tags: {cfg.tags}", level=wandb.AlertLevel.INFO)
+	wandb.finish()
 
 	# Move output to wandb dir if necessary
 	if cfg.wandb.buf_dir:

@@ -1827,7 +1827,6 @@ class OfflineRLRunner(DefaultRLRunner):
 
 	def _end_all(self):
 		if self.cfg.trainer.progress_bar: self.progress.stop()
-		wandb.finish()
 
 	def select_act_for_env(self, batch, state, mode):
 		"""

@@ -21,11 +21,11 @@
 			"console": "integratedTerminal",
 			"justMyCode": true,
 			"args": [
-				// "experiment=ddpg",
+				"experiment=ddpg",
 				// "experiment=ddpg_rnn",
 				// "experiment=td3",
 				// "experiment=td3_rnn",
-				"experiment=sac",
+				// "experiment=sac",
 				// "experiment=sac_rnn",
 				// "experiment=ddpg_tianshou",
 				
@@ -36,6 +36,9 @@
 				// "env.name=DummyNum-v0",
 				// "env.name=Humanoid-v4",
 				// "env.name=HumanoidStandup-v4",
+				// "env.name=Swimmer-v4",
+				"env.sticky_action_prob=0.3",
+				"env.noise_action_std=0.15",
 				
 
 				"env.delay=4",
@@ -87,14 +90,15 @@
 				// "global_cfg.actor_input.history_merge_method=cat_mlp",
 
 				// ### FOR VSCODE
+				// "wandb.mode=disabled",
 				"wandb.mode=disabled",
-				"wandb.buf_dir=true",
+				"wandb.buf_dir=false",
 
 				// ### DEBUG - Fast
-				"trainer.max_epoch=3",
-				"trainer.step_per_epoch=50",
-				"trainer.episode_per_test=2",
-				"actor.heads_share_pre_net=false",
+				// "trainer.max_epoch=3",
+				// "trainer.step_per_epoch=50",
+				// "trainer.episode_per_test=2",
+				// "actor.heads_share_pre_net=false",
 				// "global_cfg.debug.auto_kl_use_log=true",
 				
 				
