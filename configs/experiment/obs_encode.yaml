@@ -1,5 +1,5 @@
 defaults:
-  - default: cat_mlp.yaml
+  - cat_mlp.yaml
 
 global_cfg:
   actor_input:

@@ -1,5 +1,5 @@
 defaults:
-  - default: orcale_critic.yaml
+  - orcale_critic.yaml
 
 global_cfg:
   actor_input:
