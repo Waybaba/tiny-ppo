@@ -16,6 +16,11 @@ __pycache__/
 
 /wandb/*
 /outputs/*
+/output/*
+/outputx/*
+/outputs
+/output
+/outputx
 /multirun/*
 
 /.env
