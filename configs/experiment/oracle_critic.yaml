@@ -4,3 +4,6 @@ defaults:
 global_cfg:
   critic_input:
     obs_type: oracle
+
+
+method_type: oracle_critic

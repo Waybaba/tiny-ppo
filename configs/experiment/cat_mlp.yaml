@@ -4,3 +4,6 @@ defaults:
 global_cfg:
   actor_input:
     history_merge_method: cat_mlp
+
+
+method_type: cat_mlp

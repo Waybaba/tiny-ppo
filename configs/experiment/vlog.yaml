@@ -10,5 +10,8 @@ global_cfg:
       input_type: "feat" # obs or feat
       net_type: mlp # vae or mlp
       norm_kl_loss_weight: 1.0
-      auto_kl_target: 50
-      pred_loss_weight: 0.1
+      auto_kl_target: 0.3
+      pred_loss_weight: 0.0
+
+
+method_type: vlog

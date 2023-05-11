@@ -13,3 +13,5 @@ global_cfg:
       auto_kl_target: 0.3
       pred_loss_weight: 0.0
       policy_robust_weight: 0.0 # 0.0 for skip
+
+method_type: obs_encode
