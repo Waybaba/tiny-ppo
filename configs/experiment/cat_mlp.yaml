@@ -1,5 +1,5 @@
 defaults:
-  - orcale_critic.yaml
+  - oracle_critic.yaml
 
 global_cfg:
   actor_input:
