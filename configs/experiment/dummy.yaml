@@ -1,5 +1,5 @@
 defaults:
-  - default: sac.yaml
+  - sac.yaml
 
 global_cfg:
   actor_input:
