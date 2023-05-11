@@ -1,4 +1,7 @@
-name: HalfCheetah-v4
+name: ???
 train_num: 1
 test_num: 1
-delay: 0
+delay: ???
+fixed_delay: true
+sticky_action_prob: 0.0
+noise_action_std: 0.0

@@ -5,6 +5,7 @@
 # default -> ddpg -> ddpg_rnn <- rnn_plugin
 # default -> rnn_plugin
 defaults:
+  - /env: default.yaml
   - /net@basic_mlp: mlp_basic.yaml
   - /net@basic_rnn: rnn_basic.yaml
   - /net@critic1.net_mlp: mlp_basic.yaml
@@ -157,14 +158,7 @@ buffer:
   size: 1200000
   seq_len: ${trainer.batch_seq_len} # would affect the remaster buffer gap len
 env_max_step: 5000
-env:
-  name: HalfCheetah-v4
-  train_num: 1
-  test_num: 1
-  delay: 0
-  fixed_delay: true
-  sticky_action_prob: 0.0
-  noise_action_std: 0.0
+env: ???
 
 
 start_timesteps: ???
