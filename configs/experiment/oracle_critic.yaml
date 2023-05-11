@@ -1,0 +1,6 @@
+defaults:
+  - default: dummy.yaml
+
+global_cfg:
+  critic_input:
+    obs_type: oracle

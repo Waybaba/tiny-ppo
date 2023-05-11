@@ -1,0 +1,14 @@
+defaults:
+  - default: default.yaml
+
+global_cfg:
+  actor_input:
+    obs_type: normal
+    history_merge_method: null
+    obs_pred:
+      turn_on: false
+    obs_encode:
+      turn_on: false
+  critic_input:
+    obs_type: normal
+    history_merge_method: null
