@@ -13,4 +13,4 @@ global_cfg:
       auto_kl_target: 50
       pred_loss_weight: 0.1
 
-method_type: obs_encode
+method_type: obs_pred
