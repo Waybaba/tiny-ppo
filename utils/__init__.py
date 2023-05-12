@@ -36,8 +36,8 @@ def make_env(env_cfg):
     env = DelayedRoboticEnv(env, env_cfg.delay, env_cfg.fixed_delay, env_cfg.global_cfg)
     if env_cfg.sticky_action_prob:
         env = StickyActionWrapper(env, env_cfg.sticky_action_prob)
-    if env_cfg.noise_action_std:
-        env = GaussianNoiseActionWrapper(env, env_cfg.noise_action_std)
+    if env_cfg.noise_fraction:
+        env = GaussianNoiseActionWrapper(env, env_cfg.noise_fraction)
     return env
 
 def seed_everything(seed: int):

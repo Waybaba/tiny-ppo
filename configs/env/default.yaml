@@ -4,4 +4,4 @@ test_num: 1
 delay: ???
 fixed_delay: true
 sticky_action_prob: 0.0
-noise_action_std: 0.0
+noise_fraction: 0.0
