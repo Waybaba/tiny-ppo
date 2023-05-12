@@ -66,17 +66,17 @@ def main(cfg):
 		raise e
 
 	print("\n\n\nTrying to run main ...")
-	try:
-		print("Initializing and running Hydra config ...")
-		# assert False, "Not implemented"
-		cfg = hydra.utils.instantiate(cfg)
+	# try:
+	print("Initializing and running Hydra config ...")
+	# assert False, "Not implemented"
+	cfg = hydra.utils.instantiate(cfg)
 
-		print("Initializing and running runner ...")
-		cfg.runner().start(cfg)
-	except Exception as e:
-		print("Exception caught! when running runner ...")
-		wandb.alert(title="Run Error!", text=f"cfg.tags: {cfg.tags}", level=wandb.AlertLevel.ERROR)
-		print(e)
+	print("Initializing and running runner ...")
+	cfg.runner().start(cfg)
+	# except Exception as e:
+	# 	print("Exception caught! when running runner ...")
+	# 	wandb.alert(title="Run Error!", text=f"cfg.tags: {cfg.tags}", level=wandb.AlertLevel.ERROR)
+	# 	print(e)
 
 	print("\n\nClosing wandb ...")
 	wandb.alert(title="Run Finish!", text=f"cfg.tags: {cfg.tags}", level=wandb.AlertLevel.INFO)
