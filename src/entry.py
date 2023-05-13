@@ -79,7 +79,7 @@ def main(cfg):
 	# 	print(e)
 
 	print("\n\nClosing wandb ...")
-	wandb.alert(title="Run Finish!", text=f"cfg.tags: {cfg.tags}", level=wandb.AlertLevel.INFO)
+	# wandb.alert(title="Run Finish!", text=f"cfg.tags: {cfg.tags}", level=wandb.AlertLevel.INFO)
 	wandb.finish()
 
 	# Move output to wandb dir if necessary
