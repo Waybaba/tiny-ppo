@@ -5,3 +5,4 @@ delay: ???
 fixed_delay: true
 sticky_action_prob: 0.0
 noise_fraction: 0.0
+use_contact_forces: false

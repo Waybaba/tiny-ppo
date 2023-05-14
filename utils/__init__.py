@@ -32,7 +32,7 @@ from pytorch_lightning.utilities.logger import (
 )
 
 def make_env(env_cfg):
-    env = gym.make(env_cfg.name)
+    env = gym.make(env_cfg.name, use_contact_forces=env_cfg.use_contact_forces)
     env = DelayedRoboticEnv(env, env_cfg.delay, env_cfg.fixed_delay, env_cfg.global_cfg)
     if env_cfg.sticky_action_prob:
         env = StickyActionWrapper(env, env_cfg.sticky_action_prob)

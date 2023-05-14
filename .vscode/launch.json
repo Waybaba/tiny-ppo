@@ -33,8 +33,8 @@
 				// "experiment=stack_rnn",
 				
 				// "env.name=HalfCheetah-v4",
-				"env.name=Hopper-v4",
-				// "env.name=Ant-v4",
+				// "env.name=Hopper-v4",
+				"env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
 				// "env.name=Humanoid-v4",
@@ -42,6 +42,7 @@
 				// "env.name=Swimmer-v4",
 				"env.sticky_action_prob=0.3",
 				"env.noise_fraction=0.15",
+				"env.use_contact_forces=true",
 				
 
 				"env.delay=4",
