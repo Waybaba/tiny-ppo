@@ -25,12 +25,13 @@
 				// "experiment=ddpg_rnn",
 				// "experiment=td3",
 				// "experiment=td3_rnn",
-				"experiment=sac",
+				// "experiment=sac",
 				// "experiment=sac_rnn",
 				// "experiment=ddpg_tianshou",
 				// "experiment=td3_tianshou",
 				// "experiment=obs_pred",
 				// "experiment=stack_rnn",
+				"experiment=vlog_dummy",
 				
 				// "env.name=HalfCheetah-v4",
 				// "env.name=Hopper-v4",
@@ -40,9 +41,10 @@
 				// "env.name=Humanoid-v4",
 				// "env.name=HumanoidStandup-v4",
 				// "env.name=Swimmer-v4",
-				"env.sticky_action_prob=0.3",
-				"env.noise_fraction=0.15",
-				"env.use_contact_forces=true",
+
+				// "env.sticky_action_prob=0.3",
+				// "env.noise_fraction=0.15",
+				// "env.use_contact_forces=true",
 				
 
 				"env.delay=4",
