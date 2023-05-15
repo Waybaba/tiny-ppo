@@ -35,10 +35,10 @@
 				
 				// "env.name=HalfCheetah-v4",
 				// "env.name=Hopper-v4",
-				"env.name=Ant-v4",
+				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
-				// "env.name=Humanoid-v4",
+				"env.name=Humanoid-v4",
 				// "env.name=HumanoidStandup-v4",
 				// "env.name=Swimmer-v4",
 

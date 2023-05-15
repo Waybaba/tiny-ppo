@@ -1575,6 +1575,8 @@ class ObsEncodeNet(nn.Module):
 				self.normal_encode_dim = state_shape[0]
 		elif self.global_cfg.actor_input.history_merge_method in ["none"]:
 			self.normal_encode_dim = state_shape[0]
+		else:
+			raise ValueError("unknown history_merge_method: {}".format(self.global_cfg.actor_input.history_merge_method))
 		
 		# cal output dim
 		self.oracle_encode_dim = state_shape[0]
