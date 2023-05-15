@@ -1,0 +1,10 @@
+# @package _global_
+
+defaults:
+  - vlog.yaml
+
+global_cfg:
+  actor_input:
+    history_merge_method: "none"
+
+method_type: vlog_dummy
