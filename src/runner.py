@@ -19,7 +19,7 @@ from tianshou.utils.net.common import MLP
 from tianshou.exploration import BaseNoise
 import wandb
 from rich.console import Console
-from rich.progress import Progress, track
+from rich.progress import Progress
 
 # Local modules
 import pyrootutils

@@ -8,11 +8,11 @@ global_cfg:
     obs_pred:
       turn_on: true 
       feat_dim: 256
-      middle_detach: true 
-      input_type: "obs" # obs or feat
+      middle_detach: false 
+      input_type: "feat" # obs or feat
       net_type: mlp # vae or mlp
       norm_kl_loss_weight: 1.0
       auto_kl_target: 50
       pred_loss_weight: 0.1
 
-method_type: obs_pred
+method_type: encode_nodetach
