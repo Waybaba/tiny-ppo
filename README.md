@@ -1,4 +1,3 @@
-# Addressing Signal Delay in Deep Reinforcement Learning
 
 # **Environment Setup**
 
