@@ -23,7 +23,9 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     htop \
     vim \
-    && rm -rf /var/lib/apt/lists/*
+    libosmesa6-dev \
+    libgl1-mesa-dev
+    # && rm -rf /var/lib/apt/lists/*
 
 # python packages
 RUN conda install -y --name base -c conda-forge \
@@ -78,20 +80,23 @@ USER $USERNAME
 ENV HOME /home/$USERNAME
 WORKDIR $HOME
 
-RUN curl https://mujoco.org/download/mujoco210-linux-x86_64.tar.gz --output mujoco210.tar.gz
+
+# install mujoco
 RUN mkdir ~/.mujoco
-RUN tar -xf mujoco210.tar.gz --directory ~/.mujoco
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/.mujoco/mujoco210/bin
+RUN wget https://github.com/deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz
+RUN tar -zxvf mujoco210-linux-x86_64.tar.gz
+RUN mv mujoco210 ~/.mujoco/
+RUN rm mujoco210-linux-x86_64.tar.gz
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/.mujoco/mujoco210/bin
+
 USER root
 
+# install d4rl
+RUN pip install git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
+RUN pip install dm_control mujoco-py==2.1.2.14
 
+# install diffuser
+RUN pip install einops typed-argument-parser scikit-video==1.1.11 scikit-image==0.17.2
 
-# CMD tensorboard --bind_all \
-# 	--logdir=${UOUTDIR}/pytorch_output \
-# 	& \
-CMD	\
-    fiftyone app launch --remote \
-	--port 5151 \
-	-A 0.0.0.0 \
-	& \
-    sleep infinity
+# end
+CMD	sleep infinity
