@@ -49,10 +49,6 @@ RUN apt-get update && apt-get install -y \
 
 ### pip - base
 RUN pip install \
-    -i https://mirrors.aliyun.com/pypi/web/simple/ \
-    --trusted-host mirrors.aliyun.com \
-    opencv-python \
-    pytorch-lightning==1.7.7 \
     # hydra-joblib-launcher \
     hydra-core \
     hydra-colorlog \
@@ -64,10 +60,8 @@ RUN pip install \
     sh \
     omegaconf \
     rich \
-    fiftyone \
     jupyter \
     wandb \
-    grad-cam \
     tensorboardx \
     ipdb
     # && rm -rf /var/lib/apt/lists/*
