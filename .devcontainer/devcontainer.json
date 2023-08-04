@@ -1,5 +1,5 @@
 {
-	"name": "plightning-on-${localEnv:UDEVICEID}",
+	"name": "rl-on-${localEnv:UDEVICEID}",
 	"context": ".",
 	"dockerFile": "Dockerfile",
 	"runArgs": [

@@ -1,18 +1,25 @@
-# pytorch image base
+### pytorch image base
 FROM pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel as base
 ENV NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES},display \
     DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-# environment variables
+### environment variables
 ARG USERNAME=waybaba
 ENV UDATADIR=/data \
     UPRJDIR=/code \
     UOUTDIR=/output \
     UDEVICEID=docker
 
-# apt
+# in China
+RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+RUN sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
+RUN echo "[global]\n\
+index-url = https://mirrors.aliyun.com/pypi/simple/\n\
+trusted-host = mirrors.aliyun.com" > /etc/pip.conf
+
+### apt
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -24,16 +31,26 @@ RUN apt-get update && apt-get install -y \
     htop \
     vim \
     libosmesa6-dev \
-    libgl1-mesa-dev
+    libgl1-mesa-dev \
+    gcc \
+    g++ \
+    build-essential \
+    wget \
+    libgmp-dev \
+    libmpfr-dev \
+    libmpc-dev
     # && rm -rf /var/lib/apt/lists/*
 
-# python packages
-RUN conda install -y --name base -c conda-forge \
-    tensorboard \
-    pandas \
-    && rm -rf /var/lib/apt/lists/*
+# ### conda
+# RUN conda install -y --name base -c conda-forge \
+#     tensorboard \
+#     pandas \
+#     && rm -rf /var/lib/apt/lists/*
 
+### pip - base
 RUN pip install \
+    -i https://mirrors.aliyun.com/pypi/web/simple/ \
+    --trusted-host mirrors.aliyun.com \
     opencv-python \
     pytorch-lightning==1.7.7 \
     # hydra-joblib-launcher \
@@ -55,6 +72,7 @@ RUN pip install \
     ipdb
     # && rm -rf /var/lib/apt/lists/*
 
+### pip - more
 RUN pip install \
     hydra-joblib-launcher \
     gymnasium \
@@ -64,9 +82,7 @@ RUN pip install \
     ftfy \
     regex
 
-
-
-# Non-root user creation and enter
+## Non-root user creation and enter
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 RUN groupadd --gid $USER_GID $USERNAME \
@@ -81,22 +97,39 @@ ENV HOME /home/$USERNAME
 WORKDIR $HOME
 
 
-# install mujoco
-RUN mkdir ~/.mujoco
-RUN wget https://github.com/deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz
-RUN tar -zxvf mujoco210-linux-x86_64.tar.gz
-RUN mv mujoco210 ~/.mujoco/
-RUN rm mujoco210-linux-x86_64.tar.gz
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/.mujoco/mujoco210/bin
-
+### (optional) mujoco root
 USER root
+RUN mkdir /usr/local/mujoco
+RUN wget https://mujoco.org/download/mujoco210-linux-x86_64.tar.gz # replace with the actual URL
+RUN tar -zxvf mujoco210-linux-x86_64.tar.gz
+RUN mv mujoco210 /usr/local/mujoco/
+RUN rm mujoco210-linux-x86_64.tar.gz
+ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:/usr/local/mujoco/mujoco210/bin
+ENV MUJOCO_PY_MUJOCO_PATH /usr/local/mujoco/mujoco210
+RUN pip install 'mujoco-py<2.2,>=2.1' 'cython<3'
+RUN python -c "import mujoco_py; print(mujoco_py.__version__)" # prebuild mujoco ps. first import mujoco with non-root user would cause error
+RUN chmod -R a+rwx /opt/conda/lib/python3.7/site-packages/mujoco_py/generated
 
-# install d4rl
+
+### (optional) mujoco user version
+# RUN mkdir ~/.mujoco
+# RUN wget https://github.com/deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz
+# RUN tar -zxvf mujoco210-linux-x86_64.tar.gz
+# RUN mv mujoco210 ~/.mujoco/
+# RUN rm mujoco210-linux-x86_64.tar.gz
+# ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HOME/.mujoco/mujoco210/bin
+# ENV MUJOCO_PY_MUJOCO_PATH=$HOME/.mujoco/mujoco210
+
+
+### (optional) d4rl
 RUN pip install git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
-RUN pip install dm_control mujoco-py==2.1.2.14
+RUN pip install dm_control 'mujoco-py<2.2,>=2.1' # avoid mujoco version change
 
-# install diffuser
-RUN pip install einops typed-argument-parser scikit-video==1.1.11 scikit-image==0.17.2
+### (optional) diffuser
+RUN pip install gym==0.18.0 einops typed-argument-parser scikit-video==1.1.11 scikit-image==0.17.2
+RUN pip install 'mujoco-py<2.2,>=2.1' # avoid mujoco version change
 
-# end
-CMD	sleep infinity
+
+### end # comment the following when amlt: amlt need root user to build, but it will switch to a user called aiscuser when running
+USER $USERNAME 
+CMD sleep infinity
