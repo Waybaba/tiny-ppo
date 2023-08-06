@@ -8,28 +8,112 @@ defaults:
 
 # common - for all tasks (task_name, tags, output_dir, device)
 policy:
-  alpha:
-    _target_: builtins.tuple
-    _args_:
-      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
-        - _target_: torch.zeros
-          size: 
-            _target_: builtins.tuple
-            _args_:
-              - - 1
-          requires_grad: true
-          device: ${device}
-        - _target_: torch.optim.Adam
-          _partial_: true
-          lr: 3e-4 # 3e-4 in tianshou
+  update_a_per_c: 2
+  clip: 1.0
+  # noise_decay_rate: 0.998
+  noise_decay_rate: 1.0
+  policy_noise: 0.2 # training: noise = torch.randn() -> noise *= self.policy_noise -> noise = noise.clamp(-self.noise_clip, self.noise_clip)
+  noise_clip: 0.5
+  # initial_exploration_noise: 0.1
+  # exploration_noise: # infer env: 
+  #   _target_: tianshou.exploration.random.GaussianNoise
+  #   sigma: 0.1
+  initial_exploration_noise: 0.1 # infer env: # use initial_exploration_noise since self.exploration_noise would be updated
+
 actor:
   unbounded: true
   conditioned_sigma: true
+
+actor_cem:
+  _target_: src.cem.CEM.Actor
+  _partial_: true
+  args: ${args}
+
+memory:
+  _target_: src.cem.memory.Memory
+  _partial_: true
+  _args_: 
+    - ${args.mem_size}
+
+args:
+  mode: train
+  env: ${env}
+  start_steps: 10000
+  # DDPG parameters
+  actor_lr: 0.001
+  critic_lr: 0.001
+  batch_size: 100
+  discount: 0.99
+  reward_scale: 1.0
+  tau: 0.005
+  layer_norm: true
+
+  # TD3 parameters
+  use_td3: true
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+
+  # Gaussian noise parameters
+  gauss_sigma: 0.1
+
+  # OU process parameters
+  ou_noise: true
+  ou_theta: 0.15
+  ou_sigma: 0.2
+  ou_mu: 0.0
+
+  # ES parameters
+  pop_size: 10
+  elitism: true
+  n_grad: 5
+  sigma_init: 0.001
+  damp: 0.001
+  damp_limit: 0.00001
+  mult_noise: true
+
+  # Training parameters
+  n_episodes: 1
+  max_steps: 1000000
+  mem_size: 1000000
+  n_noisy: 0
+
+  # Testing parameters
+  filename: ""
+  n_test: 1
+
+  # misc
+  output: './outputs/'
+  period: 5000
+  n_eval: 10
+  save_all_models: true
+  debug: true
+  seed: -1
+  render: false
+
+
+critic_cem:
+  _target_: src.cem.CEM.CriticTD3
+  _partial_: true
+  args: ${args}
+    
+
 actor_optim:
   lr: 1e-3 # 1e-3 in tianshou, 3e-4 in dongqi code. (For both actor and critic)
 
+es:
+  _target_: src.cem.CEM.sepCEM
+  _partial_: true
+  sigma_init: 0.001
+  damp: 0.001
+  damp_limit: 1e-05
+  pop_size: 10 # ! pop_size//2 = elisism, antithetic
+  antithetic: true # ! true if pop size is even
+  parents: 5
+  elitism: false # ! pop_size//2
+
 runner:
-  _target_: src.runner.PGRunner
+  _target_: src.runner.CEMRunner
 
 
 start_timesteps: 10000

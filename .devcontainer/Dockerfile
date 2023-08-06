@@ -77,6 +77,8 @@ RUN pip install \
     ftfy \
     regex
 
+RUN pip install pandas
+
 ## Non-root user creation and enter
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID

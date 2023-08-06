@@ -1669,14 +1669,33 @@ class DefaultRLRunner:
 		self.console = Console()
 		self.log = self.console.log
 		self.log("Logger init done!")
-
-class OfflineRLRunner(DefaultRLRunner):
-	def start(self, cfg):
-		super().start(cfg)
 		self.log("Checking cfg ...")
 		self.check_cfg()
 		self.log("_init_basic_components_for_all_alg ...")
 		self._init_basic_components_for_all_alg()
+
+	def _init_basic_components_for_all_alg(self):
+		cfg = self.cfg
+		env = self.env
+		# basic for all algorithms
+		self.global_cfg = cfg.global_cfg
+		self.log("Init buffer & collector ...")
+		self.buf = cfg.buffer
+		self.train_collector = EnvCollector(env)
+		self.test_collector = EnvCollector(env)
+		self.log("Init others ...")
+		self.record = WaybabaRecorder()
+		self._start_time = time()
+		if self.cfg.trainer.progress_bar:
+			self.progress = Progress()
+			self.progress.start()
+
+	def check_cfg(self):
+		pass
+
+class OfflineRLRunner(DefaultRLRunner):
+	def start(self, cfg):
+		super().start(cfg)
 		self.log("init_components ...")
 		self.init_components()
 
@@ -1715,22 +1734,6 @@ class OfflineRLRunner(DefaultRLRunner):
 			self.env_step_global += self.cfg.trainer.step_per_collect
 
 		self._end_all()
-
-	def _init_basic_components_for_all_alg(self):
-		cfg = self.cfg
-		env = self.env
-		# basic for all algorithms
-		self.global_cfg = cfg.global_cfg
-		self.log("Init buffer & collector ...")
-		self.buf = cfg.buffer
-		self.train_collector = EnvCollector(env)
-		self.test_collector = EnvCollector(env)
-		self.log("Init others ...")
-		self.record = WaybabaRecorder()
-		self._start_time = time()
-		if self.cfg.trainer.progress_bar:
-			self.progress = Progress()
-			self.progress.start()
 
 	def init_components(self):
 		raise NotImplementedError
@@ -3092,23 +3095,254 @@ class DDPGRunner(TD3SACRunner):
 
 
 
-
-class PGRunner(DefaultRLRunner):
+from src.cem.utils import *
+class CEMRunner(DefaultRLRunner):
+	ALGORITHM = "td3"
 	def start(self, cfg):
+		from src.cem.random_process import GaussianNoise, OrnsteinUhlenbeckProcess
+		import pandas as pd
+		from tqdm import tqdm 
+		from src.cem.CEM import evaluate
+
+		from src.cem.memory import Memory
+		
 		super().start(cfg)
-		self.log("Checking cfg ...")
-		self.check_cfg()
-		self.log("_init_basic_components_for_all_alg ...")
-		self._init_basic_components_for_all_alg()
 		self.log("init_components ...")
 		self.init_components()
+		
+		args = cfg.args
+		env = self.env
 
-		self.log("_initial_exploration ...")
-		self._initial_exploration()
+		memory = cfg.memory(self.env.observation_space.shape[0], self.env.action_space.shape[0])
+		critic = cfg.critic_cem(self.env.observation_space.shape[0], self.env.action_space.shape[0], self.env.action_space.high[0])
+		critic_t = cfg.critic_cem(self.env.observation_space.shape[0], self.env.action_space.shape[0], self.env.action_space.high[0])
+		critic_t.load_state_dict(critic.state_dict())
+		actor = cfg.actor_cem(self.env.observation_space.shape[0], self.env.action_space.shape[0], self.env.action_space.high[0])
+		actor_t = cfg.actor_cem(self.env.observation_space.shape[0], self.env.action_space.shape[0], self.env.action_space.high[0])
+		actor_t.load_state_dict(actor.state_dict())
 
-		self.log("Training Start ...")
-		self.env_step_global = 0
-		if cfg.trainer.progress_bar: self.training_task = self.progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
+		if not args.ou_noise:
+			a_noise = GaussianNoise(self.env.action_space.shape[0], sigma=args.gauss_sigma)
+		else:
+			a_noise = OrnsteinUhlenbeckProcess(
+				self.env.action_space.shape[0], mu=args.ou_mu, theta=args.ou_theta, sigma=args.ou_sigma)
+
+		if cfg.device is not None and cfg.device != "cpu":
+			critic.cuda()
+			critic_t.cuda()
+			actor.cuda()
+			actor_t.cuda()
+
+		es = cfg.es(
+			actor.get_size(),
+			mu_init=actor.get_params() # TODO implement
+		)
+
+		step_cpt = 0
+		total_steps = 0
+		actor_steps = 0
+		df = pd.DataFrame(columns=["total_steps", "average_score",
+								"average_score_rl", "average_score_ea", "best_score"])
+		while total_steps < args.max_steps:
+
+			fitness = []
+			fitness_ = []
+			es_params = es.ask(args.pop_size)
+
+			# udpate the rl actors and the critic
+			if total_steps > args.start_steps:
+
+				for i in range(args.n_grad):
+
+					# set params
+					actor.set_params(es_params[i])
+					actor_t.set_params(es_params[i])
+					actor.optimizer = torch.optim.Adam(
+						actor.parameters(), lr=args.actor_lr)
+
+					# critic update
+					for _ in tqdm(range(actor_steps // args.n_grad)):
+						critic.update(memory, args.batch_size, actor, critic_t)
+
+					# actor update
+					for _ in tqdm(range(actor_steps)):
+						actor.update(memory, args.batch_size,
+									critic, actor_t)
+
+					# get the params back in the population
+					es_params[i] = actor.get_params()
+			actor_steps = 0
+
+			# evaluate noisy actor(s)
+			for i in range(args.n_noisy):
+				actor.set_params(es_params[i])
+				f, steps = evaluate(actor, env, int(env.action_space.high[0]), memory=memory, n_episodes=args.n_episodes,
+									render=args.render, noise=a_noise)
+				actor_steps += steps
+				prCyan('Noisy actor {} fitness:{}'.format(i, f))
+
+			# evaluate all actors
+			for params in es_params:
+
+				actor.set_params(params)
+				f, steps = evaluate(actor, env, int(env.action_space.high[0]), memory=memory, n_episodes=args.n_episodes,
+									render=args.render)
+				actor_steps += steps
+				fitness.append(f)
+
+				# print scores
+				prLightPurple('Actor fitness:{}'.format(f))
+
+			# update es
+			es.tell(es_params, fitness)
+
+			# update step counts
+			total_steps += actor_steps
+			step_cpt += actor_steps
+
+			# save stuff
+			if step_cpt >= args.period:
+
+				# evaluate mean actor over several runs. Memory is not filled
+				# and steps are not counted
+				actor.set_params(es.mu)
+				f_mu, _ = evaluate(actor, env, int(env.action_space.high[0]), memory=None, n_episodes=args.n_eval,
+								render=args.render)
+				prRed('Actor Mu Average Fitness:{}'.format(f_mu))
+
+				df.to_pickle(args.output + "/log.pkl")
+				res = {"total_steps": total_steps,
+					"average_score": np.mean(fitness),
+					"average_score_half": np.mean(np.partition(fitness, args.pop_size // 2 - 1)[args.pop_size // 2:]),
+					"average_score_rl": np.mean(fitness[:args.n_grad]),
+					"average_score_ea": np.mean(fitness[args.n_grad:]),
+					"best_score": np.max(fitness),
+					"mu_score": f_mu}
+
+				if args.save_all_models:
+					os.makedirs(args.output + "/{}_steps".format(total_steps),
+								exist_ok=True)
+					critic.save_model(
+						args.output + "/{}_steps".format(total_steps), "critic")
+					actor.set_params(es.mu)
+					actor.save_model(
+						args.output + "/{}_steps".format(total_steps), "actor_mu")
+				else:
+					critic.save_model(args.output, "critic")
+					actor.set_params(es.mu)
+					actor.save_model(args.output, "actor")
+				df = df.append(res, ignore_index=True)
+				step_cpt = 0
+				print(res)
+
+			print("Total steps", total_steps)
+
+	def init_components(self):
+		self.log("Init networks ...")
+		env = self.env
+		cfg = self.cfg
+
+		# networks
+		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0],global_cfg=self.cfg.global_cfg).to(cfg.device)
+		self.actor_optim = cfg.actor_optim(self.actor.parameters())
+		self.actor_old = deepcopy(self.actor)
+		
+		# decide bi or two direction
+		if cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			if cfg.global_cfg.critic_input.bi_or_si_rnn == "si":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			elif cfg.global_cfg.critic_input.bi_or_si_rnn == "bi":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			elif cfg.global_cfg.critic_input.bi_or_si_rnn == "both":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_1_optim = cfg.critic1_optim(self.critic_sirnn_1.parameters())
+				self.critic_sirnn_2_optim = cfg.critic2_optim(self.critic_sirnn_2.parameters())
+			else:
+				raise NotImplementedError
+		else:
+			self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
+		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
+		self.critic1_old = deepcopy(self.critic1)
+		self.critic2_old = deepcopy(self.critic2)
+
+		self.actor_old.eval()
+		self.critic1.train()
+		self.critic2.train()
+		self.critic1_old.train()
+		self.critic2_old.train()
+		
+		if self.ALGORITHM == "td3":
+			redudent_net = []
+			self.exploration_noise = cfg.policy.initial_exploration_noise
+			# TODO remove dedudent net
+		if self.ALGORITHM == "sac":
+			redudent_net = ["actor_old"]
+			self.critic1_old.eval()
+			self.critic2_old.eval()
+			self.log("init sac alpha ...")
+			self._init_sac_alpha()
+		if self.ALGORITHM == "ddpg":
+			redudent_net = ["critic2", "critic2_old"]
+			self.actor_old = deepcopy(self.actor)
+			self.actor_old.eval()
+			self.exploration_noise = cfg.policy.initial_exploration_noise
+		
+		if redudent_net:
+			for net_name in redudent_net: delattr(self, net_name)
+		# obs pred & encode
+		assert not (self.global_cfg.actor_input.obs_pred.turn_on and self.global_cfg.actor_input.obs_encode.turn_on), "obs_pred and obs_encode cannot be used at the same time"
+		
+		if self.global_cfg.actor_input.obs_pred.turn_on:
+			self.pred_net = self.global_cfg.actor_input.obs_pred.net(
+				state_shape=self.env.observation_space.shape,
+				action_shape=self.env.action_space.shape,
+				global_cfg=self.global_cfg,
+			)
+			self._pred_optim = self.global_cfg.actor_input.obs_pred.optim(
+				self.pred_net.parameters(),
+			)
+			if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				)], device=self.actor.device, requires_grad=True)
+				self._auto_kl_optim = self.global_cfg.actor_input.obs_pred.auto_kl_optim([self.kl_weight_log])
+			else:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				)], device=self.actor.device)
+		
+		if self.global_cfg.actor_input.obs_encode.turn_on:
+			self.encode_net = self.global_cfg.actor_input.obs_encode.net(
+				state_shape=self.env.observation_space.shape,
+				action_shape=self.env.action_space.shape,
+				global_cfg=self.global_cfg,
+			)
+			self._encode_optim = self.global_cfg.actor_input.obs_encode.optim(
+				self.encode_net.parameters(),
+			)
+			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+				)], device=self.actor.device, requires_grad=True)
+				self._auto_kl_optim = self.global_cfg.actor_input.obs_encode.auto_kl_optim([self.kl_weight_log])
+			else:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+				)], device=self.actor.device)
+	
+		# self.log("_initial_exploration ...")
+		# self._initial_exploration()
+
+		# self.log("Training Start ...")
+		# self.env_step_global = 0
+		# if cfg.trainer.progress_bar: self.training_task = self.progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
 		
 		# while True: # traininng loop
 		# 	# env step collect
