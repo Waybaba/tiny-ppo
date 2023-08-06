@@ -1126,6 +1126,61 @@ class Critic(nn.Module):
 		logits = self.last(logits)
 		return logits
 
+class DreamerModel(nn.Module):
+	"""Dreamer Model for model-based RL. It consists of a preprocess network
+	to transform the observations, and an RNN-based transition model to predict
+	the next state, reward, and done signal.
+
+	:param preprocess_net: a self-defined preprocess_net to convert raw
+		observations into the desired format.
+	:param transition_model: a self-defined transition model (e.g., an RNN)
+		that predicts the next state given the current state and action.
+	:param device: device where the model will be placed. Default to "cpu".
+	"""
+
+	def __init__(
+		self,
+		preprocess_net: nn.Module,
+		transition_model: nn.Module,
+		device: Union[str, int, torch.device] = "cpu",
+	) -> None:
+		super().__init__()
+		self.device = device
+		self.preprocess = preprocess_net
+		self.transition = transition_model
+		self.output_dim = getattr(preprocess_net, "output_dim", None)
+
+	def forward(
+		self,
+		obs: Union[np.ndarray, torch.Tensor],
+		action: Optional[Union[np.ndarray, torch.Tensor]] = None,
+		state: Optional[Dict[str, torch.Tensor]] = None,
+	) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		"""Mapping: (s, a) -> (s', r, done)."""
+		# Convert observation to tensor
+		obs = torch.as_tensor(
+			obs,
+			device=self.device,
+			dtype=torch.float32,
+		).flatten(1)
+		
+		# Optionally include action in the preprocessing
+		if action is not None:
+			action = torch.as_tensor(
+				action,
+				device=self.device,
+				dtype=torch.float32,
+			).flatten(1)
+			obs = torch.cat([obs, action], dim=1)
+		
+		# Preprocess the observation
+		preprocessed_obs = self.preprocess(obs)
+		
+		# Use transition model to predict the next state, reward, and done signal
+		next_state, reward, done = self.transition(preprocessed_obs, state)
+		
+		return next_state, reward, done
+
 # net
 class RNN_MLP_Net(nn.Module):
 	""" RNNS with MLPs as the core network
@@ -1468,6 +1523,52 @@ class CustomRecurrentActorProb(nn.Module):
 		# forward
 		return self.forward(actor_input, in_state)
 
+class CustomDreamer(nn.Module):
+    def __init__(
+        self,
+        state_shape: Sequence[int],
+        action_shape: Sequence[int],
+        **kwargs,
+    ) -> None:
+        super().__init__()
+        self.hps = kwargs
+        assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
+
+        selected_net = self.hps["net_mlp"]
+        if self.hps["global_cfg"].dream_input.history_merge_method == "cat_mlp":
+            self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
+            self.output_dim = state_shape[0]  # You may modify this
+        elif self.hps["global_cfg"].dream_input.history_merge_method == "stack_rnn":
+            if self.hps["global_cfg"].history_num > 0:
+                self.input_dim = state_shape[0] + action_shape[0]
+            else:
+                self.input_dim = state_shape[0]
+            self.output_dim = state_shape[0]  # You may modify this
+            selected_net = self.hps["net_rnn"]
+        elif self.hps["global_cfg"].dream_input.history_merge_method == "none":
+            self.input_dim = state_shape[0]
+            self.output_dim = state_shape[0]  # You may modify this
+        else:
+            raise NotImplementedError
+
+        bidirectional = True if "bidirectional" in kwargs and kwargs["bidirectional"] else False
+        self.net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=1, bidirectional=bidirectional)
+
+    def forward(
+        self,
+        dream_input: Union[np.ndarray, torch.Tensor],
+        state: Dict[str, torch.Tensor],
+        info: Dict[str, Any] = {},
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+        Process the dream_input through the neural network to model the expected next state.
+        """
+        assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
+        assert type(state) == dict or state is None, "state should be a dict with 'hidden' or None"
+        output, state_ = self.net(dream_input, state)
+        next_state = output[0]
+        return next_state, state_
+
 class ObsPredNet(nn.Module):
 	"""
 	input delayed state and action, output the non-delayed state
@@ -1691,7 +1792,7 @@ class DefaultRLRunner:
 			self.progress.start()
 
 	def check_cfg(self):
-		raise Warning("You should implement check_cfg in your runner!")
+		print("You should implement check_cfg in your runner!")
 
 class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
@@ -3373,7 +3474,7 @@ class CEMRunner(DefaultRLRunner):
 
 		# self._end_all()
 
-class PETSRunner(OfflineRLRunner):
+class DreamerRunner(OfflineRLRunner):
 	ALGORITHM = "td3"
 	def init_components(self):
 		self.log("Init networks ...")
@@ -3405,10 +3506,12 @@ class PETSRunner(OfflineRLRunner):
 		else:
 			self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
 			self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+		self.dreamer = cfg.dreamer(env.observation_space.shape, action_shape=env.action_space.shape, global_cfg=self.cfg.global_cfg).to(cfg.device)
 		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
 		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
 		self.critic1_old = deepcopy(self.critic1)
 		self.critic2_old = deepcopy(self.critic2)
+		self.dreamer_optim = cfg.dreamer_optim(self.dreamer.parameters())
 
 		self.actor_old.eval()
 		self.critic1.train()
@@ -3474,4 +3577,44 @@ class PETSRunner(OfflineRLRunner):
 				self.kl_weight_log = torch.tensor([np.log(
 					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
 				)], device=self.actor.device)
-	
+
+	def start(self, cfg):
+		super().start(cfg)
+		self.log("init_components ...")
+		self.init_components()
+
+		self.log("_initial_exploration ...")
+		self._initial_exploration()
+
+		self.log("Training Start ...")
+		self.env_step_global = 0
+		if cfg.trainer.progress_bar: self.training_task = self.progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
+		
+		while True: # traininng loop
+			# env step collect
+			self._collect_once()
+			
+			# update
+			if self._should_update(): 
+				for _ in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
+					self.update_once()
+			
+			# evaluate
+			if self._should_evaluate():
+				self._evaluate()
+			
+			# log
+			if self._should_write_log():
+				self._log_time()
+				self.record.upload_to_wandb(step=self.env_step_global, commit=False)
+			
+			# upload
+			if self._should_upload_log():
+				wandb.log({}, commit=True)
+				
+			# loop control
+			if self._should_end(): break
+			if cfg.trainer.progress_bar: self.progress.update(self.training_task, advance=cfg.trainer.step_per_collect, description=f"[green]🚀 Training {self.env_step_global}/{self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch}[/green]\n"+self.record.to_progress_bar_description())
+			self.env_step_global += self.cfg.trainer.step_per_collect
+
+		self._end_all()

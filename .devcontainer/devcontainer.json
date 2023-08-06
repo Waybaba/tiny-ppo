@@ -19,10 +19,6 @@
 		"GitHub.vscode-pull-request-github"
 	],
 	// for China
-	"containerEnv":{
-		"http_proxy": "http://172.17.0.1:7890",
-		"https_proxy": "http://172.17.0.1:7890"
-	},
 	"settings": {
 		"lldb.adapterType": "native",
 		"lldb.executable": "/usr/bin/lldb",

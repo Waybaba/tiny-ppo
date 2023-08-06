@@ -28,7 +28,7 @@
 				// "experiment=sac",
 				// "experiment=pg",
 				// "experiment=cem",
-				"experiment=pets",
+				"experiment=dreamer",
 				// "experiment=sac_rnn",
 				// "experiment=ddpg_tianshou",
 				// "experiment=td3_tianshou",

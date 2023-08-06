@@ -5,6 +5,8 @@
 
 defaults:
   - default.yaml
+  - /net@dreamer.net_mlp: mlp_basic.yaml
+  - /net@dreamer.net_rnn: rnn_basic.yaml
 
 # common - for all tasks (task_name, tags, output_dir, device)
 policy:
@@ -28,8 +30,20 @@ actor:
 actor_optim:
   lr: 1e-3 # 1e-3 in tianshou, 3e-4 in dongqi code. (For both actor and critic)
 
+dreamer:
+  _target_: src.runner.CustomDreamer
+  _partial_: true
+  device: ${device}
+  net_mlp: ???
+  net_rnn: ???
+
+dreamer_optim:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: ${actor_optim.lr}
+
 runner:
-  _target_: src.runner.PETSRunner
+  _target_: src.runner.DreamerRunner
 
 
 start_timesteps: 10000
