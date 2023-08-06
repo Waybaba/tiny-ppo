@@ -1691,7 +1691,7 @@ class DefaultRLRunner:
 			self.progress.start()
 
 	def check_cfg(self):
-		pass
+		raise Warning("You should implement check_cfg in your runner!")
 
 class OfflineRLRunner(DefaultRLRunner):
 	def start(self, cfg):
@@ -3373,3 +3373,105 @@ class CEMRunner(DefaultRLRunner):
 
 		# self._end_all()
 
+class PETSRunner(OfflineRLRunner):
+	ALGORITHM = "td3"
+	def init_components(self):
+		self.log("Init networks ...")
+		env = self.env
+		cfg = self.cfg
+
+		# networks
+		self.actor = cfg.actor(state_shape=env.observation_space.shape, action_shape=env.action_space.shape, max_action=env.action_space.high[0],global_cfg=self.cfg.global_cfg).to(cfg.device)
+		self.actor_optim = cfg.actor_optim(self.actor.parameters())
+		self.actor_old = deepcopy(self.actor)
+		
+		# decide bi or two direction
+		if cfg.global_cfg.critic_input.history_merge_method == "stack_rnn":
+			if cfg.global_cfg.critic_input.bi_or_si_rnn == "si":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			elif cfg.global_cfg.critic_input.bi_or_si_rnn == "bi":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			elif cfg.global_cfg.critic_input.bi_or_si_rnn == "both":
+				self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=True, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+				self.critic_sirnn_1_optim = cfg.critic1_optim(self.critic_sirnn_1.parameters())
+				self.critic_sirnn_2_optim = cfg.critic2_optim(self.critic_sirnn_2.parameters())
+			else:
+				raise NotImplementedError
+		else:
+			self.critic1 = cfg.critic1(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+			self.critic2 = cfg.critic2(env.observation_space.shape, action_shape=env.action_space.shape, bidirectional=False, global_cfg=self.cfg.global_cfg).to(cfg.device)
+		self.critic1_optim = cfg.critic1_optim(self.critic1.parameters())
+		self.critic2_optim = cfg.critic2_optim(self.critic2.parameters())
+		self.critic1_old = deepcopy(self.critic1)
+		self.critic2_old = deepcopy(self.critic2)
+
+		self.actor_old.eval()
+		self.critic1.train()
+		self.critic2.train()
+		self.critic1_old.train()
+		self.critic2_old.train()
+		
+		if self.ALGORITHM == "td3":
+			redudent_net = []
+			self.exploration_noise = cfg.policy.initial_exploration_noise
+			# TODO remove dedudent net
+		if self.ALGORITHM == "sac":
+			redudent_net = ["actor_old"]
+			self.critic1_old.eval()
+			self.critic2_old.eval()
+			self.log("init sac alpha ...")
+			self._init_sac_alpha()
+		if self.ALGORITHM == "ddpg":
+			redudent_net = ["critic2", "critic2_old"]
+			self.actor_old = deepcopy(self.actor)
+			self.actor_old.eval()
+			self.exploration_noise = cfg.policy.initial_exploration_noise
+		
+		if redudent_net:
+			for net_name in redudent_net: delattr(self, net_name)
+		# obs pred & encode
+		assert not (self.global_cfg.actor_input.obs_pred.turn_on and self.global_cfg.actor_input.obs_encode.turn_on), "obs_pred and obs_encode cannot be used at the same time"
+		
+		if self.global_cfg.actor_input.obs_pred.turn_on:
+			self.pred_net = self.global_cfg.actor_input.obs_pred.net(
+				state_shape=self.env.observation_space.shape,
+				action_shape=self.env.action_space.shape,
+				global_cfg=self.global_cfg,
+			)
+			self._pred_optim = self.global_cfg.actor_input.obs_pred.optim(
+				self.pred_net.parameters(),
+			)
+			if self.global_cfg.actor_input.obs_pred.auto_kl_target:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				)], device=self.actor.device, requires_grad=True)
+				self._auto_kl_optim = self.global_cfg.actor_input.obs_pred.auto_kl_optim([self.kl_weight_log])
+			else:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_pred.norm_kl_loss_weight
+				)], device=self.actor.device)
+		
+		if self.global_cfg.actor_input.obs_encode.turn_on:
+			self.encode_net = self.global_cfg.actor_input.obs_encode.net(
+				state_shape=self.env.observation_space.shape,
+				action_shape=self.env.action_space.shape,
+				global_cfg=self.global_cfg,
+			)
+			self._encode_optim = self.global_cfg.actor_input.obs_encode.optim(
+				self.encode_net.parameters(),
+			)
+			if self.global_cfg.actor_input.obs_encode.auto_kl_target:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+				)], device=self.actor.device, requires_grad=True)
+				self._auto_kl_optim = self.global_cfg.actor_input.obs_encode.auto_kl_optim([self.kl_weight_log])
+			else:
+				self.kl_weight_log = torch.tensor([np.log(
+					self.global_cfg.actor_input.obs_encode.norm_kl_loss_weight
+				)], device=self.actor.device)
+	
