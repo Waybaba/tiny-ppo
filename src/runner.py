@@ -3089,3 +3089,53 @@ class DDPGRunner(TD3SACRunner):
 				state=batch.a_state_next if self._burnin_num() else None
 			)[0][0]
 		return act_online_cur, act_online_next, {}
+
+
+
+
+class PGRunner(DefaultRLRunner):
+	def start(self, cfg):
+		super().start(cfg)
+		self.log("Checking cfg ...")
+		self.check_cfg()
+		self.log("_init_basic_components_for_all_alg ...")
+		self._init_basic_components_for_all_alg()
+		self.log("init_components ...")
+		self.init_components()
+
+		self.log("_initial_exploration ...")
+		self._initial_exploration()
+
+		self.log("Training Start ...")
+		self.env_step_global = 0
+		if cfg.trainer.progress_bar: self.training_task = self.progress.add_task("[green]Training...", total=cfg.trainer.max_epoch*cfg.trainer.step_per_epoch)
+		
+		# while True: # traininng loop
+		# 	# env step collect
+		# 	self._collect_once()
+			
+		# 	# update
+		# 	if self._should_update(): 
+		# 		for _ in range(int(cfg.trainer.step_per_collect/cfg.trainer.update_per_step)):
+		# 			self.update_once()
+			
+		# 	# evaluate
+		# 	if self._should_evaluate():
+		# 		self._evaluate()
+			
+		# 	# log
+		# 	if self._should_write_log():
+		# 		self._log_time()
+		# 		self.record.upload_to_wandb(step=self.env_step_global, commit=False)
+			
+		# 	# upload
+		# 	if self._should_upload_log():
+		# 		wandb.log({}, commit=True)
+				
+		# 	# loop control
+		# 	if self._should_end(): break
+		# 	if cfg.trainer.progress_bar: self.progress.update(self.training_task, advance=cfg.trainer.step_per_collect, description=f"[green]🚀 Training {self.env_step_global}/{self.cfg.trainer.max_epoch*self.cfg.trainer.step_per_epoch}[/green]\n"+self.record.to_progress_bar_description())
+		# 	self.env_step_global += self.cfg.trainer.step_per_collect
+
+		# self._end_all()
+

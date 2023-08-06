@@ -1,9 +1,9 @@
 {
-	"name": "rl-on-${localEnv:UDEVICEID}",
+	"name": "${localWorkspaceFolderBasename}-on-${localEnv:UDEVICEID}",
 	"context": ".",
 	"dockerFile": "Dockerfile",
 	"runArgs": [
-		"--name", "rl-${localEnv:UDEVICEID}",
+		"--name", "${localWorkspaceFolderBasename}-${localEnv:UDEVICEID}",
 		"--gpus=all",
 		// "-p", "6006:6006",
 		// "-p", "5151:5151",
@@ -18,6 +18,11 @@
 		"GitHub.copilot",
 		"GitHub.vscode-pull-request-github"
 	],
+	// for China
+	"containerEnv":{
+		"http_proxy": "http://172.17.0.1:7890",
+		"https_proxy": "http://172.17.0.1:7890"
+	},
 	"settings": {
 		"lldb.adapterType": "native",
 		"lldb.executable": "/usr/bin/lldb",

@@ -16,8 +16,8 @@ ENV UDATADIR=/data \
 RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
 RUN sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list
 RUN echo "[global]\n\
-index-url = https://mirrors.aliyun.com/pypi/simple/\n\
-trusted-host = mirrors.aliyun.com" > /etc/pip.conf
+index-url = https://pypi.tuna.tsinghua.edu.cn/simple/\n\
+trusted-host = https://pypi.tuna.tsinghua.edu.cn" > /etc/pip.conf
 
 ### apt
 RUN apt-get update && apt-get install -y \
@@ -60,6 +60,7 @@ RUN pip install \
     sh \
     omegaconf \
     rich \
+    pytorch-lightning==1.7.7 \
     jupyter \
     wandb \
     tensorboardx \
