@@ -1535,17 +1535,17 @@ class CustomDreamer(nn.Module):
         assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
 
         selected_net = self.hps["net_mlp"]
-        if self.hps["global_cfg"].dream_input.history_merge_method == "cat_mlp":
+        if self.hps["global_cfg"].dreamer_input.history_merge_method == "cat_mlp":
             self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
             self.output_dim = state_shape[0]  # You may modify this
-        elif self.hps["global_cfg"].dream_input.history_merge_method == "stack_rnn":
+        elif self.hps["global_cfg"].dreamer_input.history_merge_method == "stack_rnn":
             if self.hps["global_cfg"].history_num > 0:
                 self.input_dim = state_shape[0] + action_shape[0]
             else:
                 self.input_dim = state_shape[0]
             self.output_dim = state_shape[0]  # You may modify this
             selected_net = self.hps["net_rnn"]
-        elif self.hps["global_cfg"].dream_input.history_merge_method == "none":
+        elif self.hps["global_cfg"].dreamer_input.history_merge_method == "none":
             self.input_dim = state_shape[0]
             self.output_dim = state_shape[0]  # You may modify this
         else:
@@ -3477,6 +3477,7 @@ class CEMRunner(DefaultRLRunner):
 class DreamerRunner(OfflineRLRunner):
 	ALGORITHM = "td3"
 	def init_components(self):
+
 		self.log("Init networks ...")
 		env = self.env
 		cfg = self.cfg

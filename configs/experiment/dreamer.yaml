@@ -10,20 +10,19 @@ defaults:
 
 # common - for all tasks (task_name, tags, output_dir, device)
 policy:
-  alpha:
-    _target_: builtins.tuple
-    _args_:
-      - - "neg_act_num" # target_entropy - float -6.0 or str "neg_act_num"
-        - _target_: torch.zeros
-          size: 
-            _target_: builtins.tuple
-            _args_:
-              - - 1
-          requires_grad: true
-          device: ${device}
-        - _target_: torch.optim.Adam
-          _partial_: true
-          lr: 3e-4 # 3e-4 in tianshou
+  update_a_per_c: 2
+  clip: 1.0
+  # noise_decay_rate: 0.998
+  noise_decay_rate: 1.0
+  policy_noise: 0.2 # training: noise = torch.randn() -> noise *= self.policy_noise -> noise = noise.clamp(-self.noise_clip, self.noise_clip)
+  noise_clip: 0.5
+  # initial_exploration_noise: 0.1
+  # exploration_noise: # infer env: 
+  #   _target_: tianshou.exploration.random.GaussianNoise
+  #   sigma: 0.1
+  initial_exploration_noise: 0.1 # infer env: # use initial_exploration_noise since self.exploration_noise would be updated
+
+
 actor:
   unbounded: true
   conditioned_sigma: true
@@ -41,6 +40,10 @@ dreamer_optim:
   _target_: torch.optim.Adam
   _partial_: true
   lr: ${actor_optim.lr}
+global_cfg:
+  dreamer_input:
+    history_merge_method: "none" # cat_mlp or stack_rnn or none
+    obs_type: "normal" # normal or oracle
 
 runner:
   _target_: src.runner.DreamerRunner
