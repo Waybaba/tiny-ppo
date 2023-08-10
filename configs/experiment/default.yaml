@@ -10,8 +10,10 @@ defaults:
   - /net@basic_rnn: rnn_basic.yaml
   - /net@critic1.net_mlp: mlp_basic.yaml
   - /net@critic1.net_rnn: rnn_basic.yaml
+  - /net@critic1.net_transformer: transformer_basic.yaml
   - /net@actor.net_mlp: mlp_basic.yaml
   - /net@actor.net_rnn: rnn_basic.yaml
+  - /net@actor.net_transformer: transformer_basic.yaml
   - /net@global_cfg.actor_input.obs_pred.net.encoder_net_mlp: mlp_basic.yaml
   - /net@global_cfg.actor_input.obs_pred.net.encoder_net_rnn: rnn_basic.yaml
   - /net@global_cfg.actor_input.obs_pred.net.decoder_net: mlp_basic.yaml
@@ -131,6 +133,7 @@ actor:
   unbounded: ???
   net_mlp: ???
   net_rnn: ???
+  net_transformer: ???
   conditioned_sigma: ???
   heads_share_pre_net: true
   pure_random: false
@@ -141,6 +144,7 @@ critic1:
   device: ${device}
   net_mlp: ???
   net_rnn: ???
+  net_transformer: ???
 critic2: ${critic1}
 actor_optim:
   _target_: torch.optim.Adam

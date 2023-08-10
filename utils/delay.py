@@ -17,6 +17,15 @@ class DelayedRoboticEnv(gym.Wrapper):
         delay_keep_order_method:
             "none": random sample from the delay_buf
             "expect1": sample from the delay_buf with the step forward of 1 [0,1,2]
+    Returns:
+        info:
+            obs_next_nodelay: the next observation without delay
+            obs_next_delayed: the next observation with delay
+            historical_act_cur: the historical actions of the next step [a_{t-max-1}, ..., a_{t-2}]
+            historical_act_next: the historical actions of the next step [a_{t-max}, ..., a_{t-1}]
+            historical_obs_cur: the historical observations of the next step [o_{t-max}, ..., o_{t-1}]
+            historical_obs_next: the historical observations of the next step [o_{t-max+1}, ..., o_{t}]
+
     """
     metadata = {'render.modes': ['human', 'text']}
 
@@ -42,7 +51,6 @@ class DelayedRoboticEnv(gym.Wrapper):
         # setup history merge
         if self.global_cfg.history_num:
             self.history_num = self.global_cfg.history_num
-            self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
         else:
             self.history_num = 0
 
@@ -59,11 +67,9 @@ class DelayedRoboticEnv(gym.Wrapper):
         # reset act_buf,prev_act - empty then fill the act_buf with zeros
         if self.history_num > 0:
             self.act_buf = [np.zeros(self.env.action_space.shape) for _ in range(self.history_num)]
-            info["historical_act_next"] = np.stack(self.act_buf, axis=0)
-            info["historical_act"] = np.stack(self.act_buf, axis=0) # for DEBUG, can be removed
+            self.obs_buf = [np.zeros_like(obs_next_nodelay) for _ in range(self.history_num)]
         else:
-            info["historical_act_next"] = False
-            info["historical_act"] = False # for DEBUG, can be removed
+            pass
         
         # update delay_buf
         self.delay_buf.get()
@@ -85,6 +91,21 @@ class DelayedRoboticEnv(gym.Wrapper):
 
         # get
         obs_next_delayed = self.delay_buf[self.delay_steps - self.last_delayed_step] # 0 -> 0
+
+        # info
+        if self.history_num > 0:
+            self.obs_buf.append(obs_next_delayed)
+            self.obs_buf.pop(0)
+            info["historical_act_next"] = np.stack(self.act_buf, axis=0)
+            info["historical_act_cur"] = np.stack(self.act_buf, axis=0)
+            info["historical_obs_next"] = np.stack(self.obs_buf, axis=0)
+            info["historical_obs_cur"] = np.stack(self.obs_buf, axis=0)
+        else:
+            info["historical_act_next"] = False
+            info["historical_act_cur"] = False
+            info["historical_obs_next"] = False
+            info["historical_obs_cur"] = False
+
 
         info["obs_next_nodelay"] = obs_next_nodelay
         info["obs_next_delayed"] = obs_next_delayed
@@ -140,14 +161,18 @@ class DelayedRoboticEnv(gym.Wrapper):
         # act merge
         if self.history_num > 0:
             info["historical_act_cur"] = np.stack(self.act_buf, axis=0)
-            info["historical_act"] = np.stack(self.act_buf, axis=0) # for DEBUG, can be removed
+            info["historical_obs_cur"] = np.stack(self.obs_buf, axis=0)
             self.act_buf.append(action)
+            self.obs_buf.append(obs_next_delayed)
             self.act_buf.pop(0)
+            self.obs_buf.pop(0)
             info["historical_act_next"] = np.stack(self.act_buf, axis=0)
+            info["historical_obs_next"] = np.stack(self.obs_buf, axis=0)
         elif self.history_num == 0:
-            info["historical_act"] = False # for DEBUG, can be removed
-            info["historical_act_next"] = False
             info["historical_act_cur"] = False
+            info["historical_obs_cur"] = False
+            info["historical_act_next"] = False
+            info["historical_obs_next"] = False
         
         return (deepcopy(obs_next_delayed), deepcopy(reward), deepcopy(done), deepcopy(truncated), deepcopy(info))
 

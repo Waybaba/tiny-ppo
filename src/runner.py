@@ -1335,6 +1335,71 @@ class RNN_MLP_Net(nn.Module):
 		output = output.reshape(*pre_sz, dim_out)
 		return output
 
+class TransformerNet(nn.Module):
+	def __init__(self, input_dim, output_dim, device, head_num, nhead_transformer, num_layers, hidden_layer_size, activation):
+		super(TransformerNet, self).__init__()
+		self.pre_encoder = nn.Linear(input_dim, hidden_layer_size).to(device)
+		self.encoder_layer = nn.TransformerEncoderLayer(d_model=hidden_layer_size, nhead=nhead_transformer, dim_feedforward=hidden_layer_size, activation=activation)
+		self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers).to(device)
+		self.decoder = nn.Linear(hidden_layer_size, output_dim).to(device)
+		self.heads = []
+		for _ in range(head_num):
+			head = MLP(
+				hidden_layer_size,
+				output_dim,
+				hidden_sizes=(),
+				device=device,
+			)
+			self.heads.append(head.to(device))
+		self.heads = nn.ModuleList(self.heads)
+		
+	def forward(self, 
+		obs: Union[np.ndarray, torch.Tensor],
+		state: Optional[Dict[str, torch.Tensor]] = None,
+		info: Dict[str, Any] = {},
+		):
+		x = self.pre_encoder(obs)
+		x = self.flatten_2d_forward(self.transformer_encoder, x)
+		return [
+			self.flatten_foward(head, x[...,0,:]) for head in self.heads # TODO transformer only use one of the feature
+		], None
+
+	def flatten_foward(self, net, input):
+		"""Flatten input for mlp forward, then reshape output to original shape.
+		input: 
+			mlp: a mlp module
+			after_rnn: tensor [*, D_in]
+		output:
+			tensor [*, D_out]
+		"""
+		# flatten
+		pre_sz, dim_in = input.shape[:-1], input.shape[-1]
+		input = input.reshape(-1, dim_in)
+		# forward
+		output = net(input)
+		# reshape
+		dim_out = output.shape[-1]
+		output = output.reshape(*pre_sz, dim_out)
+		return output
+	
+	def flatten_2d_forward(self, net, input):
+		"""Flatten input for mlp forward, then reshape output to original shape.
+		input: 
+			mlp: a mlp module
+			after_rnn: tensor [*, D_in]
+		output:
+			tensor [*, D_out]
+		"""
+		# flatten
+		pre_sz, dim_in = input.shape[:-2], input.shape[-2:]
+		input = input.reshape(-1, *dim_in)
+		# forward
+		output = net(input)
+		# reshape
+		dim_out = output.shape[-2:]
+		output = output.reshape(*pre_sz, *dim_out)
+		return output
+	
 class CustomRecurrentCritic(nn.Module):
 	def __init__(
 		self,
@@ -1441,6 +1506,20 @@ class CustomRecurrentActorProb(nn.Module):
 				else:
 					self.input_dim = state_shape[0]
 			self.output_dim = int(np.prod(action_shape))
+		elif self.hps["global_cfg"].actor_input.history_merge_method == "transformer":
+			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
+				# TODO transformer
+				pass
+			elif self.hps["global_cfg"].actor_input.obs_encode.turn_on:
+				# TODO transformer
+				pass
+			else:
+				selected_net = self.hps["net_transformer"]
+				if self.hps["global_cfg"].history_num > 0:
+					self.input_dim = state_shape[0] + action_shape[0]
+				else:
+					self.input_dim = state_shape[0]
+			self.output_dim = int(np.prod(action_shape))
 		elif self.hps["global_cfg"].actor_input.history_merge_method == "none":
 			if self.hps["global_cfg"].actor_input.obs_pred.turn_on:
 				if self.hps["global_cfg"].actor_input.obs_pred.input_type == "feat":
@@ -1524,50 +1603,50 @@ class CustomRecurrentActorProb(nn.Module):
 		return self.forward(actor_input, in_state)
 
 class CustomDreamer(nn.Module):
-    def __init__(
-        self,
-        state_shape: Sequence[int],
-        action_shape: Sequence[int],
-        **kwargs,
-    ) -> None:
-        super().__init__()
-        self.hps = kwargs
-        assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
+	def __init__(
+		self,
+		state_shape: Sequence[int],
+		action_shape: Sequence[int],
+		**kwargs,
+	) -> None:
+		super().__init__()
+		self.hps = kwargs
+		assert len(state_shape) == 1 and len(action_shape) == 1, "now, only support 1d state and action"
 
-        selected_net = self.hps["net_mlp"]
-        if self.hps["global_cfg"].dreamer_input.history_merge_method == "cat_mlp":
-            self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
-            self.output_dim = state_shape[0]  # You may modify this
-        elif self.hps["global_cfg"].dreamer_input.history_merge_method == "stack_rnn":
-            if self.hps["global_cfg"].history_num > 0:
-                self.input_dim = state_shape[0] + action_shape[0]
-            else:
-                self.input_dim = state_shape[0]
-            self.output_dim = state_shape[0]  # You may modify this
-            selected_net = self.hps["net_rnn"]
-        elif self.hps["global_cfg"].dreamer_input.history_merge_method == "none":
-            self.input_dim = state_shape[0]
-            self.output_dim = state_shape[0]  # You may modify this
-        else:
-            raise NotImplementedError
+		selected_net = self.hps["net_mlp"]
+		if self.hps["global_cfg"].dreamer_input.history_merge_method == "cat_mlp":
+			self.input_dim = state_shape[0] + action_shape[0] * self.hps["global_cfg"].history_num
+			self.output_dim = state_shape[0]  # You may modify this
+		elif self.hps["global_cfg"].dreamer_input.history_merge_method == "stack_rnn":
+			if self.hps["global_cfg"].history_num > 0:
+				self.input_dim = state_shape[0] + action_shape[0]
+			else:
+				self.input_dim = state_shape[0]
+			self.output_dim = state_shape[0]  # You may modify this
+			selected_net = self.hps["net_rnn"]
+		elif self.hps["global_cfg"].dreamer_input.history_merge_method == "none":
+			self.input_dim = state_shape[0]
+			self.output_dim = state_shape[0]  # You may modify this
+		else:
+			raise NotImplementedError
 
-        bidirectional = True if "bidirectional" in kwargs and kwargs["bidirectional"] else False
-        self.net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=1, bidirectional=bidirectional)
+		bidirectional = True if "bidirectional" in kwargs and kwargs["bidirectional"] else False
+		self.net = selected_net(self.input_dim, self.output_dim, device=self.hps["device"], head_num=1, bidirectional=bidirectional)
 
-    def forward(
-        self,
-        dream_input: Union[np.ndarray, torch.Tensor],
-        state: Dict[str, torch.Tensor],
-        info: Dict[str, Any] = {},
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        """
-        Process the dream_input through the neural network to model the expected next state.
-        """
-        assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
-        assert type(state) == dict or state is None, "state should be a dict with 'hidden' or None"
-        output, state_ = self.net(dream_input, state)
-        next_state = output[0]
-        return next_state, state_
+	def forward(
+		self,
+		dream_input: Union[np.ndarray, torch.Tensor],
+		state: Dict[str, torch.Tensor],
+		info: Dict[str, Any] = {},
+	) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+		"""
+		Process the dream_input through the neural network to model the expected next state.
+		"""
+		assert type(info) == dict, "info should be a dict, check whether missing 'info' as act"
+		assert type(state) == dict or state is None, "state should be a dict with 'hidden' or None"
+		output, state_ = self.net(dream_input, state)
+		next_state = output[0]
+		return next_state, state_
 
 class ObsPredNet(nn.Module):
 	"""
@@ -2098,6 +2177,9 @@ class TD3SACRunner(OfflineRLRunner):
 				)], device=self.actor.device)
 	
 	def preprocess_from_env(self, batch, state, mode=None):
+		"""
+		use in the online interaction with env
+		"""
 		assert len(batch.obs.shape) == 1, "for online batch, batch size must be 1"
 		res_state = {}
 
@@ -2173,6 +2255,33 @@ class TD3SACRunner(OfflineRLRunner):
 				raise NotImplementedError("stack_rnn + obs_encode not implemented")
 				encode_output, res_state = self.encode_net.normal_encode(a_in)
 				a_in = encode_output.cpu()
+
+		elif self.global_cfg.actor_input.history_merge_method == "transformer":
+			if self.global_cfg.history_num > 0:
+				a_in = np.concatenate([
+					batch.info["historical_obs_next"], # TODO here we does not consider the oracle obs
+					batch.info["historical_act_next"],
+				], axis=-1)
+			if self.global_cfg.actor_input.obs_pred.turn_on:
+				pass # TODO transformer
+				raise NotImplementedError("transformer + obs_pred not implemented")
+				# state_for_obs_pred = distill_state(state, {"hidden_pred_net_encoder": "hidden_encoder", "hidden_pred_net_decoder": "hidden_decoder"})
+				# pred_out, pred_info = self.pred_net(a_in, state=state_for_obs_pred)
+				# res_state = update_state(res_state, state_for_obs_pred, {"hidden_encoder": "hidden_pred_net_encoder", "hidden_decoder": "hidden_pred_net_decoder"})
+				# if self.global_cfg.actor_input.obs_pred.input_type == "obs":
+				# 	a_in = pred_out.cpu()
+				# elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
+				# 	a_in = pred_info["feats"].cpu()
+				# else: raise ValueError("unknown input_type: {}".format(self.global_cfg.actor_input.obs_pred.input_type))
+				# if "is_first_step" not in batch.info:
+				# 	pred_abs_error_online = ((pred_out - torch.tensor(batch.info["obs_next_nodelay"],device=self.cfg.device))**2).mean().item()
+				# 	self.record("obs_pred/pred_abs_error_online", pred_abs_error_online)
+			elif self.global_cfg.actor_input.obs_encode.turn_on:
+				pass # TODO transformer
+				raise NotImplementedError("transformer + obs_encode not implemented")
+				# raise NotImplementedError("stack_rnn + obs_encode not implemented")
+				# encode_output, res_state = self.encode_net.normal_encode(a_in)
+				# a_in = encode_output.cpu()
 		
 		else:
 			raise ValueError(f"history_merge_method {self.global_cfg.actor_input.history_merge_method} not implemented")
@@ -2310,7 +2419,7 @@ class TD3SACRunner(OfflineRLRunner):
 			act, rew, done (*, ): no changes (terminated and truncated are removed since we don't need them)
 			ahis_cur, ahis_next (*, history_len, act_dim): history of actions
 		"""
-		keeped_keys = ["dobs", "dobs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done", "terminated", "obs_delayed_step_num"]
+		keeped_keys = ["dobs", "dobs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "ohis_cur","ohis_next", "act", "rew", "done", "terminated", "obs_delayed_step_num"]
 		batch = self.buf[indices]
 		batch.dobs, batch.dobs_next = batch.obs, batch.obs_next
 		batch.oobs, batch.oobs_next = batch.info["obs_nodelay"], batch.info["obs_next_nodelay"]
@@ -2318,6 +2427,8 @@ class TD3SACRunner(OfflineRLRunner):
 		if self.cfg.global_cfg.debug.new_his_act:
 			batch.ahis_cur = batch.info["historical_act_cur"]
 			batch.ahis_next = batch.info["historical_act_next"]
+			batch.ohis_cur = batch.info["historical_obs_cur"]
+			batch.ohis_next = batch.info["historical_obs_next"]
 		else:
 			batch.ahis_cur = batch.info["historical_act"]
 			batch.ahis_next = self.buf[self.buf.next(indices)].info["historical_act"]
@@ -2551,6 +2662,71 @@ class TD3SACRunner(OfflineRLRunner):
 				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
 					batch.a_in_cur = batch.a_in_cur.detach()
 					batch.a_in_next = batch.a_in_next.detach()
+		elif self.global_cfg.actor_input.history_merge_method == "transformer":
+			if self.global_cfg.history_num > 0: 
+				batch.a_in_cur = torch.cat([batch.ohis_cur, batch.ahis_cur], dim=-1) # [*, obs_dim+act_dim]
+				batch.a_in_next = torch.cat([batch.ohis_next, batch.ahis_next], dim=-1)
+
+			if self.global_cfg.actor_input.obs_pred.turn_on:
+				raise NotImplementedError
+				keeped_keys += ["pred_out_cur", "oobs"]
+				batch.pred_in_cur = batch.a_in_cur
+				batch.pred_in_next = batch.a_in_next
+				batch.pred_out_cur, pred_info_cur = self.pred_net(batch.pred_in_cur)
+				batch.pred_out_next, pred_info_next = self.pred_net(batch.pred_in_next)
+				
+				if self.global_cfg.actor_input.obs_pred.input_type == "obs": # a input
+					batch.a_in_cur = batch.pred_out_cur
+					batch.a_in_next = batch.pred_out_next
+				elif self.global_cfg.actor_input.obs_pred.input_type == "feat":
+					batch.a_in_cur = pred_info_cur["feats"]
+					batch.a_in_next = pred_info_next["feats"]
+				else:
+					raise NotImplementedError
+				
+				if self.global_cfg.actor_input.obs_pred.middle_detach: # detach
+					batch.a_in_cur = batch.a_in_cur.detach()
+					batch.a_in_next = batch.a_in_next.detach()
+				
+				if self.global_cfg.actor_input.obs_pred.net_type == "vae": # vae
+					keeped_keys += ["pred_info_cur_mu", "pred_info_cur_logvar"]
+					batch.pred_info_cur_mu = pred_info_cur["mu"]
+					batch.pred_info_cur_logvar = pred_info_cur["logvar"]
+				
+			if self.global_cfg.actor_input.obs_encode.turn_on:
+				raise NotImplementedError
+				keeped_keys += ["encode_oracle_info_cur_mu","encode_oracle_info_cur_logvar", "encode_normal_info_cur_mu", "encode_normal_info_cur_logvar"]
+				
+				batch.encode_obs_in_cur = batch.a_in_cur
+				batch.encode_obs_in_next = batch.a_in_next
+
+				batch.encode_obs_out_cur, encode_obs_info_cur = self.encode_net.normal_encode(batch.encode_obs_in_cur)
+				batch.encode_obs_out_next, _ = self.encode_net.normal_encode(batch.encode_obs_in_next)
+				batch.encode_oracle_obs_output_cur, encode_oracle_obs_info_cur = self.encode_net.oracle_encode(batch.oobs)
+				batch.encode_oracle_obs_output_next, _ = self.encode_net.oracle_encode(batch.oobs_next)
+				
+				batch.encode_normal_info_cur_mu = encode_obs_info_cur["mu"]
+				batch.encode_normal_info_cur_logvar = encode_obs_info_cur["logvar"]
+				batch.encode_oracle_info_cur_mu = encode_oracle_obs_info_cur["mu"]
+				batch.encode_oracle_info_cur_logvar = encode_oracle_obs_info_cur["logvar"]
+				
+				if self.global_cfg.actor_input.obs_encode.train_eval_async == True:
+					batch.a_in_cur = batch.encode_oracle_obs_output_cur
+					batch.a_in_next = batch.encode_oracle_obs_output_next
+				elif self.global_cfg.actor_input.obs_encode.train_eval_async == False:
+					batch.a_in_cur = batch.encode_obs_out_cur
+					batch.a_in_next = batch.encode_obs_out_next
+				else:
+					raise ValueError("batch error")
+				
+				if self.global_cfg.actor_input.obs_encode.pred_loss_weight:
+					keeped_keys += ["oobs", "pred_obs_output_cur"]
+					batch.pred_obs_output_cur, _ = self.encode_net.decode(batch.encode_obs_out_cur)
+				
+				if self.global_cfg.actor_input.obs_encode.before_policy_detach:
+					batch.a_in_cur = batch.a_in_cur.detach()
+					batch.a_in_next = batch.a_in_next.detach()
+		
 		else: 
 			raise ValueError("history_merge_method error")
 

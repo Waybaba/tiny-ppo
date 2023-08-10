@@ -35,8 +35,8 @@
 				// "experiment=obs_pred",
 				// "experiment=stack_rnn",
 				// "experiment=vlog_dummy",
-				"env.name=HalfCheetah-v4",
-				// "env.name=Hopper-v4",
+				// "env.name=HalfCheetah-v4",
+				"env.name=Hopper-v4",
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
@@ -89,6 +89,13 @@
 				// "global_cfg.actor_input.obs_type=normal",
 				// "global_cfg.actor_input.history_merge_method=stack_rnn",
 				// "global_cfg.burnin_num=0.25",
+				// "global_cfg.history_num=1",
+
+				// ### oracle guided transformer actor
+				"global_cfg.critic_input.obs_type=oracle",
+				"global_cfg.critic_input.history_merge_method=none",
+				"global_cfg.actor_input.obs_type=normal",
+				"global_cfg.actor_input.history_merge_method=transformer",
 				// "global_cfg.history_num=1",
 
 				// ### symmetricCatMlp

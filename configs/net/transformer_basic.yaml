@@ -1,0 +1,13 @@
+_target_: src.runner.TransformerNet
+_partial_: true
+hidden_layer_size: 256
+nhead_transformer: 1
+activation: relu
+num_layers: 2
+# nhead: 1
+
+
+# rnn_layer_num: 0
+# rnn_hidden_layer_size: 256
+# mlp_hidden_sizes: [256,256]
+# mlp_softmax: false

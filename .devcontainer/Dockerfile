@@ -68,14 +68,16 @@ RUN pip install \
     # && rm -rf /var/lib/apt/lists/*
 
 ### pip - more
+# mujoco==3.3 cause > 3.3 is problem.
 RUN pip install \
     hydra-joblib-launcher \
     gymnasium \
-    mujoco \
-    gym==0.25.0 \
+    mujoco==2.3.3 \
     tianshou==0.4.11 \
     ftfy \
-    regex
+    regex \
+    imageio
+    # gym[mujoco]==0.25.0 \
 
 RUN pip install pandas
 
@@ -95,17 +97,17 @@ WORKDIR $HOME
 
 
 ### (optional) mujoco root
-USER root
-RUN mkdir /usr/local/mujoco
-RUN wget https://mujoco.org/download/mujoco210-linux-x86_64.tar.gz # replace with the actual URL
-RUN tar -zxvf mujoco210-linux-x86_64.tar.gz
-RUN mv mujoco210 /usr/local/mujoco/
-RUN rm mujoco210-linux-x86_64.tar.gz
-ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:/usr/local/mujoco/mujoco210/bin
-ENV MUJOCO_PY_MUJOCO_PATH /usr/local/mujoco/mujoco210
-RUN pip install 'mujoco-py<2.2,>=2.1' 'cython<3'
-RUN python -c "import mujoco_py; print(mujoco_py.__version__)" # prebuild mujoco ps. first import mujoco with non-root user would cause error
-RUN chmod -R a+rwx /opt/conda/lib/python3.7/site-packages/mujoco_py/generated
+# USER root
+# RUN mkdir /usr/local/mujoco
+# RUN wget https://mujoco.org/download/mujoco210-linux-x86_64.tar.gz # replace with the actual URL
+# RUN tar -zxvf mujoco210-linux-x86_64.tar.gz
+# RUN mv mujoco210 /usr/local/mujoco/
+# RUN rm mujoco210-linux-x86_64.tar.gz
+# ENV LD_LIBRARY_PATH $LD_LIBRARY_PATH:/usr/local/mujoco/mujoco210/bin
+# ENV MUJOCO_PY_MUJOCO_PATH /usr/local/mujoco/mujoco210
+# RUN pip install 'mujoco-py<2.2,>=2.1' 'cython<3'
+# RUN python -c "import mujoco_py; print(mujoco_py.__version__)" # prebuild mujoco ps. first import mujoco with non-root user would cause error
+# RUN chmod -R a+rwx /opt/conda/lib/python3.7/site-packages/mujoco_py/generated
 
 
 ### (optional) mujoco user version
@@ -119,14 +121,14 @@ RUN chmod -R a+rwx /opt/conda/lib/python3.7/site-packages/mujoco_py/generated
 
 
 ### (optional) d4rl
-RUN pip install git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
-RUN pip install dm_control 'mujoco-py<2.2,>=2.1' # avoid mujoco version change
+# RUN pip install git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
+# RUN pip install dm_control 'mujoco-py<2.2,>=2.1' # avoid mujoco version change
 
 ### (optional) diffuser
-RUN pip install gym==0.18.0 einops typed-argument-parser scikit-video==1.1.11 scikit-image==0.17.2
-RUN pip install 'mujoco-py<2.2,>=2.1' # avoid mujoco version change
+# RUN pip install gym==0.18.0 einops typed-argument-parser scikit-video==1.1.11 scikit-image==0.17.2
+# RUN pip install 'mujoco-py<2.2,>=2.1' # avoid mujoco version change
 
 
 ### end # comment the following when amlt: amlt need root user to build, but it will switch to a user called aiscuser when running
-USER $USERNAME 
-CMD sleep infinity
+# USER $USERNAME 
+# CMD sleep infinity
