@@ -131,4 +131,5 @@ WORKDIR $HOME
 
 ### end # comment the following when amlt: amlt need root user to build, but it will switch to a user called aiscuser when running
 # USER $USERNAME 
+USER root
 # CMD sleep infinity
