@@ -1,0 +1,41 @@
+
+# run with
+# amlt run configs/amlt/wandb_sync.yaml `TZ=Asia/Shanghai date +"%D_%T" | tr :/\  _`
+
+description: WANDB_SYNC
+
+target:
+    service: singularity
+    name: msrresrchvc
+
+environment:
+    image: waybaba/rl:Aug10 # ! may need to be changed
+    # username: waybaba
+    setup:
+        - echo "setup start..."
+        - export UPRJDIR=/mnt/default/
+        - export UDATADIR=/mnt/storage/data
+        - export UOUTDIR=/mnt/storage/output
+        - mkdir -p /mnt/storage/output /mnt/storage/data
+        - echo "setup finished!"
+
+code:
+  local_dir: $CONFIG_DIR/../../
+
+storage:
+  input:
+    storage_account_name: resrchvc4data
+    container_name: v-wangwei1
+    mount_dir: /mnt/storage
+    local_dir: /home/v-wangwei1/storage
+
+jobs:
+- name: wandb_sync
+  sku: 8C2
+  command:
+  - echo "### source .env..."
+  - source .env
+  - echo "### login ..."
+  - wandb login $WANDB_API_KEY
+  - echo "### wandb sync start..."
+  - wandb sync `ls -td /mnt/storage/output/hydra_log/*/multiruns/*/*/wandb/offline*`
