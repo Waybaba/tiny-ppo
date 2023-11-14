@@ -27,7 +27,7 @@ storage:
     storage_account_name: resrchvc4data
     container_name: v-wangwei1
     mount_dir: /mnt/storage
-    local_dir: /home/v-wangwei1/storage
+    local_dir: $UDATADIR
 
 jobs:
 - name: wandb_sync
@@ -38,4 +38,5 @@ jobs:
   - echo "### login ..."
   - wandb login $WANDB_API_KEY
   - echo "### wandb sync start..."
-  - wandb sync `ls -td /mnt/storage/output/hydra_log/*/multiruns/*/*/wandb/offline*`
+  # - wandb sync `ls -td /mnt/storage/output/hydra_log/*/multiruns/*/*/wandb/offline*`
+  - wandb sync /mnt/storage/output/hydra_log/RL_Final/multiruns/*/*/wandb/offline*

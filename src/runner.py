@@ -2440,7 +2440,8 @@ class TD3SACRunner(OfflineRLRunner):
 		return batch
 
 	def _pre_update_process(self, batch, burnin_batch=None):
-		"""
+		""" Pre-update process
+		including merging history, obs_pred, obs_encode ... and removing some keys 
 		only keep keys used in update
 		input keys: ["dobs", "dobs_next", "oobs", "oobs_next", "ahis_cur", "ahis_next", "act", "rew", "done"]
 		output keys:
@@ -2775,8 +2776,6 @@ class TD3SACRunner(OfflineRLRunner):
 			if self._burnin_num():
 				keeped_keys += ["burnin_c_in", "burnin_remaster_mask"] # mask reused by critic
 				batch.burnin_c_in, batch.burnin_remaster_mask = burnin_batch.c_in, burnin_batch.valid_mask
-
-			
 		else:
 			raise ValueError("unknown history_merge_method: {}".format(self.cfg.global_cfg.critic_input.history_merge_method))
 		

@@ -114,7 +114,7 @@ storage:
     storage_account_name: resrchvc4data
     container_name: v-wangwei1
     mount_dir: /mnt/storage
-    local_dir: /home/v-wangwei1/storage
+    local_dir: $UDATADIR
 
 search:
   job_template:

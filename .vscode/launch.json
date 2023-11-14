@@ -95,8 +95,8 @@
 				"global_cfg.critic_input.obs_type=oracle",
 				"global_cfg.critic_input.history_merge_method=none",
 				"global_cfg.actor_input.obs_type=normal",
-				"global_cfg.actor_input.history_merge_method=transformer",
-				// "global_cfg.history_num=1",
+				"global_cfg.actor_input.history_merge_method=cat_mlp",
+				"global_cfg.history_num=10",
 
 				// ### symmetricCatMlp
 				// "global_cfg.critic_input.obs_type=normal",

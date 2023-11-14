@@ -1,4 +1,4 @@
-### pytorch image base
+#  pytorch image base
 FROM pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel as base
 ENV NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES},display \
     DEBIAN_FRONTEND=noninteractive \
@@ -13,14 +13,13 @@ ENV UDATADIR=/data \
     UDEVICEID=docker
 
 # in China
-RUN curl --noproxy "*" -s --connect-timeout 5 www.google.com > /dev/null; \
+RUN curl --noproxy "*" -s --connect-timeout 10 www.google.com > /dev/null; \
     if [ $? -ne 0 ]; then \
         echo "In China"; \
         sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list; \
         sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list; \
         echo "[global]\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple/\ntrusted-host = https://pypi.tuna.tsinghua.edu.cn" > /etc/pip.conf; \
     fi
-
 
 ### apt
 RUN apt-get update && apt-get install -y \
