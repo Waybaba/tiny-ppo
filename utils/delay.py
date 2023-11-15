@@ -5,6 +5,7 @@ from copy import deepcopy
 
    
 
+# main
 
 class DelayedRoboticEnv(gym.Wrapper):
     """
@@ -186,6 +187,7 @@ class DelayedRoboticEnv(gym.Wrapper):
         return self.preprocess_fn(res, action)
 
 
+# others
 
 class StickyActionWrapper(gym.Wrapper):
     """
@@ -206,9 +208,8 @@ class StickyActionWrapper(gym.Wrapper):
         obs_next_nodelay, reward, done, truncated, info = self.env.step(action)
         return obs_next_nodelay, reward, done, truncated, info
 
-
 class GaussianNoiseActionWrapper(gym.Wrapper):
-    def __init__(self, env, noise_fraction=0.2):
+    def __init__(self, env, noise_fraction):
         super().__init__(env)
         self.noise_fraction = noise_fraction
 
@@ -229,6 +230,49 @@ class GaussianNoiseActionWrapper(gym.Wrapper):
         # Take a step in the environment with the clipped action
         return self.env.step(clipped_action)
 
+class GaussianNoiseObservationWrapper(gym.Wrapper):
+    def __init__(self, env, gaussian_obs):
+        super().__init__(env)
+        self.gaussian_obs = gaussian_obs
+
+    def reset(self):
+        res = self.env.reset()
+        if isinstance(res, tuple): obs, info = res
+        else: obs, info = res, {}
+        clipped_observation = self.noisify_obs(obs)
+        if isinstance(res, tuple):
+            return clipped_observation, info
+        else:
+            return clipped_observation
+
+    def step(self, action):
+        res = self.env.step(action)
+        if len(res) == 4: 
+            obs, reward, done, info = res
+            truncated = False
+        elif len(res) == 5:
+            obs, reward, done, truncated, info = res
+        else:
+            raise ValueError("Invalid return value from env.step()")
+        clipped_observation = self.noisify_obs(obs)
+        # return
+        if len(res) == 4: 
+            return clipped_observation, reward, done, info
+        elif len(res) == 5:
+            return clipped_observation, reward, done, truncated, info
+    
+    def noisify_obs(self, obs):
+        # Calculate the noise scale based on action space range
+        obs_range = self.observation_space.high - self.observation_space.low
+        obs_range = np.where(np.isinf(obs_range), 2., obs_range) # if is inf, set to 2.
+        noise_scale = self.gaussian_obs * obs_range * 0.5
+
+        # Add Gaussian noise to the action
+        noisy_obs = obs + np.random.normal(0, noise_scale, size=obs.shape)
+
+        # Clip the noisy action to the action range # ! note that for mujoco, there is no limit clip since space is [-inf, inf]
+        clipped_observation = np.clip(noisy_obs, self.observation_space.low, self.observation_space.high)
+        return clipped_observation
 
 # utils
 

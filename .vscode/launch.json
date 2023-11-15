@@ -12,6 +12,14 @@
 			"console": "integratedTerminal",
 			"justMyCode": true
 		},
+		{
+			"name": "tmp",
+			"type": "python",
+			"request": "launch",
+			"program": "src/tmp.py",
+			"console": "integratedTerminal",
+			"justMyCode": true
+		},
 		// TD3_SAC
 		{
 			"name": "TD3_SAC_DDPG",

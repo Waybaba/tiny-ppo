@@ -40,7 +40,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     libgmp-dev \
     libmpfr-dev \
-    libmpc-dev
+    libmpc-dev \
+    cmake
     # && rm -rf /var/lib/apt/lists/*
 
 # ### conda
@@ -82,6 +83,9 @@ RUN pip install \
     # gym[mujoco]==0.25.0 \
 
 RUN pip install pandas
+
+
+## install 
 
 ## Non-root user creation and enter
 ARG USER_UID=1000
