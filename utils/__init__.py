@@ -16,7 +16,7 @@ from torch import nn
 import torch
 import numpy as np
 from tianshou.utils.net.common import MLP
-from utils.delay import DelayedRoboticEnv, StickyActionWrapper, GaussianNoiseActionWrapper, GaussianNoiseObservationWrapper
+from utils.delay import DelayedRoboticEnv, StickyActionWrapper, GaussianNoiseActionWrapper, GaussianNoiseObservationWrapper, NormedObsActWrapper
 
 ModuleType = Type[nn.Module]
 
@@ -32,13 +32,24 @@ from pytorch_lightning.utilities.logger import (
 )
 
 def make_env(env_cfg):
+    if env_cfg.name.startswith("gym_anm"): # some env does not support gymnasium
+        import gym
+    else:
+        import gymnasium as gym
+    
     if env_cfg.use_contact_forces:
         env = gym.make(env_cfg.name, use_contact_forces=True)
     else:
         env = gym.make(env_cfg.name)
+    
     if env_cfg.gaussian_obs: # ! order is important. when operating on obs, this wrapper must be inside
         env = GaussianNoiseObservationWrapper(env, env_cfg.gaussian_obs)
+    
     env = DelayedRoboticEnv(env, env_cfg.delay, env_cfg.fixed_delay, env_cfg.global_cfg)
+
+    if env_cfg.name.startswith("gym_anm"):
+        env = NormedObsActWrapper(env)
+
     if env_cfg.sticky_action_prob:
         env = StickyActionWrapper(env, env_cfg.sticky_action_prob)
     if env_cfg.noise_fraction:

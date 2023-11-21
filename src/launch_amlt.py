@@ -96,7 +96,8 @@ target:
     name: msrresrchvc
 
 environment:
-    image: waybaba/rl:Aug10 # ! may need to be changed
+    # image: waybaba/rl:Aug10 # ! may need to be changed
+    image: waybaba/rl:gym_anm
     username: waybaba
     setup:
         - echo "setup start..."

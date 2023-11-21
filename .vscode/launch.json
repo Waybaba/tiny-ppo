@@ -44,7 +44,7 @@
 				// "experiment=stack_rnn",
 				// "experiment=vlog_dummy",
 				// "env.name=HalfCheetah-v4",
-				"env.name=Hopper-v4",
+				"env.name=gym_anm:ANM6Easy-v0",
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
 				// "env.name=DummyNum-v0",
@@ -61,7 +61,7 @@
 				// "env.fixed_delay=false",
 				// "global_cfg.debug.delay_keep_order_method=expect1",
 
-				"start_timesteps=1000",
+				"start_timesteps=100",
 				// "start_timesteps=10000",
 				// "start_timesteps=25000",
 

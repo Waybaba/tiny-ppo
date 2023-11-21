@@ -6,7 +6,6 @@ from copy import deepcopy
    
 
 # main
-
 class DelayedRoboticEnv(gym.Wrapper):
     """
     Args:
@@ -273,6 +272,50 @@ class GaussianNoiseObservationWrapper(gym.Wrapper):
         # Clip the noisy action to the action range # ! note that for mujoco, there is no limit clip since space is [-inf, inf]
         clipped_observation = np.clip(noisy_obs, self.observation_space.low, self.observation_space.high)
         return clipped_observation
+
+class NormedObsActWrapper(gym.Wrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space_ori = self.observation_space
+        self.action_space_ori = self.action_space # ! ?
+        self.observation_space = gym.spaces.Box(low=-1, high=1, shape=self.observation_space.shape, dtype=np.float32)
+        self.action_space = gym.spaces.Box(low=-1, high=1, shape=self.action_space.shape, dtype=np.float32)
+    
+    def reset(self):
+        res = self.env.reset()
+        if isinstance(res, tuple): obs, info = res
+        else: obs, info = res, {}
+        obs = self.norm_obs(obs)
+        if isinstance(res, tuple):
+            return obs, info
+        else:
+            return obs
+    
+    def step(self, action):
+        res = self.env.step(self.denorm_act(action))
+        if len(res) == 4: 
+            obs, reward, done, info = res
+            truncated = False
+        elif len(res) == 5:
+            obs, reward, done, truncated, info = res
+        else:
+            raise ValueError("Invalid return value from env.step()")
+        obs = self.norm_obs(obs)
+        # return
+        if len(res) == 4: 
+            return obs, reward, done, info
+        elif len(res) == 5:
+            return obs, reward, done, truncated, info
+    
+    def norm_obs(self, obs):
+        obs = (obs - self.observation_space_ori.low) / (self.observation_space_ori.high - self.observation_space_ori.low)
+        obs = obs * 2 - 1
+        return obs
+
+    def denorm_act(self, act):
+        act = (act + 1) / 2
+        act = act * (self.action_space_ori.high - self.action_space_ori.low) + self.action_space_ori.low
+        return act
 
 # utils
 

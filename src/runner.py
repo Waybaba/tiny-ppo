@@ -365,7 +365,7 @@ class ReplayBuffer(tianshou.data.ReplayBuffer):
 		# Turn to the original indices (replace None with 0)
 		idx_stack_buf = buf[idx_stack_remaster]
 		idx_stack_buf[~valid_mask_shifted] = 0
-		return idx_stack_buf.astype(np.int), idx_stack_remaster.astype(np.int), valid_mask_shifted
+		return idx_stack_buf.astype(np.int32), idx_stack_remaster.astype(np.int32), valid_mask_shifted
 
 
 	def get(

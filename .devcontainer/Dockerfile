@@ -1,4 +1,5 @@
 #  pytorch image base
+# python==3.8
 FROM pytorch/pytorch:1.11.0-cuda11.3-cudnn8-runtime as base
 
 ENV NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES},display \
@@ -84,6 +85,9 @@ RUN pip install \
     # gym[mujoco]==0.25.0 \
 
 RUN pip install pandas
+
+# bug fix: plightning value error
+RUN pip install gym-anm torchmetrics==0.11.4
 
 
 ## install 
