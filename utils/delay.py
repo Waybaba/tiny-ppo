@@ -317,6 +317,36 @@ class NormedObsActWrapper(gym.Wrapper):
         act = act * (self.action_space_ori.high - self.action_space_ori.low) + self.action_space_ori.low
         return act
 
+class MaxStepWrapper(gym.Wrapper):
+    def __init__(self, env, max_step):
+        super().__init__(env)
+        self.max_step_x = max_step
+        self.step_cnt_x = 0
+    
+    def reset(self):
+        self.step_cnt_x = 0
+        return self.env.reset()
+    
+    def step(self, action):
+        self.step_cnt_x += 1
+        res = self.env.step(action)
+        if self.step_cnt_x >= self.max_step_x:
+            if len(res) == 4: 
+                obs, reward, done, info = res
+                done = True
+            elif len(res) == 5:
+                obs, reward, done, truncated, info = res
+                truncated = True
+            else:
+                raise ValueError("Invalid return value from env.step()")
+            # return
+            if len(res) == 4: 
+                return obs, reward, done, info
+            elif len(res) == 5:
+                return obs, reward, done, truncated, info
+        else:
+            return res
+
 # utils
 
 class ListAsQueue:

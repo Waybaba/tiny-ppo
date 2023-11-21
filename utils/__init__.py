@@ -16,7 +16,7 @@ from torch import nn
 import torch
 import numpy as np
 from tianshou.utils.net.common import MLP
-from utils.delay import DelayedRoboticEnv, StickyActionWrapper, GaussianNoiseActionWrapper, GaussianNoiseObservationWrapper, NormedObsActWrapper
+from utils.delay import DelayedRoboticEnv, StickyActionWrapper, GaussianNoiseActionWrapper, GaussianNoiseObservationWrapper, NormedObsActWrapper, MaxStepWrapper
 
 ModuleType = Type[nn.Module]
 
@@ -49,6 +49,7 @@ def make_env(env_cfg):
 
     if env_cfg.name.startswith("gym_anm"):
         env = NormedObsActWrapper(env)
+        env = MaxStepWrapper(env, 1000)
 
     if env_cfg.sticky_action_prob:
         env = StickyActionWrapper(env, env_cfg.sticky_action_prob)
