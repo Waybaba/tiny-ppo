@@ -1,5 +1,6 @@
 #  pytorch image base
-FROM pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel as base
+FROM pytorch/pytorch:1.11.0-cuda11.3-cudnn8-runtime as base
+
 ENV NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES},display \
     DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
