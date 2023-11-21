@@ -28,6 +28,7 @@
 			"program": "${workspaceFolder}/src/entry.py",
 			"console": "integratedTerminal",
 			"justMyCode": true,
+			"noDebug": true,
 			"args": [
 				// "experiment=ddpg",
 				// "experiment=ddpg_rnn",
@@ -57,14 +58,17 @@
 				// "env.use_contact_forces=true",
 				
 
-				"env.delay=4",
+				"env.delay=0",
 				// "env.fixed_delay=false",
 				// "global_cfg.debug.delay_keep_order_method=expect1",
 
 				"start_timesteps=100",
 				// "start_timesteps=10000",
 				// "start_timesteps=25000",
-
+				"trainer.episode_per_test=1",
+				"trainer.max_epoch=200",
+				"trainer.step_per_epoch=500",
+				"env.max_step=100",
 				// "trainer.batch_size=256", 
 				// "trainer.batch_seq_len=1",
 				// "trainer.batch_size=2048", 
@@ -104,7 +108,7 @@
 				"global_cfg.critic_input.history_merge_method=none",
 				"global_cfg.actor_input.obs_type=normal",
 				"global_cfg.actor_input.history_merge_method=cat_mlp",
-				"global_cfg.history_num=10",
+				// "global_cfg.history_num=10",
 
 				// ### symmetricCatMlp
 				// "global_cfg.critic_input.obs_type=normal",
@@ -114,7 +118,7 @@
 
 				// ### FOR VSCODE
 				// "wandb.mode=disabled",
-				"wandb.mode=disabled",
+				"wandb.mode=online",
 				"wandb.buf_dir=false",
 
 				// ### DEBUG - Fast
@@ -123,7 +127,6 @@
 				// "trainer.episode_per_test=2",
 				// "actor.heads_share_pre_net=false",
 				// "global_cfg.debug.auto_kl_use_log=true",
-				
 				
 				// ### misc
 				// "global_cfg.actor_input.obs_encode.auto_kl_target=null",

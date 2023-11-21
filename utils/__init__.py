@@ -49,7 +49,7 @@ def make_env(env_cfg):
 
     if env_cfg.name.startswith("gym_anm"):
         env = NormedObsActWrapper(env)
-        env = MaxStepWrapper(env, 1000)
+        env = MaxStepWrapper(env, env_cfg.max_step)
 
     if env_cfg.sticky_action_prob:
         env = StickyActionWrapper(env, env_cfg.sticky_action_prob)

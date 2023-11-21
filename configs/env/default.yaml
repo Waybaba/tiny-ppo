@@ -7,3 +7,4 @@ sticky_action_prob: 0.0
 noise_fraction: 0.0 # for act
 gaussian_obs: 0.0 # for obs
 use_contact_forces: false
+max_step: 1000 # only used for gym_anm
