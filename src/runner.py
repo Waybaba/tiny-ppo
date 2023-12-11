@@ -389,6 +389,7 @@ class EnvCollector:
 
 	def __init__(self, env):
 		self.env = env
+		# from minari import DataCollectorV0 as DataCollector
 		self.env_loop = self.create_env_loop()
 
 	def collect(self, act_func, n_step=None, n_episode=None, env_max_step=5000, reset=False, progress_bar=None, rich_progress=None):
@@ -1835,7 +1836,7 @@ class DefaultRLRunner:
 			initialize cfg.runner, pass cfg to runner
 		runner.py(XXXRunner)
 			initialize envs, policy, buffer, etc.
-			call DefaultRLRunner.__init__(cfg) for common initialization
+			call DefaultRLRunner.__init__(cfg) for mmon initialization
 			call XXXRunner.__init__(cfg) for specific initialization
 	"""
 	def start(self, cfg):
@@ -2012,6 +2013,11 @@ class OfflineRLRunner(DefaultRLRunner):
 
 	def _end_all(self):
 		if self.cfg.trainer.progress_bar: self.progress.stop()
+		if self.cfg.env.save_minari: # save dataset
+			self.env.create_dataset(
+				dataset_id=self.cfg.env.name.split("-")[0]+"-sac"+"-v0"
+			)
+			print("Minari dataset saved as name {}".format(self.cfg.env.name))
 
 	def select_act_for_env(self, batch, state, mode):
 		"""

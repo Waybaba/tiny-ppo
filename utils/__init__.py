@@ -16,7 +16,7 @@ from torch import nn
 import torch
 import numpy as np
 from tianshou.utils.net.common import MLP
-from utils.delay import DelayedRoboticEnv, StickyActionWrapper, GaussianNoiseActionWrapper, GaussianNoiseObservationWrapper, NormedObsActWrapper, MaxStepWrapper
+from utils.delay import DelayedRoboticEnv, StickyActionWrapper, GaussianNoiseActionWrapper, GaussianNoiseObservationWrapper, NormedObsActWrapper, MaxStepWrapper, BetterResetWrapper
 
 ModuleType = Type[nn.Module]
 
@@ -41,6 +41,7 @@ def make_env(env_cfg):
         env = gym.make(env_cfg.name, use_contact_forces=True)
     else:
         env = gym.make(env_cfg.name)
+
     
     if env_cfg.gaussian_obs: # ! order is important. when operating on obs, this wrapper must be inside
         env = GaussianNoiseObservationWrapper(env, env_cfg.gaussian_obs)
@@ -55,6 +56,14 @@ def make_env(env_cfg):
         env = StickyActionWrapper(env, env_cfg.sticky_action_prob)
     if env_cfg.noise_fraction:
         env = GaussianNoiseActionWrapper(env, env_cfg.noise_fraction)
+
+    env = BetterResetWrapper(env) # avoid reset(**kwargs) error
+
+    if env_cfg.save_minari: # to save dataset
+        # from minari import DataCollector
+        from minari import DataCollector
+        env = DataCollector(env, record_infos=True)
+
     return env
 
 def seed_everything(seed: int):

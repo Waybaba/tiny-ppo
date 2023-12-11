@@ -88,6 +88,8 @@ RUN pip install pandas
 
 # bug fix: plightning value error
 RUN pip install gym-anm torchmetrics==0.11.4
+RUN git clone https://github.com/Farama-Foundation/Minari.git \
+    && pip install -e ./Minari
 
 
 ## install 

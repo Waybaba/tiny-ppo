@@ -2,11 +2,11 @@ import gymnasium as gym
 import numpy as np
 from queue import Queue
 from copy import deepcopy
-
+from gymnasium.utils import RecordConstructorArgs
    
 
 # main
-class DelayedRoboticEnv(gym.Wrapper):
+class DelayedRoboticEnv(gym.Wrapper, RecordConstructorArgs):
     """
     Args:
         fixed_delay: if True, the delay_steps is fixed. Otherwise, 
@@ -188,7 +188,7 @@ class DelayedRoboticEnv(gym.Wrapper):
 
 # others
 
-class StickyActionWrapper(gym.Wrapper):
+class StickyActionWrapper(gym.Wrapper, RecordConstructorArgs):
     """
     Source: https://github.com/openai/random-network-distillation/blob/master/atari_wrappers.py
     """
@@ -207,7 +207,7 @@ class StickyActionWrapper(gym.Wrapper):
         obs_next_nodelay, reward, done, truncated, info = self.env.step(action)
         return obs_next_nodelay, reward, done, truncated, info
 
-class GaussianNoiseActionWrapper(gym.Wrapper):
+class GaussianNoiseActionWrapper(gym.Wrapper, RecordConstructorArgs):
     def __init__(self, env, noise_fraction):
         super().__init__(env)
         self.noise_fraction = noise_fraction
@@ -229,7 +229,7 @@ class GaussianNoiseActionWrapper(gym.Wrapper):
         # Take a step in the environment with the clipped action
         return self.env.step(clipped_action)
 
-class GaussianNoiseObservationWrapper(gym.Wrapper):
+class GaussianNoiseObservationWrapper(gym.Wrapper, RecordConstructorArgs):
     def __init__(self, env, gaussian_obs):
         super().__init__(env)
         self.gaussian_obs = gaussian_obs
@@ -273,7 +273,7 @@ class GaussianNoiseObservationWrapper(gym.Wrapper):
         clipped_observation = np.clip(noisy_obs, self.observation_space.low, self.observation_space.high)
         return clipped_observation
 
-class NormedObsActWrapper(gym.Wrapper):
+class NormedObsActWrapper(gym.Wrapper, RecordConstructorArgs):
     def __init__(self, env):
         super().__init__(env)
         self.observation_space_ori = self.observation_space
@@ -317,7 +317,7 @@ class NormedObsActWrapper(gym.Wrapper):
         act = act * (self.action_space_ori.high - self.action_space_ori.low) + self.action_space_ori.low
         return act
 
-class MaxStepWrapper(gym.Wrapper):
+class MaxStepWrapper(gym.Wrapper, RecordConstructorArgs):
     def __init__(self, env, max_step):
         super().__init__(env)
         self.max_step_x = max_step
@@ -346,6 +346,25 @@ class MaxStepWrapper(gym.Wrapper):
                 return obs, reward, done, truncated, info
         else:
             return res
+
+
+
+
+class BetterResetWrapper(gym.Wrapper, RecordConstructorArgs):
+    """
+    Extends gym.Wrapper to provide flexible resetting of gym environments. 
+    It supports keyword arguments (kwargs) for the reset method, defaulting to 
+    the standard reset method if kwargs are not supported by the inner environment.
+    """
+    def reset(self, **kwargs):
+        try:
+            # Try to reset the environment with kwargs.
+            # This will work if the inner environment's reset method supports kwargs.
+            return self.env.reset(**kwargs)
+        except TypeError:
+            # If a TypeError occurs (likely because kwargs are not supported),
+            # fall back to the default reset method without kwargs.
+            return self.env.reset()
 
 # utils
 
