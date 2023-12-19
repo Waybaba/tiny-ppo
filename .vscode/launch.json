@@ -28,7 +28,7 @@
 			"program": "${workspaceFolder}/src/entry.py",
 			"console": "integratedTerminal",
 			"justMyCode": true,
-			"noDebug": true,
+			"noDebug": false,
 			"args": [
 				// "experiment=ddpg",
 				// "experiment=ddpg_rnn",
@@ -44,7 +44,8 @@
 				// "experiment=obs_pred",
 				// "experiment=stack_rnn",
 				// "experiment=vlog_dummy",
-				"env.name=HalfCheetah-v4",
+				// "env.name=HalfCheetah-v4",
+				"env.name=Reacher-v4",
 				// "env.name=gym_anm:ANM6Easy-v0",
 				// "env.name=Ant-v4",
 				// "env.name=Pendulum-v1",
@@ -67,10 +68,10 @@
 				// "start_timesteps=10000",
 				// "start_timesteps=25000",
 				"trainer.episode_per_test=1",
-				"trainer.max_epoch=200",
+				// "trainer.max_epoch=200",
+				// "trainer.step_per_epoch=5000",
+				"trainer.max_epoch=2",
 				"trainer.step_per_epoch=5000",
-				// "trainer.max_epoch=1",
-				// "trainer.step_per_epoch=100",
 				// "env.max_step=100",
 				// "trainer.batch_size=256", 
 				// "trainer.batch_seq_len=1",
@@ -87,7 +88,6 @@
 				// "global_cfg.actor_input.obs_pred.turn_on=false",
 				// "global_cfg.actor_input.obs_encode.turn_on=true",
 				// "global_cfg.actor_input.obs_encode.policy_robust_weight=0.1",
-
 
 				// ### rnn critic
 				// "global_cfg.critic_input.obs_type=normal",
