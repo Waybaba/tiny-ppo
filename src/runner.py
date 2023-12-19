@@ -2014,8 +2014,9 @@ class OfflineRLRunner(DefaultRLRunner):
 	def _end_all(self):
 		if self.cfg.trainer.progress_bar: self.progress.stop()
 		if self.cfg.env.save_minari: # save dataset
+			version_ = self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
 			self.env.create_dataset(
-				dataset_id=self.cfg.env.name.split("-")[0]+"-sac"+"-v0"
+				dataset_id=self.cfg.env.name.lower().split("-")[0]+f"-sac_{version_}"+"-v0"
 			)
 			print("Minari dataset saved as name {}".format(self.cfg.env.name))
 
