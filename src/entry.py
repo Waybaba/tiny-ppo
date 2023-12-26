@@ -12,6 +12,9 @@ import utils
 from time import sleep
 from rich.console import Console
 
+# MINARI_DATASETS_PATH=$UDATADIR:/minari/datasets
+os.environ['MINARI_DATASETS_PATH'] = os.environ['UDATADIR'] + "/minari/datasets"
+
 console = Console()
 
 warnings.filterwarnings('ignore')
