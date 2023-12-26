@@ -97,7 +97,7 @@ target:
 
 environment:
     # image: waybaba/rl:Dec19 # ! may need to be changed
-    image: waybaba/rl:gym_anm
+    image: waybaba/rl:Dec19
     username: waybaba
     setup:
         - echo "setup start..."
