@@ -2015,10 +2015,19 @@ class OfflineRLRunner(DefaultRLRunner):
 		if self.cfg.trainer.progress_bar: self.progress.stop()
 		if self.cfg.env.save_minari: # save dataset
 			version_ = self.cfg.trainer.max_epoch * self.cfg.trainer.step_per_epoch
+			dataset_id = self.cfg.env.name.lower().split("-")[0]+f"-sac_{version_}"+"-v0"
 			self.env.create_dataset(
-				dataset_id=self.cfg.env.name.lower().split("-")[0]+f"-sac_{version_}"+"-v0"
+				dataset_id=dataset_id
 			)
-			print("Minari dataset saved as name {}".format(self.cfg.env.name))
+			print("Minari dataset saved as name {}".format(dataset_id))
+			# mv ~/.minari/datasets/{dataset_id} to os.environ['UDATADIR'] + /minari/datasets/{dataset_id}
+			import shutil
+			source_dir = os.path.join(os.path.expanduser("~"), ".minari", "datasets", dataset_id)
+			dest_dir = os.path.join(os.environ['UDATADIR'], "minari", "datasets", dataset_id)
+			if not os.path.exists(dest_dir):
+				os.makedirs(dest_dir)
+			shutil.move(source_dir, dest_dir)
+			print("Dataset moved to {}".format(dest_dir))
 
 	def select_act_for_env(self, batch, state, mode):
 		"""

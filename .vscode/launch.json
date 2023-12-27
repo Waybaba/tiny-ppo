@@ -71,7 +71,7 @@
 				// "trainer.max_epoch=200",
 				// "trainer.step_per_epoch=5000",
 				"trainer.max_epoch=2",
-				"trainer.step_per_epoch=5000",
+				"trainer.step_per_epoch=500",
 				// "env.max_step=100",
 				// "trainer.batch_size=256", 
 				// "trainer.batch_seq_len=1",
