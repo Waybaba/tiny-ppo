@@ -2021,9 +2021,12 @@ class OfflineRLRunner(DefaultRLRunner):
 			)
 			print("Minari dataset saved as name {}".format(dataset_id))
 			# mv ~/.minari/datasets/{dataset_id} to os.environ['UDATADIR'] + /minari/datasets/{dataset_id}
+			# if exist, replace
 			import shutil
 			source_dir = os.path.join(os.path.expanduser("~"), ".minari", "datasets", dataset_id)
 			dest_dir = os.path.join(os.environ['UDATADIR'], "minari", "datasets", dataset_id)
+			if os.path.exists(dest_dir):
+				shutil.rmtree(dest_dir)
 			if not os.path.exists(dest_dir):
 				os.makedirs(dest_dir)
 			shutil.move(source_dir, dest_dir)
